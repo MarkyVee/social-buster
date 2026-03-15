@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Social Buster — AI-Powered Social Media Marketing</title>
+  <link rel="stylesheet" href="/css/styles.css" />
+  <link rel="stylesheet" href="/css/platforms.css" />
+</head>
+<body>
+
+  <!--
+    #app is the single mounting point for the entire UI.
+    app.js decides what to render here based on auth state:
+      - Not logged in  → injects the auth screen (login / register)
+      - Logged in      → injects the app shell (sidebar + main content)
+  -->
+  <div id="app">
+    <!-- Initial loading state shown before app.js runs -->
+    <div class="loading-overlay" style="min-height:100vh;">
+      <div class="spinner spinner-lg"></div>
+      <p>Loading Social Buster...</p>
+    </div>
+  </div>
+
+  <!--
+    Scripts load in this order:
+    1. app.js    - Core: auth, routing, apiFetch helper. Must load first.
+    2. brief.js  - Brief form and AI generation (depends on app.js)
+    3. preview.js - Post preview rendering (depends on app.js + brief.js)
+    4. publish.js - Approval + publishing flow (depends on app.js + preview.js)
+    5. media.js  - Media library view (depends on app.js)
+    6. admin.js  - Admin dashboard (only used when user is admin)
+  -->
+  <script src="/js/app.js?v=12"></script>
+  <script src="/js/brief.js?v=9"></script>
+  <script src="/js/preview.js?v=17"></script>
+  <script src="/js/publish.js?v=11"></script>
+  <script src="/js/media.js?v=9"></script>
+  <script src="/js/messages.js?v=1"></script>
+  <script src="/js/admin.js?v=14"></script>
+
+</body>
+</html>

@@ -1,0 +1,1657 @@
+/**
+ * admin.js
+ *
+ * Admin dashboard frontend — only loaded and rendered for users
+ * whose email is in the ADMIN_EMAILS environment variable.
+ *
+ * Sections:
+ *   Overview  — platform KPIs, health status, failed job count
+ *   Users     — searchable paginated user list + user detail panel
+ *   Queues    — links to BullMQ Board + live queue depth summary
+ *
+ * Calls the same /admin/* API endpoints defined in routes/admin.js.
+ * All requests use apiFetch() which handles the Authorization header.
+ */
+
+// ----------------------------------------------------------------
+// renderAdminDashboard — entry point called by app.js renderView()
+// ----------------------------------------------------------------
+function renderAdminDashboard(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div class="page-title">🛠️ Admin Dashboard</div>
+      <div class="page-subtitle">Platform management — visible to admins only</div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="admin-tabs">
+      <button class="admin-tab active" data-tab="overview"  onclick="switchAdminTab('overview')">Overview</button>
+      <button class="admin-tab"        data-tab="users"     onclick="switchAdminTab('users')">Users</button>
+      <button class="admin-tab"        data-tab="queues"    onclick="switchAdminTab('queues')">Queues</button>
+      <button class="admin-tab"        data-tab="messages"  onclick="switchAdminTab('messages')">
+        Messages
+        <span id="admin-msg-unread-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
+      </button>
+      <button class="admin-tab"        data-tab="limits"    onclick="switchAdminTab('limits')">Limits</button>
+      <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
+    </div>
+
+    <!-- Tab panels -->
+    <div id="admin-tab-overview"  class="admin-panel"></div>
+    <div id="admin-tab-users"     class="admin-panel hidden"></div>
+    <div id="admin-tab-queues"    class="admin-panel hidden"></div>
+    <div id="admin-tab-messages"  class="admin-panel hidden"></div>
+    <div id="admin-tab-limits"    class="admin-panel hidden"></div>
+    <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
+  `;
+
+  injectAdminStyles();
+
+  // Load the default tab
+  loadAdminOverview();
+}
+
+// ----------------------------------------------------------------
+// switchAdminTab — shows one panel, hides the rest
+// ----------------------------------------------------------------
+function switchAdminTab(tab) {
+  document.querySelectorAll('.admin-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  document.querySelectorAll('.admin-panel').forEach(panel => {
+    panel.classList.toggle('hidden', !panel.id.endsWith(tab));
+  });
+
+  // Lazy-load content on first visit to each tab
+  const panel = document.getElementById(`admin-tab-${tab}`);
+  if (!panel || panel.dataset.loaded) return;
+
+  if (tab === 'overview')  loadAdminOverview();
+  if (tab === 'users')     loadAdminUsers();
+  if (tab === 'queues')    loadAdminQueues();
+  if (tab === 'messages')  loadAdminMessages();
+  if (tab === 'limits')    loadAdminLimits();
+  if (tab === 'revenue')   loadAdminRevenue();
+}
+
+// ================================================================
+// OVERVIEW TAB
+// ================================================================
+
+async function loadAdminOverview() {
+  const panel = document.getElementById('admin-tab-overview');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const [stats, health] = await Promise.all([
+      apiFetch('/admin/stats'),
+      apiFetch('/admin/health')
+    ]);
+
+    panel.innerHTML = buildOverviewHtml(stats, health);
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load overview: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function buildOverviewHtml(stats, health) {
+  const isCritical  = health.status === 'critical';
+  const isOk        = health.status === 'ok';
+  const statusColor = isOk ? '#16a34a' : isCritical ? '#7f1d1d' : '#dc2626';
+  const statusBg    = isOk ? '#f0fdf4' : isCritical ? '#fef2f2' : '#fff7ed';
+  const statusLabel = isOk
+    ? '✅ All systems operational'
+    : isCritical
+    ? '🚨 CRITICAL — platform is down'
+    : '⚠️ Degraded — features broken, action needed';
+
+  // Color-code a status string based on its content
+  function statusCell(val) {
+    if (!val) return '<span style="color:#6b7280;">—</span>';
+    const s = String(val).toLowerCase();
+    const ok   = s.startsWith('ok') || s.startsWith('key present');
+    const warn = s.startsWith('not configured') || s.startsWith('missing') || s.startsWith('warning');
+    const color = ok ? '#16a34a' : warn ? '#d97706' : '#dc2626';
+    const icon  = ok ? '✅' : warn ? '⚠️' : '❌';
+    return `<span style="color:${color};">${icon} ${escapeAdminHtml(val)}</span>`;
+  }
+
+  // Queue rows — includes Workers column to catch silent worker death
+  const queueRows = Object.entries(health.queues || {}).map(([name, q]) => {
+    if (q.error) {
+      return `<tr><td><code>${name}</code></td><td colspan="5" style="color:#dc2626;">${escapeAdminHtml(q.error)}</td></tr>`;
+    }
+    const failedStyle = q.failed  > 0 ? 'color:#dc2626;font-weight:700;' : '';
+    const workerStyle = q.workers < 1 ? 'color:#dc2626;font-weight:700;' : 'color:#16a34a;';
+    const workerLabel = q.workers < 1 ? '❌ 0 — DEAD' : `✅ ${q.workers}`;
+    return `<tr>
+      <td><code>${name}</code></td>
+      <td>${q.waiting}</td>
+      <td>${q.active}</td>
+      <td>${q.delayed}</td>
+      <td style="${failedStyle}">${q.failed}</td>
+      <td style="${workerStyle}">${workerLabel}</td>
+    </tr>`;
+  }).join('');
+
+  // External API rows
+  const apiRows = Object.entries(health.external_apis || {}).map(([name, status]) =>
+    `<tr><td><code>${escapeAdminHtml(name)}</code></td><td>${statusCell(status)}</td></tr>`
+  ).join('');
+
+  // Env var rows
+  const envRows = (health.env_vars?.summary || []).map(e => {
+    const isSet      = e.status === 'set';
+    const levelBadge = e.level === 'critical'
+      ? '<span style="font-size:10px;color:#7f1d1d;background:#fee2e2;padding:1px 5px;border-radius:3px;">CRITICAL</span>'
+      : e.level === 'important'
+      ? '<span style="font-size:10px;color:#92400e;background:#fef3c7;padding:1px 5px;border-radius:3px;">IMPORTANT</span>'
+      : '<span style="font-size:10px;color:#6b7280;background:#f3f4f6;padding:1px 5px;border-radius:3px;">optional</span>';
+    return `<tr>
+      <td><code>${escapeAdminHtml(e.key)}</code></td>
+      <td style="color:#374151;">${escapeAdminHtml(e.label)}</td>
+      <td>${levelBadge}</td>
+      <td>${isSet ? '<span style="color:#16a34a;">✅ set</span>' : '<span style="color:#dc2626;font-weight:700;">❌ MISSING</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <!-- Health banner -->
+    <div class="admin-health-banner" style="border-color:${statusColor};background:${statusBg};">
+      <span style="color:${statusColor};font-weight:700;font-size:15px;">${statusLabel}</span>
+      <span class="admin-health-sub">
+        Redis: <strong>${escapeAdminHtml(health.redis)}</strong> &nbsp;·&nbsp;
+        DB: <strong>${escapeAdminHtml(health.database)}</strong> &nbsp;·&nbsp;
+        Storage: <strong>${escapeAdminHtml(health.storage)}</strong>
+      </span>
+      ${health.workers?.warning
+        ? `<div style="color:#dc2626;margin-top:6px;font-size:13px;">⚠️ ${escapeAdminHtml(health.workers.warning)}</div>`
+        : ''}
+    </div>
+
+    <!-- KPI cards — row 1: activity -->
+    <div class="admin-section-title" style="margin-top:20px;">Activity</div>
+    <div class="admin-kpi-grid">
+      ${adminKpi('🟢 DAU',              stats.dau,               '', 'Users who generated a brief today')}
+      ${adminKpi('📅 MAU',              stats.mau,               '', 'Users who generated a brief in last 30 days')}
+      ${adminKpi('📝 Briefs (7d)',       stats.briefs_7d,         '', 'Briefs submitted in the last 7 days')}
+      ${adminKpi('✅ Posts Published',   stats.total_posts,       '', 'All-time published posts')}
+      ${adminKpi('📈 Posts (7d)',        stats.recent_posts_7d,   '', 'Posts published in the last 7 days')}
+    </div>
+
+    <!-- KPI cards — row 2: users & health -->
+    <div class="admin-section-title" style="margin-top:20px;">Users &amp; Health</div>
+    <div class="admin-kpi-grid">
+      ${adminKpi('👤 Total Users',       stats.total_users,       '', 'Registered user profiles')}
+      ${adminKpi('🆕 New Today',         stats.new_users_today,   '', 'New signups since midnight UTC')}
+      ${adminKpi('🆕 New (7d)',          stats.new_users_7d,      '', 'New signups in the last 7 days')}
+      ${adminKpi('📊 Metric Records',    stats.total_metrics,     '', 'Total post_metrics rows')}
+      ${adminKpi('❌ Failed Jobs',       stats.total_failed_jobs, stats.total_failed_jobs > 0 ? 'kpi-alert' : '', 'Failed BullMQ jobs — needs attention')}
+    </div>
+
+    <!-- Queues + workers table -->
+    <div class="admin-section-title" style="margin-top:28px;">Queues &amp; Workers</div>
+    <p style="font-size:12px;color:#6b7280;margin:0 0 8px;">
+      Workers = active BullMQ worker processes listening on that queue.
+      If any queue shows 0 workers, those jobs will queue up and never run.
+    </p>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead>
+          <tr><th>Queue</th><th>Waiting</th><th>Active</th><th>Delayed</th><th>Failed</th><th>Workers</th></tr>
+        </thead>
+        <tbody>${queueRows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:10px;">
+      <a href="/admin/queues" target="_blank" class="btn btn-sm">
+        🔍 Open BullMQ Board (full job inspector) ↗
+      </a>
+    </div>
+
+    <!-- External API keys -->
+    <div class="admin-section-title" style="margin-top:28px;">External API Keys</div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Service</th><th>Status</th></tr></thead>
+        <tbody>${apiRows || '<tr><td colspan="2" style="color:#6b7280;">No data</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <!-- Environment variable audit -->
+    <div class="admin-section-title" style="margin-top:28px;">
+      Environment Variables
+      ${(health.env_vars?.missing_count || 0) > 0
+        ? `<span style="margin-left:8px;font-size:12px;color:#dc2626;">${health.env_vars.missing_count} missing</span>`
+        : '<span style="margin-left:8px;font-size:12px;color:#16a34a;">all set</span>'}
+    </div>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Variable</th><th>Purpose</th><th>Level</th><th>Status</th></tr></thead>
+        <tbody>${envRows || '<tr><td colspan="4" style="color:#6b7280;">No data</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
+function adminKpi(label, value, extraClass, tooltip) {
+  const tip = tooltip ? ` title="${escapeAdminHtml(tooltip)}"` : '';
+  return `
+    <div class="admin-kpi ${extraClass}"${tip}>
+      <div class="admin-kpi-value">${value ?? '—'}</div>
+      <div class="admin-kpi-label">${label}</div>
+    </div>`;
+}
+
+// ================================================================
+// USERS TAB
+// ================================================================
+
+let _adminUserPage    = 1;
+let _adminUserSearch  = '';
+let _adminUserTotal   = 0;
+
+async function loadAdminUsers(page = 1, search = '') {
+  const panel = document.getElementById('admin-tab-users');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  _adminUserPage   = page;
+  _adminUserSearch = search;
+
+  // Keep the search bar if it exists; otherwise build the full layout
+  const existing = panel.querySelector('.admin-users-list');
+  if (!existing) {
+    panel.innerHTML = `
+      <div class="admin-users-top">
+        <input
+          id="admin-user-search"
+          class="admin-search"
+          type="text"
+          placeholder="Search by email or brand name…"
+          value="${escapeAdminHtml(search)}"
+          oninput="adminUserSearchDebounce(this.value)"
+        />
+        <span id="admin-user-count" class="admin-muted"></span>
+      </div>
+      <div class="admin-users-list" id="admin-users-list"></div>
+      <div class="admin-pagination" id="admin-pagination"></div>
+      <div class="admin-user-detail hidden" id="admin-user-detail"></div>
+    `;
+  }
+
+  const listEl = document.getElementById('admin-users-list');
+  if (listEl) listEl.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const params = new URLSearchParams({ page, limit: 50 });
+    if (search) params.set('q', search);
+
+    const data = await apiFetch(`/admin/users?${params}`);
+    _adminUserTotal = data.total;
+
+    const countEl = document.getElementById('admin-user-count');
+    if (countEl) countEl.textContent = `${data.total} user${data.total !== 1 ? 's' : ''}`;
+
+    if (listEl) listEl.innerHTML = buildUsersTableHtml(data.users);
+
+    buildPagination(data.page, data.pages);
+
+  } catch (err) {
+    if (listEl) listEl.innerHTML = `<div class="admin-error">Failed to load users: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function buildUsersTableHtml(users) {
+  if (!users.length) return '<div class="admin-muted" style="padding:20px;">No users found.</div>';
+
+  const rows = users.map(u => `
+    <tr class="admin-user-row" onclick="loadAdminUserDetail('${u.user_id}')">
+      <td>${escapeAdminHtml(u.email)}</td>
+      <td>${escapeAdminHtml(u.brand_name || '—')}</td>
+      <td>${escapeAdminHtml(u.industry || '—')}</td>
+      <td>${escapeAdminHtml(u.geo_region || '—')}</td>
+      <td>${u.onboarding_complete ? '✅' : '⏳'}</td>
+      <td class="admin-muted">${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
+    </tr>`).join('');
+
+  return `
+    <table class="admin-table admin-users-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Brand</th>
+          <th>Industry</th>
+          <th>Region</th>
+          <th>Onboarded</th>
+          <th>Joined</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function buildPagination(currentPage, totalPages) {
+  const el = document.getElementById('admin-pagination');
+  if (!el || totalPages <= 1) { if (el) el.innerHTML = ''; return; }
+
+  const prev = currentPage > 1
+    ? `<button class="btn btn-sm" onclick="loadAdminUsers(${currentPage - 1}, '${_adminUserSearch}')">← Prev</button>`
+    : '';
+  const next = currentPage < totalPages
+    ? `<button class="btn btn-sm" onclick="loadAdminUsers(${currentPage + 1}, '${_adminUserSearch}')">Next →</button>`
+    : '';
+
+  el.innerHTML = `<div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
+    ${prev}
+    <span class="admin-muted">Page ${currentPage} of ${totalPages}</span>
+    ${next}
+  </div>`;
+}
+
+// Debounce helper for search input
+let _adminSearchTimer = null;
+function adminUserSearchDebounce(value) {
+  clearTimeout(_adminSearchTimer);
+  _adminSearchTimer = setTimeout(() => loadAdminUsers(1, value), 400);
+}
+
+// ----------------------------------------------------------------
+// loadAdminUserDetail — loads and shows a single user's detail panel
+// ----------------------------------------------------------------
+async function loadAdminUserDetail(userId) {
+  const detailEl = document.getElementById('admin-user-detail');
+  if (!detailEl) return;
+
+  detailEl.classList.remove('hidden');
+  detailEl.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading user…</div>`;
+  detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    const data = await apiFetch(`/admin/users/${userId}`);
+    detailEl.innerHTML = buildUserDetailHtml(data);
+  } catch (err) {
+    detailEl.innerHTML = `<div class="admin-error">Failed to load user: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function buildUserDetailHtml(data) {
+  const p = data.profile;
+  const postSummaryHtml = Object.entries(data.post_summary || {})
+    .map(([status, count]) => `<span class="admin-badge">${status}: ${count}</span>`)
+    .join(' ') || '—';
+
+  const recentPostsHtml = (data.recent_posts || []).map(post => `
+    <tr>
+      <td>${escapeAdminHtml(post.platform)}</td>
+      <td>${escapeAdminHtml(post.status)}</td>
+      <td class="admin-muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+        ${escapeAdminHtml(post.hook || '—')}
+      </td>
+      <td class="admin-muted">${post.published_at ? new Date(post.published_at).toLocaleDateString() : '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="admin-muted">No posts yet</td></tr>';
+
+  return `
+    <div class="admin-user-detail-card">
+      <div class="admin-user-detail-header">
+        <div>
+          <div class="admin-user-detail-email">${escapeAdminHtml(p.email)}</div>
+          <div class="admin-muted">${escapeAdminHtml(p.brand_name || 'No brand name')} · ${escapeAdminHtml(p.industry || 'No industry')}</div>
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="document.getElementById('admin-user-detail').classList.add('hidden')">✕ Close</button>
+      </div>
+
+      <div class="admin-detail-grid">
+        <div><strong>User ID</strong><br/><code class="admin-muted">${p.user_id}</code></div>
+        <div><strong>Region</strong><br/>${escapeAdminHtml(p.geo_region || '—')}</div>
+        <div><strong>Business type</strong><br/>${escapeAdminHtml(p.business_type || '—')}</div>
+        <div><strong>Joined</strong><br/>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</div>
+        <div><strong>Onboarding</strong><br/>${p.onboarding_complete ? '✅ Complete' : '⏳ Incomplete'}</div>
+        <div><strong>Metric records</strong><br/>${data.total_metrics}</div>
+      </div>
+
+      <div style="margin:14px 0 6px;"><strong>Posts:</strong> ${postSummaryHtml}</div>
+
+      <div class="admin-section-title" style="margin-top:16px;">Recent Posts</div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Platform</th><th>Status</th><th>Hook</th><th>Published</th></tr></thead>
+          <tbody>${recentPostsHtml}</tbody>
+        </table>
+      </div>
+
+      <!-- Quick override form -->
+      <div class="admin-section-title" style="margin-top:20px;">Override Subscription Tier</div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+        <select id="admin-tier-select" class="admin-select">
+          <option value="">— keep current —</option>
+          <option value="free_trial">free_trial</option>
+          <option value="starter">starter</option>
+          <option value="professional">professional</option>
+          <option value="enterprise">enterprise</option>
+          <option value="suspended">suspended</option>
+        </select>
+        <input id="admin-notes-input" class="admin-input" type="text" placeholder="Admin notes (optional)" style="flex:1;min-width:200px;" value="${escapeAdminHtml(p.admin_notes || '')}" />
+        <button class="btn btn-sm btn-primary" onclick="saveAdminUserOverride('${p.user_id}')">Save Override</button>
+        <span id="admin-save-status-${p.user_id}" class="admin-muted"></span>
+      </div>
+    </div>`;
+}
+
+async function saveAdminUserOverride(userId) {
+  const tier  = document.getElementById('admin-tier-select')?.value || undefined;
+  const notes = document.getElementById('admin-notes-input')?.value;
+  const statusEl = document.getElementById(`admin-save-status-${userId}`);
+
+  const body = {};
+  if (tier)               body.subscription_tier = tier;
+  if (notes !== undefined) body.admin_notes       = notes;
+
+  if (!Object.keys(body).length) return;
+
+  try {
+    if (statusEl) statusEl.textContent = 'Saving…';
+    await apiFetch(`/admin/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+    if (statusEl) statusEl.textContent = '✅ Saved';
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+  }
+}
+
+// ================================================================
+// QUEUES TAB
+// ================================================================
+
+async function loadAdminQueues() {
+  const panel = document.getElementById('admin-tab-queues');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const health = await apiFetch('/admin/health');
+
+    const queueRows = Object.entries(health.queues || {}).map(([name, q]) => {
+      if (q.error) return `<tr><td>${name}</td><td colspan="4" style="color:#dc2626;">${q.error}</td></tr>`;
+      const failedClass = q.failed > 0 ? 'style="color:#dc2626;font-weight:700;"' : '';
+      return `<tr>
+        <td><code>${name}</code></td>
+        <td>${q.waiting}</td>
+        <td>${q.active}</td>
+        <td>${q.delayed}</td>
+        <td ${failedClass}>${q.failed}</td>
+      </tr>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <div class="admin-queues-board-link">
+        <a href="/admin/queues" target="_blank" class="btn btn-primary">
+          🔍 Open BullMQ Board — Full Queue Inspector ↗
+        </a>
+        <p class="admin-muted" style="margin-top:8px;">
+          BullMQ Board lets you inspect, retry, and delete individual jobs.
+          Opens in a new tab. Admin auth required.
+        </p>
+      </div>
+
+      <div class="admin-section-title" style="margin-top:24px;">Current Queue Depths</div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr><th>Queue</th><th>Waiting</th><th>Active</th><th>Delayed</th><th>Failed</th></tr>
+          </thead>
+          <tbody>${queueRows}</tbody>
+        </table>
+      </div>
+      <button class="btn btn-sm" style="margin-top:12px;" onclick="loadAdminQueues()">🔄 Refresh</button>
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load queue data: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ================================================================
+// MESSAGES TAB
+// ================================================================
+
+// Sub-tab state — persisted so switching admin tabs and coming back
+// returns to the same sub-view (inbox / compose / sent / broadcast).
+let _adminMsgSubTab = 'inbox';
+
+// Auto-refresh: poll the inbox every 30 seconds when it's the active sub-tab.
+// Cleared whenever the admin leaves the inbox (switches sub-tab or main tab).
+let _inboxPollTimer = null;
+
+function startInboxPoll() {
+  stopInboxPoll();
+  _inboxPollTimer = setInterval(() => {
+    // Only refresh if inbox is still the active sub-tab and thread is hidden
+    if (_adminMsgSubTab === 'inbox' && document.getElementById('admin-msg-thread')?.classList.contains('hidden')) {
+      loadAdminMessages('inbox');
+    }
+  }, 30000); // every 30 seconds
+}
+
+function stopInboxPoll() {
+  if (_inboxPollTimer) { clearInterval(_inboxPollTimer); _inboxPollTimer = null; }
+}
+
+// ----------------------------------------------------------------
+// loadAdminMessages — entry point for the Messages tab.
+// Builds the sub-tab shell on first visit, then loads the sub-view.
+// ----------------------------------------------------------------
+async function loadAdminMessages(subTab) {
+  const panel = document.getElementById('admin-tab-messages');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  if (subTab) _adminMsgSubTab = subTab;
+
+  // Build the shell (sub-tabs + content areas) once
+  if (!panel.querySelector('.admin-msg-subtabs')) {
+    panel.innerHTML = `
+      <div class="admin-msg-subtabs">
+        <button id="admin-msub-inbox"     class="admin-tab" onclick="loadAdminMessages('inbox')">Inbox</button>
+        <button id="admin-msub-compose"   class="admin-tab" onclick="loadAdminMessages('compose')">Compose</button>
+        <button id="admin-msub-sent"      class="admin-tab" onclick="loadAdminMessages('sent')">Sent</button>
+        <button id="admin-msub-broadcast" class="admin-tab" onclick="loadAdminMessages('broadcast')">Broadcasts</button>
+      </div>
+      <div id="admin-msg-content"></div>
+      <div id="admin-msg-thread" class="hidden"></div>
+    `;
+  }
+
+  // Highlight active sub-tab
+  ['inbox','compose','sent','broadcast'].forEach(t => {
+    document.getElementById(`admin-msub-${t}`)?.classList.toggle('active', t === _adminMsgSubTab);
+  });
+
+  // Hide thread whenever changing sub-tabs
+  document.getElementById('admin-msg-thread')?.classList.add('hidden');
+  document.getElementById('admin-msg-content')?.classList.remove('hidden');
+
+  const contentEl = document.getElementById('admin-msg-content');
+  if (!contentEl) return;
+
+  if (_adminMsgSubTab === 'compose') {
+    stopInboxPoll();
+    renderAdminCompose(contentEl);
+    return;
+  }
+
+  // Stop any existing poll; start a fresh one only for inbox
+  stopInboxPoll();
+  if (_adminMsgSubTab === 'inbox') startInboxPoll();
+
+  contentEl.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const { messages, unread } = await apiFetch(`/admin/messages?type=${_adminMsgSubTab}`);
+
+    // Update inbox badge on the tab button
+    const badge = document.getElementById('admin-msg-unread-badge');
+    if (badge) {
+      if (unread > 0) { badge.textContent = unread; badge.style.display = 'inline'; }
+      else              badge.style.display = 'none';
+    }
+
+    if (!messages.length) {
+      contentEl.innerHTML = `<div class="admin-muted" style="padding:24px 0;">No messages.</div>`;
+      return;
+    }
+
+    const fromLabel = _adminMsgSubTab === 'sent' ? 'To' : 'From';
+    const rows = messages.map(m => {
+      const date    = new Date(m.created_at).toLocaleDateString();
+      const preview = (m.body || '').replace(/\n/g, ' ').slice(0, 80);
+      const unreadDot = (_adminMsgSubTab === 'inbox' && !m.read_at)
+        ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#dc2626;margin-right:6px;vertical-align:middle;"></span>'
+        : '';
+      const who = _adminMsgSubTab === 'sent'
+        ? escapeAdminHtml(m.recipient_email || m.recipient_id || '—')
+        : escapeAdminHtml(m.sender_email || '—');
+
+      return `
+        <tr class="admin-user-row" onclick="loadAdminMsgThread('${m.id}', '${_adminMsgSubTab}')">
+          <td>${unreadDot}${escapeAdminHtml(m.subject)}</td>
+          <td class="admin-muted">${who}</td>
+          <td class="admin-muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeAdminHtml(preview)}</td>
+          <td class="admin-muted">${date}</td>
+        </tr>`;
+    }).join('');
+
+    contentEl.innerHTML = `
+      <div class="admin-table-wrap">
+        <table class="admin-table admin-users-table">
+          <thead>
+            <tr><th>Subject</th><th>${fromLabel}</th><th>Preview</th><th>Date</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+  } catch (err) {
+    contentEl.innerHTML = `<div class="admin-error">Failed to load messages: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ----------------------------------------------------------------
+// loadAdminMsgThread — open a message thread in the thread panel
+// ----------------------------------------------------------------
+async function loadAdminMsgThread(messageId, returnSubTab) {
+  const contentEl = document.getElementById('admin-msg-content');
+  const threadEl  = document.getElementById('admin-msg-thread');
+  if (!threadEl) return;
+
+  contentEl?.classList.add('hidden');
+  threadEl.classList.remove('hidden');
+  threadEl.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const { message, replies } = await apiFetch(`/admin/messages/${messageId}`);
+    const allMsgs = [message, ...replies];
+
+    const bubblesHtml = allMsgs.map(m => {
+      const isAdmin = m.sender_type === 'admin';
+      const mDate   = new Date(m.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return `
+        <div class="msg-bubble ${isAdmin ? 'msg-bubble-admin' : 'msg-bubble-user'}" style="max-width:75%;">
+          <div class="msg-bubble-meta">
+            <strong>${isAdmin ? `Admin (${escapeAdminHtml(m.sender_email)})` : escapeAdminHtml(m.sender_email)}</strong>
+            <span>${mDate}</span>
+          </div>
+          <div class="msg-bubble-body">${escapeAdminHtml(m.body).replace(/\n/g, '<br>')}</div>
+        </div>`;
+    }).join('');
+
+    threadEl.innerHTML = `
+      <div class="admin-user-detail-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+          <button class="btn btn-sm btn-ghost" onclick="closeAdminMsgThread('${returnSubTab}')">← Back</button>
+          <div style="font-size:15px;font-weight:700;">${escapeAdminHtml(message.subject)}</div>
+          <button class="btn btn-sm btn-danger" onclick="deleteAdminMsg('${messageId}', '${returnSubTab}')">🗑️ Delete</button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:12px;padding:14px;background:#f8fafc;border-radius:8px;margin-bottom:18px;">
+          ${bubblesHtml}
+        </div>
+
+        <div style="border-top:1px solid #e2e8f0;padding-top:14px;">
+          <div class="admin-section-title" style="margin-bottom:8px;">Reply</div>
+          <textarea id="admin-reply-body" class="msg-textarea" rows="3" placeholder="Type your reply…"></textarea>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;align-items:center;">
+            <span id="admin-reply-status" class="admin-muted"></span>
+            <button class="btn btn-primary btn-sm" onclick="sendAdminMsgReply('${messageId}', '${returnSubTab}')">Send Reply</button>
+          </div>
+        </div>
+      </div>`;
+
+  } catch (err) {
+    threadEl.innerHTML = `<div class="admin-error">Failed to load message: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function closeAdminMsgThread(returnSubTab) {
+  document.getElementById('admin-msg-thread')?.classList.add('hidden');
+  document.getElementById('admin-msg-content')?.classList.remove('hidden');
+  loadAdminMessages(returnSubTab);
+}
+
+async function sendAdminMsgReply(parentId, returnSubTab) {
+  const bodyEl   = document.getElementById('admin-reply-body');
+  const statusEl = document.getElementById('admin-reply-status');
+  const body     = bodyEl?.value?.trim();
+
+  if (!body) return;
+  if (statusEl) statusEl.textContent = 'Sending…';
+
+  try {
+    await apiFetch(`/admin/messages/${parentId}/reply`, {
+      method: 'POST',
+      body:   JSON.stringify({ body })
+    });
+    await loadAdminMsgThread(parentId, returnSubTab);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+  }
+}
+
+async function deleteAdminMsg(messageId, returnSubTab) {
+  if (!confirm('Delete this message and all its replies?')) return;
+  try {
+    await apiFetch(`/admin/messages/${messageId}`, { method: 'DELETE' });
+    closeAdminMsgThread(returnSubTab);
+  } catch (err) {
+    alert(`Failed to delete: ${err.message}`);
+  }
+}
+
+// ----------------------------------------------------------------
+// renderAdminCompose — compose form for admin to send/broadcast
+// ----------------------------------------------------------------
+function renderAdminCompose(el) {
+  el.innerHTML = `
+    <div class="admin-user-detail-card">
+      <div class="admin-section-title" style="margin-bottom:16px;">Send a Message</div>
+      <div id="admin-compose-alerts"></div>
+
+      <!-- Recipient type selector -->
+      <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;">
+          <input type="radio" name="admin-rcpt-type" value="user" checked onchange="toggleAdminRecipientType(this.value)" />
+          Send to specific user
+        </label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;">
+          <input type="radio" name="admin-rcpt-type" value="broadcast" onchange="toggleAdminRecipientType(this.value)" />
+          📢 Broadcast to ALL users
+        </label>
+      </div>
+
+      <!-- User search (visible for direct messages) -->
+      <div id="admin-compose-user-picker" style="margin-bottom:16px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:5px;">Recipient</label>
+        <input type="text" id="admin-rcpt-search" class="admin-search"
+          placeholder="Search by email or brand name…"
+          oninput="adminRcptSearch(this.value)"
+          autocomplete="off" style="width:100%;box-sizing:border-box;" />
+        <div id="admin-rcpt-results" style="margin-top:4px;"></div>
+        <input type="hidden" id="admin-rcpt-id" />
+        <div id="admin-rcpt-selected" class="admin-muted" style="margin-top:5px;font-size:12px;"></div>
+      </div>
+
+      <!-- Broadcast warning (hidden until broadcast selected) -->
+      <div id="admin-compose-broadcast-notice" class="hidden"
+        style="background:#fef3c7;border:1px solid #fde68a;border-radius:6px;padding:10px 14px;font-size:13px;color:#92400e;margin-bottom:16px;">
+        ⚠️ This message will be visible to <strong>all</strong> registered users.
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:5px;">Subject</label>
+        <input type="text" id="admin-compose-subject" class="admin-input"
+          placeholder="Subject line…" maxlength="255" style="width:100%;box-sizing:border-box;" />
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:13px;font-weight:600;display:block;margin-bottom:5px;">Message</label>
+        <textarea id="admin-compose-body" class="msg-textarea" rows="5" placeholder="Message body…"></textarea>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;align-items:center;">
+        <span id="admin-compose-status" class="admin-muted"></span>
+        <button class="btn btn-primary btn-sm" onclick="sendAdminMsg()">Send Message</button>
+      </div>
+    </div>`;
+}
+
+function toggleAdminRecipientType(type) {
+  const isBroadcast = type === 'broadcast';
+  document.getElementById('admin-compose-user-picker')?.classList.toggle('hidden', isBroadcast);
+  document.getElementById('admin-compose-broadcast-notice')?.classList.toggle('hidden', !isBroadcast);
+}
+
+// Debounced user search for the compose recipient picker
+let _adminRcptSearchTimer = null;
+function adminRcptSearch(query) {
+  clearTimeout(_adminRcptSearchTimer);
+  const resultsEl = document.getElementById('admin-rcpt-results');
+
+  if (!query.trim()) {
+    if (resultsEl) resultsEl.innerHTML = '';
+    return;
+  }
+
+  _adminRcptSearchTimer = setTimeout(async () => {
+    try {
+      const { users } = await apiFetch(`/admin/users?q=${encodeURIComponent(query)}&limit=8`);
+      if (!resultsEl) return;
+
+      if (!users.length) {
+        resultsEl.innerHTML = '<div class="admin-muted" style="font-size:12px;padding:4px 0;">No users found.</div>';
+        return;
+      }
+
+      resultsEl.innerHTML = `
+        <div style="border:1px solid #e2e8f0;border-radius:6px;background:#fff;max-height:200px;overflow-y:auto;">
+          ${users.map(u => `
+            <div style="padding:9px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f1f5f9;"
+                 onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''"
+                 onclick="selectAdminRcpt('${u.user_id}', '${escapeAdminHtml(u.email)}')">
+              ${escapeAdminHtml(u.email)}
+              ${u.brand_name ? `<span class="admin-muted"> · ${escapeAdminHtml(u.brand_name)}</span>` : ''}
+            </div>`).join('')}
+        </div>`;
+    } catch (_) {}
+  }, 300);
+}
+
+function selectAdminRcpt(userId, email) {
+  document.getElementById('admin-rcpt-id').value        = userId;
+  document.getElementById('admin-rcpt-selected').textContent = `✅ Selected: ${email}`;
+  document.getElementById('admin-rcpt-search').value    = email;
+  const resultsEl = document.getElementById('admin-rcpt-results');
+  if (resultsEl) resultsEl.innerHTML = '';
+}
+
+async function sendAdminMsg() {
+  const isBroadcast = document.querySelector('input[name="admin-rcpt-type"]:checked')?.value === 'broadcast';
+  const recipientId = document.getElementById('admin-rcpt-id')?.value;
+  const subject     = document.getElementById('admin-compose-subject')?.value?.trim();
+  const body        = document.getElementById('admin-compose-body')?.value?.trim();
+  const statusEl    = document.getElementById('admin-compose-status');
+
+  if (!isBroadcast && !recipientId) {
+    showAlert('admin-compose-alerts', 'Select a recipient first', 'error');
+    return;
+  }
+  if (!subject) { showAlert('admin-compose-alerts', 'Subject is required', 'error'); return; }
+  if (!body)    { showAlert('admin-compose-alerts', 'Message body is required', 'error'); return; }
+  if (isBroadcast && !confirm('Send this message to ALL users? This cannot be undone.')) return;
+
+  if (statusEl) statusEl.textContent = 'Sending…';
+
+  try {
+    await apiFetch('/admin/messages', {
+      method: 'POST',
+      body:   JSON.stringify({
+        recipient_id: isBroadcast ? undefined : recipientId,
+        is_broadcast: isBroadcast,
+        subject,
+        body
+      })
+    });
+
+    showAlert('admin-compose-alerts', 'Message sent successfully!', 'success');
+
+    // Clear the form
+    document.getElementById('admin-compose-subject').value    = '';
+    document.getElementById('admin-compose-body').value       = '';
+    document.getElementById('admin-rcpt-id').value            = '';
+    document.getElementById('admin-rcpt-selected').textContent = '';
+    if (document.getElementById('admin-rcpt-search')) document.getElementById('admin-rcpt-search').value = '';
+    if (statusEl) statusEl.textContent = '';
+
+    // Navigate to sent/broadcast to confirm delivery
+    setTimeout(() => loadAdminMessages(isBroadcast ? 'broadcast' : 'sent'), 1200);
+
+  } catch (err) {
+    showAlert('admin-compose-alerts', err.message, 'error');
+    if (statusEl) statusEl.textContent = '';
+  }
+}
+
+// ================================================================
+// CSS
+// ================================================================
+
+function injectAdminStyles() {
+  if (document.getElementById('admin-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'admin-styles';
+  style.textContent = `
+    /* Tabs */
+    .admin-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 0;
+    }
+    .admin-tab {
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      padding: 8px 18px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: #64748b;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .admin-tab.active, .admin-tab:hover {
+      color: #6366f1;
+      border-bottom-color: #6366f1;
+    }
+
+    /* KPI cards */
+    .admin-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+    }
+    .admin-kpi {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 18px 16px;
+      text-align: center;
+    }
+    .admin-kpi.kpi-alert {
+      border-color: #fca5a5;
+      background: #fff5f5;
+    }
+    .admin-kpi-value {
+      font-size: 28px;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1;
+    }
+    .admin-kpi.kpi-alert .admin-kpi-value { color: #dc2626; }
+    .admin-kpi-label {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 6px;
+    }
+
+    /* Health banner */
+    .admin-health-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px;
+      border: 1.5px solid;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .admin-health-sub { font-size: 13px; color: #475569; }
+
+    /* Tables */
+    .admin-table-wrap { overflow-x: auto; }
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .admin-table th {
+      text-align: left;
+      padding: 8px 12px;
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      font-weight: 600;
+      color: #374151;
+    }
+    .admin-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+      vertical-align: middle;
+    }
+    .admin-users-table tbody tr.admin-user-row {
+      cursor: pointer;
+    }
+    .admin-users-table tbody tr:hover td {
+      background: #f0f9ff;
+    }
+
+    /* Users tab */
+    .admin-users-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .admin-search {
+      flex: 1;
+      min-width: 240px;
+      padding: 8px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .admin-search:focus { outline: none; border-color: #6366f1; }
+
+    /* User detail */
+    .admin-user-detail { margin-top: 24px; }
+    .admin-user-detail-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .admin-user-detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .admin-user-detail-email { font-size: 16px; font-weight: 700; }
+    .admin-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 13px;
+    }
+
+    /* Override form */
+    .admin-select, .admin-input {
+      padding: 7px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+    }
+
+    /* Queues tab */
+    .admin-queues-board-link { margin-top: 8px; }
+
+    /* Messages sub-tabs */
+    .admin-msg-subtabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 0;
+    }
+
+    /* Shared */
+    .admin-section-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 10px;
+    }
+    .admin-loading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 24px 0;
+      color: #64748b;
+      font-size: 14px;
+    }
+    .admin-error {
+      padding: 16px;
+      background: #fff5f5;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      color: #dc2626;
+      font-size: 13px;
+    }
+    .admin-muted { color: #64748b; font-size: 13px; }
+    .admin-badge {
+      display: inline-block;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: 2px 9px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+    }
+
+    /* Revenue tab */
+    .rev-stripe-notice {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: #fefce8;
+      border: 1px solid #fde047;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #713f12;
+      margin-bottom: 20px;
+    }
+    .rev-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .rev-kpi {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 18px 14px;
+      text-align: center;
+    }
+    .rev-kpi-value {
+      font-size: 26px;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1;
+    }
+    .rev-kpi-value.green { color: #16a34a; }
+    .rev-kpi-value.indigo { color: #6366f1; }
+    .rev-kpi-label {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 6px;
+    }
+    .rev-kpi-sub {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 3px;
+    }
+    .rev-proj-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .rev-proj-table th {
+      text-align: left;
+      padding: 8px 12px;
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      font-weight: 600;
+      color: #374151;
+    }
+    .rev-proj-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+    }
+    .rev-proj-bar-wrap {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+      min-width: 80px;
+    }
+    .rev-proj-bar {
+      height: 100%;
+      background: #6366f1;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+
+    /* Limits tab */
+    .limits-intro {
+      font-size: 13px;
+      color: #475569;
+      margin-bottom: 20px;
+    }
+    .limits-table-wrap { overflow-x: auto; }
+    .limits-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 560px;
+    }
+    .limits-table th {
+      padding: 10px 14px;
+      background: #f8fafc;
+      border-bottom: 2px solid #e2e8f0;
+      font-weight: 700;
+      color: #374151;
+      text-align: center;
+    }
+    .limits-table th:first-child { text-align: left; }
+    .limits-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+      text-align: center;
+    }
+    .limits-table td:first-child {
+      text-align: left;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .limits-table tbody tr:hover td { background: #f8fafc; }
+    .limits-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    /* Number input for limit value */
+    .limit-val-input {
+      width: 64px;
+      padding: 5px 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 13px;
+      text-align: center;
+      background: #fff;
+      transition: border-color 0.15s;
+    }
+    .limit-val-input:focus { outline: none; border-color: #6366f1; }
+    .limit-val-input.saving { border-color: #a5b4fc; background: #eef2ff; }
+    .limit-val-input.saved  { border-color: #86efac; background: #f0fdf4; }
+    .limit-val-input.error  { border-color: #fca5a5; background: #fff5f5; }
+    /* Toggle switch */
+    .limit-toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .limit-toggle input { opacity: 0; width: 0; height: 0; }
+    .limit-toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: #cbd5e1;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .limit-toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s;
+    }
+    .limit-toggle input:checked + .limit-toggle-slider { background: #6366f1; }
+    .limit-toggle input:checked + .limit-toggle-slider::before { transform: translateX(16px); }
+  `;
+  document.head.appendChild(style);
+}
+
+// ----------------------------------------------------------------
+// escapeAdminHtml — prevents XSS in admin-rendered content.
+// Named separately from brief.js's escapeHtml to avoid collision.
+// ----------------------------------------------------------------
+function escapeAdminHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ================================================================
+// LIMITS TAB
+// ================================================================
+
+/**
+ * loadAdminLimits — renders the tier limits editor.
+ *
+ * Fetches all rows from tier_limits (via GET /admin/tier-limits),
+ * groups them by feature, and renders a table where:
+ *   - Rows = features (briefs_per_month, ai_images_per_month, etc.)
+ *   - Columns = tiers (free, starter, professional, enterprise)
+ *   - Each cell = number input (limit value) + enabled toggle
+ *
+ * Changes auto-save on blur (value) or change (toggle) via
+ * PUT /admin/tier-limits/:id.  Visual feedback on each input.
+ */
+async function loadAdminLimits() {
+  const panel = document.getElementById('admin-tab-limits');
+  if (!panel) return;
+  panel.dataset.loaded = '1';
+
+  panel.innerHTML = `<div class="admin-loading"><span>⏳</span> Loading tier limits…</div>`;
+
+  let limits;
+  try {
+    const res = await apiFetch('/admin/tier-limits');
+    limits = res.limits || [];
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load limits: ${escapeAdminHtml(err.message)}</div>`;
+    return;
+  }
+
+  if (limits.length === 0) {
+    panel.innerHTML = `<div class="admin-muted">No tier limits configured. Run the SQL migration to seed the tier_limits table.</div>`;
+    return;
+  }
+
+  // --- Build lookup: feature → tier → row ---
+  const TIERS    = ['free', 'starter', 'professional', 'enterprise'];
+  const FEATURES = [...new Set(limits.map(l => l.feature))].sort();
+
+  // Human-readable labels for feature keys
+  const FEATURE_LABELS = {
+    briefs_per_month:    'Briefs / month',
+    ai_images_per_month: 'AI images / month',
+    platforms_connected: 'Platforms connected',
+    scheduled_queue_size:'Scheduled queue size'
+  };
+
+  const byFeatureTier = {};
+  for (const row of limits) {
+    if (!byFeatureTier[row.feature]) byFeatureTier[row.feature] = {};
+    byFeatureTier[row.feature][row.tier] = row;
+  }
+
+  // --- Render table ---
+  const headerCols = TIERS.map(t =>
+    `<th>${t.charAt(0).toUpperCase() + t.slice(1)}</th>`
+  ).join('');
+
+  const bodyRows = FEATURES.map(feature => {
+    const cells = TIERS.map(tier => {
+      const row = byFeatureTier[feature]?.[tier];
+      if (!row) return `<td><span class="admin-muted">—</span></td>`;
+
+      // Display -1 as empty placeholder "∞" but store as -1
+      const displayVal = row.limit_value === -1 ? '' : row.limit_value;
+      const checked    = row.enabled ? 'checked' : '';
+
+      return `
+        <td>
+          <div class="limits-cell">
+            <input
+              type="number"
+              class="limit-val-input"
+              id="limit-val-${row.id}"
+              data-id="${row.id}"
+              data-feature="${feature}"
+              data-tier="${tier}"
+              value="${displayVal}"
+              placeholder="∞"
+              min="-1"
+              onblur="saveLimitValue(this)"
+            />
+            <label class="limit-toggle" title="${row.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}">
+              <input
+                type="checkbox"
+                id="limit-tog-${row.id}"
+                data-id="${row.id}"
+                ${checked}
+                onchange="saveLimitToggle(this)"
+              />
+              <span class="limit-toggle-slider"></span>
+            </label>
+          </div>
+        </td>`;
+    }).join('');
+
+    const label = FEATURE_LABELS[feature] || feature;
+    return `<tr><td>${escapeAdminHtml(label)}</td>${cells}</tr>`;
+  }).join('');
+
+  panel.innerHTML = `
+    <p class="limits-intro">
+      Set per-tier usage caps. Enter a number for the limit, or leave blank / enter <strong>-1</strong> for unlimited.
+      Toggle the switch to enable or disable a feature for a tier. Changes save instantly.
+    </p>
+    <div class="limits-table-wrap">
+      <table class="limits-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            ${headerCols}
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+/**
+ * saveLimitValue — called onblur on a limit value input.
+ * Sends the new limit_value to PUT /admin/tier-limits/:id.
+ * Blank input = -1 (unlimited).
+ */
+async function saveLimitValue(input) {
+  const id  = input.dataset.id;
+  // Blank or '-1' both mean unlimited (-1)
+  const raw = input.value.trim();
+  const val = raw === '' ? -1 : parseInt(raw, 10);
+
+  if (isNaN(val)) {
+    input.classList.add('error');
+    setTimeout(() => input.classList.remove('error'), 1500);
+    return;
+  }
+
+  input.classList.add('saving');
+  input.disabled = true;
+
+  try {
+    await apiFetch(`/admin/tier-limits/${id}`, {
+      method: 'PUT',
+      body:   JSON.stringify({ limit_value: val })
+    });
+
+    // Show saved state briefly, then restore neutral style
+    input.classList.remove('saving');
+    input.classList.add('saved');
+    // Update displayed value so -1 shows as placeholder
+    input.value = val === -1 ? '' : val;
+    setTimeout(() => input.classList.remove('saved'), 1200);
+
+  } catch (err) {
+    input.classList.remove('saving');
+    input.classList.add('error');
+    setTimeout(() => input.classList.remove('error'), 2000);
+    console.error('[Limits] Save failed:', err.message);
+  } finally {
+    input.disabled = false;
+  }
+}
+
+/**
+ * saveLimitToggle — called onchange on a limit enabled toggle.
+ * Sends the new enabled boolean to PUT /admin/tier-limits/:id.
+ */
+async function saveLimitToggle(checkbox) {
+  const id      = checkbox.dataset.id;
+  const enabled = checkbox.checked;
+
+  // Visually dim the row's value input while saving
+  const row   = checkbox.closest('td');
+  const input = row?.querySelector('.limit-val-input');
+  if (input) { input.classList.add('saving'); input.disabled = true; }
+
+  try {
+    await apiFetch(`/admin/tier-limits/${id}`, {
+      method: 'PUT',
+      body:   JSON.stringify({ enabled })
+    });
+
+    if (input) {
+      input.classList.remove('saving');
+      input.classList.add('saved');
+      setTimeout(() => input.classList.remove('saved'), 1200);
+      input.disabled = false;
+    }
+
+    // Update the toggle's title tooltip
+    const label = checkbox.closest('.limit-toggle');
+    if (label) label.title = enabled ? 'Enabled — click to disable' : 'Disabled — click to enable';
+
+  } catch (err) {
+    // Revert toggle on failure
+    checkbox.checked = !enabled;
+    if (input) {
+      input.classList.remove('saving');
+      input.classList.add('error');
+      setTimeout(() => { input.classList.remove('error'); input.disabled = false; }, 2000);
+    }
+    console.error('[Limits] Toggle save failed:', err.message);
+  }
+}
+
+// ================================================================
+// REVENUE TAB
+// ================================================================
+
+/**
+ * loadAdminRevenue — renders the revenue dashboard.
+ *
+ * Pulls data from GET /admin/revenue, which calculates everything
+ * from the subscriptions table + plan prices in .env.
+ *
+ * Sections:
+ *   1. Stripe notice (estimated data until Stripe is connected)
+ *   2. Core KPI strip: MRR, ARR, ARPU, Churn Rate, CLV, Conversion Rate
+ *   3. Subscriber breakdown by tier (count + MRR per tier)
+ *   4. 6-month MRR projection table with mini bar charts
+ *   5. Projected revenue for the remainder of the current year
+ */
+async function loadAdminRevenue() {
+  const panel = document.getElementById('admin-tab-revenue');
+  if (!panel) return;
+  panel.dataset.loaded = '1';
+
+  panel.innerHTML = `<div class="admin-loading"><span>⏳</span> Loading revenue data…</div>`;
+
+  let d;
+  try {
+    d = await apiFetch('/admin/revenue');
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load revenue data: ${escapeAdminHtml(err.message)}</div>`;
+    return;
+  }
+
+  // --- Helper: format dollars ---
+  function fmt(val) {
+    if (val === null || val === undefined) return '—';
+    return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+  function fmtDec(val) {
+    if (val === null || val === undefined) return '—';
+    return '$' + Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function fmtPct(val) {
+    return val === null ? '—' : Number(val).toFixed(1) + '%';
+  }
+
+  // --- Stripe notice ---
+  const stripeNotice = d.stripe_connected
+    ? ''
+    : `<div class="rev-stripe-notice">
+         ⚠️ <strong>Estimated data</strong> — Stripe is not yet connected.
+         MRR and subscriber counts are calculated from your subscriptions table.
+         Connect Stripe to see verified charge, refund, and failed payment data.
+       </div>`;
+
+  // --- Core KPI strip ---
+  const kpis = `
+    <div class="rev-kpi-grid">
+      <div class="rev-kpi" title="Monthly Recurring Revenue — sum of all active paid subscribers × plan price">
+        <div class="rev-kpi-value green">${fmt(d.mrr)}</div>
+        <div class="rev-kpi-label">MRR</div>
+        <div class="rev-kpi-sub">per 30-day cycle</div>
+      </div>
+      <div class="rev-kpi" title="Annual Run Rate — MRR × 12">
+        <div class="rev-kpi-value indigo">${fmt(d.arr)}</div>
+        <div class="rev-kpi-label">ARR (run rate)</div>
+        <div class="rev-kpi-sub">if growth stays flat</div>
+      </div>
+      <div class="rev-kpi" title="Average Revenue Per User (paid subscribers only)">
+        <div class="rev-kpi-value">${fmtDec(d.arpu)}</div>
+        <div class="rev-kpi-label">ARPU</div>
+        <div class="rev-kpi-sub">${d.active_paid} paid users</div>
+      </div>
+      <div class="rev-kpi" title="Monthly churn rate — % of paid subscribers who cancelled in the last 30 days">
+        <div class="rev-kpi-value" style="color:${parseFloat(d.monthly_churn_rate) > 5 ? '#dc2626' : '#0f172a'};">${fmtPct(d.monthly_churn_rate)}</div>
+        <div class="rev-kpi-label">Monthly Churn</div>
+        <div class="rev-kpi-sub">${d.cancelled_last_30} cancelled (30d)</div>
+      </div>
+      <div class="rev-kpi" title="Customer Lifetime Value = ARPU ÷ monthly churn rate. Higher is better.">
+        <div class="rev-kpi-value">${d.clv ? fmtDec(d.clv) : '—'}</div>
+        <div class="rev-kpi-label">CLV</div>
+        <div class="rev-kpi-sub">avg lifetime value</div>
+      </div>
+      <div class="rev-kpi" title="Free trial → paid conversion rate (all time)">
+        <div class="rev-kpi-value">${fmtPct(d.conversion_rate)}</div>
+        <div class="rev-kpi-label">Trial → Paid</div>
+        <div class="rev-kpi-sub">${d.free_trial_count} on free trial</div>
+      </div>
+      <div class="rev-kpi" title="New paid subscriptions started in the last 30 days">
+        <div class="rev-kpi-value green">${d.new_paid_last_30}</div>
+        <div class="rev-kpi-label">New Paid (30d)</div>
+        <div class="rev-kpi-sub">est. +${fmt(d.new_paid_last_30 * (d.arpu || 0))}/mo</div>
+      </div>
+      <div class="rev-kpi" title="Projected revenue for the remaining months of this calendar year">
+        <div class="rev-kpi-value indigo">${fmt(d.projected_year_remainder)}</div>
+        <div class="rev-kpi-label">Yr Remainder</div>
+        <div class="rev-kpi-sub">projected total</div>
+      </div>
+    </div>`;
+
+  // --- Tier breakdown table ---
+  const TIER_LABELS = { starter: 'Starter', professional: 'Professional', enterprise: 'Enterprise' };
+  const tierRows = Object.entries(d.tier_breakdown || {}).map(([tier, info]) => {
+    const label = TIER_LABELS[tier] || tier;
+    const pct   = d.active_paid > 0 ? Math.round(info.count / d.active_paid * 100) : 0;
+    return `<tr>
+      <td>${label}</td>
+      <td>${fmtDec(info.price)}/mo</td>
+      <td>${info.count}</td>
+      <td>${pct}%</td>
+      <td style="font-weight:700;color:#16a34a;">${fmt(info.mrr)}</td>
+    </tr>`;
+  }).join('');
+
+  const tierTable = `
+    <div class="admin-section-title" style="margin-top:0;">Subscribers by Tier</div>
+    <div class="admin-table-wrap" style="margin-bottom:28px;">
+      <table class="admin-table">
+        <thead>
+          <tr><th>Tier</th><th>Price</th><th>Active</th><th>% of Paid</th><th>MRR</th></tr>
+        </thead>
+        <tbody>
+          ${tierRows || '<tr><td colspan="5" style="color:#6b7280;">No paid subscribers yet</td></tr>'}
+          <tr style="font-weight:700;background:#f8fafc;">
+            <td colspan="2">Total</td>
+            <td>${d.active_paid}</td>
+            <td>100%</td>
+            <td style="color:#16a34a;">${fmt(d.mrr)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  // --- 6-month MRR projection table with inline bar ---
+  const maxProj = Math.max(...(d.projections || []).map(p => p.mrr), d.mrr || 1);
+  const projRows = (d.projections || []).map((p, i) => {
+    const barPct  = maxProj > 0 ? Math.round(p.mrr / maxProj * 100) : 0;
+    const delta   = i === 0 ? p.mrr - d.mrr : p.mrr - d.projections[i - 1].mrr;
+    const deltaFmt= (delta >= 0 ? '+' : '') + fmt(delta);
+    const deltaCol= delta >= 0 ? '#16a34a' : '#dc2626';
+    return `<tr>
+      <td>${escapeAdminHtml(p.month)}</td>
+      <td style="font-weight:600;">${fmt(p.mrr)}</td>
+      <td style="color:${deltaCol};font-size:12px;">${deltaFmt}</td>
+      <td style="width:140px;">
+        <div class="rev-proj-bar-wrap">
+          <div class="rev-proj-bar" style="width:${barPct}%"></div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const projTable = `
+    <div class="admin-section-title">6-Month MRR Projection</div>
+    <p style="font-size:12px;color:#6b7280;margin:0 0 10px;">
+      Based on current MRR of ${fmt(d.mrr)}, ${fmtPct(d.monthly_churn_rate)} monthly churn,
+      and ~${d.new_paid_last_30} new paid subscribers per 30 days.
+      30-day rolling billing cycles.
+    </p>
+    <div class="admin-table-wrap">
+      <table class="rev-proj-table">
+        <thead>
+          <tr><th>Month</th><th>Projected MRR</th><th>Change</th><th>Trend</th></tr>
+        </thead>
+        <tbody>
+          ${projRows || '<tr><td colspan="4" style="color:#6b7280;">No projection data</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+
+  panel.innerHTML = `
+    ${stripeNotice}
+    ${kpis}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+      <div>${tierTable}</div>
+      <div>${projTable}</div>
+    </div>
+  `;
+}

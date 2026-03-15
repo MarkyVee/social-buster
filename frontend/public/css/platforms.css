@@ -1,0 +1,1887 @@
+/*
+ * platforms.css
+ *
+ * Platform-specific WYSIWYG preview styles + the layout for the preview/edit cards.
+ *
+ * These styles are used exclusively by preview.js and publish.js.
+ *
+ * Sections:
+ *   1. Preview tab bar
+ *   2. WYSIWYG card layout (preview mockup + edit fields side by side)
+ *   3. Shared mockup elements (avatar, header, media placeholder, body)
+ *   4. Platform overrides: Instagram, Facebook, TikTok, LinkedIn, X, Threads, YouTube
+ *   5. Publish modal
+ */
+
+/* ============================================================
+   1. PREVIEW TAB BAR
+   Shown above the post options grid, one tab per selected platform.
+   ============================================================ */
+
+.preview-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.preview-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.preview-tab:hover {
+  border-color: #6366f1;
+  color: #6366f1;
+  background: #f5f3ff;
+}
+
+.preview-tab.active {
+  border-color: #6366f1;
+  background: #6366f1;
+  color: #fff;
+}
+
+/* Small post count badge on each tab */
+.preview-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.25);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.preview-tab:not(.active) .preview-tab-count {
+  background: #e2e8f0;
+  color: #64748b;
+}
+
+/* ============================================================
+   2. WYSIWYG CARD LAYOUT
+   Each post option = one wysiwyg-card, split into:
+     - .wysiwyg-preview  (the platform mockup, read-only visual)
+     - .wysiwyg-edit     (editable fields that update the preview live)
+   ============================================================ */
+
+.post-options-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .post-options-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .post-options-grid { grid-template-columns: 1fr; }
+}
+
+.wysiwyg-card {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The visual platform mockup at the top of the card */
+.wysiwyg-preview {
+  border-bottom: 1.5px solid #e2e8f0;
+}
+
+/* The editable fields section below the mockup */
+.wysiwyg-edit {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wysiwyg-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+  flex-wrap: wrap;
+}
+
+/* Action button group — Save, Approve, Delete sit side by side */
+.post-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Editable field containers — reused from brief.js styles */
+.wysiwyg-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ============================================================
+   3. SHARED MOCKUP ELEMENTS
+   These classes are used across all platform mockups.
+   ============================================================ */
+
+/* The outer card wrapper for every platform mockup */
+.preview-card {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  background: #fff;
+  overflow: hidden;
+}
+
+/* Top row: avatar + username + optional action */
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+/* Round avatar showing user's brand initial */
+.preview-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.preview-user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-username {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-handle {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.preview-more {
+  color: #94a3b8;
+  font-size: 20px;
+  cursor: default;
+  line-height: 1;
+  padding: 0 2px;
+  letter-spacing: -1px;
+}
+
+/* Image/video placeholder — platforms override aspect-ratio */
+.preview-media {
+  width: 100%;
+  position: relative;
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  text-align: center;
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* When an actual image fills the zone, stretch it edge-to-edge.
+   Absolute positioning lets it escape the 16px padding of the parent. */
+.preview-media img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.preview-media-icon {
+  font-size: 26px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.preview-media-text {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+  max-width: 140px;
+}
+
+/* Caption / body */
+.preview-body {
+  padding: 8px 12px 10px;
+}
+
+.preview-hook {
+  font-size: 12px;
+  font-weight: 400;
+  color: #0f172a;
+  margin-bottom: 3px;
+  line-height: 1.4;
+}
+
+.preview-caption-text {
+  font-size: 11px;
+  color: #374151;
+  line-height: 1.5;
+  /* Clip to 3 lines to keep cards compact */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preview-hashtags {
+  font-size: 11px;
+  color: #6366f1;
+  margin-top: 4px;
+  line-height: 1.5;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preview-cta {
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 5px;
+  color: #6366f1;
+}
+
+/* ============================================================
+   4a. INSTAGRAM
+   Square image, gradient avatar ring, like/comment/share/save row
+   ============================================================ */
+
+.preview-instagram .preview-avatar {
+  /* Instagram gradient ring */
+  background: linear-gradient(45deg, #f9ce34, #ee2a7b, #6228d7);
+}
+
+.preview-instagram .preview-media {
+  aspect-ratio: 1 / 1;
+}
+
+.preview-instagram-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px 2px;
+}
+
+.preview-instagram-actions-right {
+  margin-left: auto;
+}
+
+.preview-action-icon {
+  font-size: 18px;
+  cursor: default;
+}
+
+.preview-likes {
+  padding: 0 12px 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.preview-instagram .preview-cta {
+  color: #1d9bf0; /* "link in bio" style */
+}
+
+/* ============================================================
+   4b. FACEBOOK
+   Light card, 16:9 media, reaction bar with emoji buttons
+   ============================================================ */
+
+.preview-facebook .preview-avatar {
+  background: #1877f2;
+  border-radius: 50%;
+}
+
+.preview-facebook .preview-media {
+  aspect-ratio: 16 / 9;
+}
+
+.preview-facebook .preview-body {
+  padding: 8px 14px 6px;
+}
+
+.preview-facebook-reactions {
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  padding: 2px 4px;
+}
+
+.preview-fb-action {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  color: #65676b;
+  padding: 5px 0;
+  cursor: default;
+  font-weight: 600;
+}
+
+.preview-facebook .preview-cta {
+  color: #1877f2;
+}
+
+/* ============================================================
+   4c. TIKTOK
+   Dark card, 9:16 vertical video, pink accent colours
+   ============================================================ */
+
+.preview-tiktok {
+  background: #111;
+  color: #fff;
+}
+
+.preview-tiktok .preview-header {
+  background: #111;
+}
+
+.preview-tiktok .preview-avatar {
+  background: linear-gradient(135deg, #ff0050, #00f2ea);
+}
+
+.preview-tiktok .preview-username {
+  color: #fff;
+}
+
+.preview-tiktok .preview-handle {
+  color: #888;
+}
+
+.preview-tiktok .preview-more {
+  color: #888;
+}
+
+.preview-tiktok .preview-media {
+  /* Capped height so cards aren't enormous in a 3-col grid */
+  aspect-ratio: 9 / 16;
+  max-height: 200px;
+  background: linear-gradient(180deg, #1a1a1a 0%, #2a2a2a 100%);
+}
+
+.preview-tiktok .preview-body {
+  background: #111;
+  padding: 6px 12px 4px;
+}
+
+.preview-tiktok .preview-hook {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preview-tiktok .preview-caption-text {
+  color: #ccc;
+  font-size: 11px;
+}
+
+.preview-tiktok .preview-hashtags {
+  color: #fe2c55;
+}
+
+.preview-tiktok .preview-cta {
+  color: #fe2c55;
+}
+
+.preview-tiktok-sidebar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 4px 12px 8px;
+  background: #111;
+}
+
+.preview-tiktok-icon {
+  font-size: 16px;
+  cursor: default;
+  color: #fff;
+}
+
+/* ============================================================
+   4d. LINKEDIN
+   Professional white card, square avatar, blue accents
+   ============================================================ */
+
+.preview-linkedin .preview-avatar {
+  background: #0077b5;
+  border-radius: 6px; /* Square-ish like LinkedIn profile photos */
+  width: 38px;
+  height: 38px;
+}
+
+.preview-linkedin .preview-media {
+  aspect-ratio: 16 / 9;
+}
+
+.preview-linkedin .preview-body {
+  padding: 8px 14px 6px;
+}
+
+.preview-linkedin .preview-caption-text {
+  color: rgba(0,0,0,0.75);
+}
+
+.preview-linkedin .preview-hashtags {
+  color: #0077b5;
+}
+
+.preview-linkedin .preview-cta {
+  color: #0077b5;
+}
+
+.preview-linkedin-reactions {
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  padding: 2px 6px;
+}
+
+/* ============================================================
+   4e. X (TWITTER)
+   White card, full-width tweet text, minimal action bar
+   ============================================================ */
+
+.preview-x .preview-avatar {
+  background: #000;
+}
+
+.preview-x .preview-body {
+  padding: 0 14px 8px;
+}
+
+/* On X, the hook IS the full tweet — hide the separate caption */
+.preview-x .preview-caption-text {
+  display: none;
+}
+
+.preview-x .preview-hook {
+  font-size: 13px;
+  font-weight: 400;
+  color: #0f172a;
+  line-height: 1.5;
+}
+
+.preview-x .preview-hashtags {
+  color: #1d9bf0;
+}
+
+.preview-x .preview-cta {
+  color: #1d9bf0;
+}
+
+.preview-x-actions {
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  gap: 20px;
+  padding: 6px 14px;
+}
+
+.preview-x-action {
+  font-size: 11px;
+  color: #536471;
+  cursor: default;
+}
+
+/* ============================================================
+   4f. THREADS
+   Clean minimal white card, no hashtags shown (Threads doesn't use them)
+   ============================================================ */
+
+.preview-threads .preview-avatar {
+  background: #000;
+}
+
+.preview-threads .preview-body {
+  padding: 0 14px 8px;
+}
+
+.preview-threads .preview-hook {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* Threads doesn't use hashtags — hide them in the preview */
+.preview-threads .preview-hashtags {
+  display: none;
+}
+
+.preview-threads .preview-cta {
+  color: #374151;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.preview-threads-actions {
+  display: flex;
+  gap: 12px;
+  padding: 4px 14px 8px;
+}
+
+.preview-threads-action {
+  font-size: 16px;
+  color: #374151;
+  cursor: default;
+}
+
+/* ============================================================
+   4g. YOUTUBE
+   Thumbnail (16:9) with play button overlay, title + channel below
+   ============================================================ */
+
+.preview-youtube .preview-media {
+  aspect-ratio: 16 / 9;
+  position: relative;
+  /* Darker gradient to suggest a video thumbnail */
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+}
+
+.preview-youtube-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 0, 0, 0.9);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.preview-youtube .preview-body {
+  padding: 8px 12px 10px;
+}
+
+/* On YouTube the "hook" is the video title — show it prominently */
+.preview-youtube-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.4;
+  margin-bottom: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The regular hook element is hidden — we use the title element instead */
+.preview-youtube .preview-hook {
+  display: none;
+}
+
+.preview-youtube-channel {
+  font-size: 11px;
+  color: #606060;
+  margin-bottom: 2px;
+}
+
+.preview-youtube .preview-hashtags {
+  color: #065fd4;
+}
+
+.preview-youtube .preview-cta {
+  color: #ff0000;
+}
+
+.preview-youtube-stats {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* ============================================================
+   5. PUBLISH MODAL
+   Shown when user clicks Approve — lets them schedule or publish now.
+   ============================================================ */
+
+/* Full-screen overlay */
+.publish-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.publish-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+}
+
+.publish-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
+.publish-modal-sub {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 24px;
+}
+
+/* Two big option buttons */
+.publish-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.publish-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.publish-option-btn:hover {
+  border-color: #6366f1;
+  background: #f5f3ff;
+}
+
+.publish-option-icon {
+  font-size: 28px;
+}
+
+.publish-option-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.publish-option-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+/* Schedule date/time form — hidden until user picks Schedule */
+.publish-schedule-form {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.publish-schedule-form.visible {
+  display: flex;
+}
+
+.publish-schedule-form label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.publish-schedule-form input[type="datetime-local"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #fff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.publish-schedule-form input[type="datetime-local"]:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px #e0e7ff;
+}
+
+.publish-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.publish-modal-cancel {
+  flex: 1;
+}
+
+/* ----------------------------------------------------------------
+   Publishing status spinner — shown on the post card while the
+   BullMQ worker is picking up and executing the publish job.
+   ---------------------------------------------------------------- */
+.publish-status-spinner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #92400e;
+}
+
+/* Animated pulsing dot */
+.publish-spinner-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: publish-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes publish-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+
+.publish-spinner-label {
+  font-weight: 500;
+}
+
+/* ============================================================
+   6. MEDIA LIBRARY
+   Provider cards, media grid, individual media cards.
+   ============================================================ */
+
+/* ---- Provider connection cards ---- */
+.provider-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  min-width: 200px;
+  flex: 1;
+}
+
+.provider-card.provider-connected {
+  border-color: #6366f1;
+  background: #f5f3ff;
+}
+
+.provider-icon {
+  font-size: 26px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.provider-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.provider-status {
+  font-size: 12px;
+  color: #6366f1;
+}
+
+/* ---- Media grid ---- */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+/* ---- Individual media card ---- */
+.media-card {
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.media-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  border-color: #c7d2fe;
+}
+
+.media-card-header {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.media-filename {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+  /* Truncate long filenames */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.media-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.theme-chip {
+  font-size: 11px;
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.media-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.platform-chip {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.media-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+}
+
+/* ---- Badge variants for media types ---- */
+.badge-video {
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.badge-image {
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.badge-secondary {
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* ---- Publish modal header (used by both publish.js and media.js modals) ---- */
+.publish-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.publish-modal-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+}
+
+.publish-modal-close:hover {
+  color: #0f172a;
+}
+
+/* ---- Extra button size variants ---- */
+.btn-xs {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.btn-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1.5px solid #fecaca;
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+  border-color: #f87171;
+}
+
+/* ---- Filter button active state ---- */
+.media-filter-btn.active {
+  background: #6366f1;
+  color: #fff;
+  border-color: #6366f1;
+}
+
+/* ---- Text size helpers ---- */
+.text-xs {
+  font-size: 11px;
+}
+
+.text-danger {
+  color: #ef4444;
+}
+
+/* ============================================================
+   META PAGE PICKER MODAL
+   Shown when the user has multiple Facebook Pages and needs
+   to choose which one to connect.
+   ============================================================ */
+
+.meta-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Each page is a full-width button card */
+.meta-page-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 18px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 500;
+  color: #1e293b;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.meta-page-option:hover:not(:disabled) {
+  background: #ede9fe;
+  border-color: #6366f1;
+  color: #4f46e5;
+}
+
+.meta-page-option:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Small badge shown when the page has a linked Instagram account */
+.meta-page-badge {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7c3aed;
+  background: #ede9fe;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* ============================================================
+   MEDIA ATTACHMENT — Post card media area
+   The "📎 Attach Media" button and attached-file display
+   shown on each post editing card in the brief results view.
+   ============================================================ */
+
+/* Empty state — shows the Attach Media button */
+.post-media-empty {
+  padding: 6px 0;
+}
+
+/* Attached state — thumbnail + filename + Remove button */
+.post-media-attached {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+}
+
+.post-media-preview {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.post-media-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.post-media-icon {
+  font-size: 22px;
+}
+
+.post-media-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.post-media-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #166534;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.post-media-remove {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #64748b;
+  padding: 2px 6px;
+}
+
+.post-media-remove:hover {
+  color: #ef4444;
+}
+
+/* ============================================================
+   MEDIA PICKER MODAL
+   Full-size modal with a searchable/filterable media grid.
+   ============================================================ */
+
+.media-picker-modal {
+  max-width: 700px;
+  width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.media-picker-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.media-picker-search {
+  flex: 1;
+  min-width: 160px;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+}
+
+.media-picker-search:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+
+.media-picker-filters {
+  display: flex;
+  gap: 6px;
+}
+
+.media-picker-filter {
+  padding: 6px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  font-size: 13px;
+  background: #f8fafc;
+  cursor: pointer;
+  color: #475569;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.media-picker-filter.active,
+.media-picker-filter:hover {
+  background: #ede9fe;
+  border-color: #6366f1;
+  color: #4f46e5;
+}
+
+.media-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  overflow-y: auto;
+  max-height: 50vh;
+  padding-right: 4px;
+}
+
+.media-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  cursor: default;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.media-picker-item:hover {
+  border-color: #6366f1;
+  background: #ede9fe;
+}
+
+/* Dedicated select button inside each media picker card.
+   Keeps preview (thumbnail) and selection (button) as separate actions. */
+.media-picker-select-btn {
+  margin-top: 4px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #6366f1;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.media-picker-select-btn:hover {
+  background: #4f46e5;
+}
+
+.media-picker-thumb {
+  width: 80px;
+  height: 60px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-picker-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-picker-icon {
+  font-size: 26px;
+}
+
+.media-picker-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #1e293b;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.media-picker-meta {
+  font-size: 10px;
+  color: #94a3b8;
+  text-transform: capitalize;
+}
+
+.media-picker-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 14px;
+  padding: 32px 16px;
+}
+
+/* Match relevance badges — shown on items when the picker is ranked */
+.media-match-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  align-self: flex-start;
+}
+
+.media-match-best {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.media-match-good {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+/* ============================================================
+   TRIM WARNING — shown on WYSIWYG post cards when an attached
+   video exceeds the platform's duration limit.
+   ============================================================ */
+
+.trim-warning {
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
+
+/* Red-tinted warning: video is too long */
+.trim-warning-over {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+}
+
+/* Green-tinted confirmation: video is fine */
+.trim-warning-ok {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+/* Informational (duration unknown) */
+.trim-info {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* Trim start row: label + number input + description */
+.trim-start-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.trim-start-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Slider header: label left, live "Xs → ends at M:SS" right */
+.trim-slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.trim-slider-value {
+  font-size: 12px;
+  color: #6366f1;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range slider */
+.trim-slider {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: linear-gradient(to right, #6366f1 0%, #6366f1 0%, #e2e8f0 0%, #e2e8f0 100%);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+.trim-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+.trim-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  cursor: pointer;
+}
+
+/* Min / mid / max tick labels under slider */
+.trim-slider-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* Tiny spinner variant for "Checking duration…" inline message */
+.spinner-xs {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   AI IMAGE GENERATION PANEL
+   Inline panel shown under "Recommended Media" on post cards.
+   ============================================================ */
+
+/* The collapsible container */
+.gen-image-panel {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f8faff;
+  border: 1px solid #c7d7f5;
+  border-radius: 8px;
+}
+
+/* Prompt textarea */
+.gen-image-prompt {
+  width: 100%;
+  font-size: 13px;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+
+/* Format selector row */
+.gen-image-size-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.gen-image-size-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gen-image-size-select {
+  font-size: 13px;
+  flex: 1;
+  min-width: 160px;
+}
+
+/* Generate + Cancel buttons row */
+.gen-image-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* Loading spinner + text */
+.gen-image-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #64748b;
+  padding: 8px 0;
+}
+
+/* Preview area after successful generation */
+.gen-image-preview {
+  margin-top: 8px;
+}
+
+.gen-image-result-img {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* Action buttons below the generated image */
+.gen-image-result-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Error message */
+.gen-image-error {
+  color: #dc2626;
+  font-size: 13px;
+  margin: 6px 0 0;
+}
+
+/* ================================================================
+   GENERATE ALL BAR
+   Sits above the 3-column post grid when no images are attached yet.
+   ================================================================ */
+
+.gen-all-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.gen-all-hint {
+  font-size: 13px;
+  color: #64748b;
+}
+.gen-all-status {
+  font-size: 13px;
+  color: #6366f1;
+  font-weight: 500;
+}
+
+/* Hint shown inside the gray media placeholder zone */
+.preview-media-add-hint {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 4px;
+  text-align: center;
+}
+
+/* ================================================================
+   SMART CLIP BUTTON
+   Sits inline with the trim warning or below the attach area.
+   Mirrors .btn .btn-sm sizing but uses a teal accent.
+   ================================================================ */
+
+.clip-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f766e;
+  background: #ccfbf1;
+  border: 1px solid #5eead4;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  margin-top: 6px;
+}
+.clip-picker-btn:hover:not(:disabled) {
+  background: #99f6e4;
+  border-color: #2dd4bf;
+}
+.clip-picker-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.clip-picker-btn--failed {
+  color: #92400e;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+/* Align button inline with the trim warning text */
+.trim-warning-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ================================================================
+   CLIP PICKER MODAL — overlay + panel
+   ================================================================ */
+
+/* Full-screen dark backdrop */
+.clip-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: clip-overlay-in 0.15s ease;
+}
+@keyframes clip-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* White modal panel */
+.clip-picker-modal {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  width: 100%;
+  max-width: 780px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: clip-modal-in 0.15s ease;
+}
+@keyframes clip-modal-in {
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Header row */
+.clip-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.clip-picker-title {
+  margin: 0 0 2px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+}
+.clip-picker-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+.clip-picker-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #94a3b8;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.clip-picker-close:hover {
+  color: #1e293b;
+  background: #f1f5f9;
+}
+
+/* Scrollable segment grid */
+.clip-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Individual segment card */
+.clip-card {
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.clip-card:hover {
+  border-color: #2dd4bf;
+  box-shadow: 0 4px 12px rgba(45, 212, 191, 0.2);
+  transform: translateY(-2px);
+}
+.clip-card:active {
+  transform: translateY(0);
+}
+
+/* Best match highlight */
+.clip-card--best-match {
+  border-color: #0d9488;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+}
+.clip-best-match-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: #0d9488;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 20px;
+  z-index: 2;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Thumbnail area */
+.clip-card-thumb-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #0f172a;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.clip-card-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.clip-card-thumb--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 28px;
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+/* Duration badge overlaid on thumbnail */
+.clip-card-duration {
+  position: absolute;
+  bottom: 5px;
+  right: 6px;
+  background: rgba(0,0,0,0.65);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Metadata section below thumbnail */
+.clip-card-meta {
+  padding: 8px 9px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.clip-card-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+.clip-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Platform match tag */
+.clip-platform-match {
+  font-size: 10px;
+  font-weight: 600;
+  color: #0369a1;
+  background: #e0f2fe;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+/* ---- Energy bars ---- */
+.clip-energy-wrap {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+.clip-energy-bar {
+  display: inline-block;
+  width: 4px;
+  border-radius: 2px;
+  background: #e2e8f0;
+  height: 100%;
+}
+/* Make each bar progressively taller (5 bars, 5 heights) */
+.clip-energy-wrap .clip-energy-bar:nth-child(1) { height: 40%; }
+.clip-energy-wrap .clip-energy-bar:nth-child(2) { height: 55%; }
+.clip-energy-wrap .clip-energy-bar:nth-child(3) { height: 70%; }
+.clip-energy-wrap .clip-energy-bar:nth-child(4) { height: 85%; }
+.clip-energy-wrap .clip-energy-bar:nth-child(5) { height: 100%; }
+.clip-energy-bar--on {
+  background: #0d9488;
+}
+
+/* ---- Pacing badge ---- */
+.clip-pacing-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.clip-pacing-badge--fast     { background: #fee2e2; color: #b91c1c; }
+.clip-pacing-badge--moderate { background: #fef9c3; color: #854d0e; }
+.clip-pacing-badge--slow     { background: #dcfce7; color: #166534; }
+
+/* "Use this clip" button at the bottom of each clip card */
+.clip-card-select-btn {
+  display: block;
+  width: calc(100% - 18px);
+  margin: 0 9px 9px;
+  padding: 7px 0;
+  font-size: 12px;
+  font-weight: 700;
+  background: #0d9488;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+.clip-card-select-btn:hover {
+  background: #0f766e;
+}
+
+/* Footer — cancel button */
+.clip-picker-footer {
+  padding: 12px 20px 14px;
+  border-top: 1px solid #e2e8f0;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Loading and error states */
+.clip-picker-modal--loading,
+.clip-picker-modal--error {
+  max-width: 360px;
+}
+.clip-picker-loading-body,
+.clip-picker-error-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+  color: #64748b;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ----------------------------------------------------------------
+   Generated image preview (AI image generation result)
+   ---------------------------------------------------------------- */
+.gen-image-preview {
+  margin-top: 10px;
+}
+
+.gen-image-result-img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+  border: 1px solid #e2e8f0;
+}
+
+.gen-image-result-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}

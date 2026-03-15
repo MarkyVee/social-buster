@@ -1,0 +1,4 @@
+# This directory is used for temporary local data storage by background agents.
+# Example: temporary video files during FFmpeg processing are written here
+# and cleaned up immediately after use.
+# In production, this maps to a Docker volume.
