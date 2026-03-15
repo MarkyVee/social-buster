@@ -34,13 +34,11 @@ const { Queue } = require('bullmq');
 // Docker Compose sets this to redis://redis:6379 automatically.
 // ----------------------------------------------------------------
 function getRedisConnection() {
-  const url  = process.env.REDIS_URL || 'redis://localhost:6379';
-  const parsed = new URL(url);
   return {
-    host:            parsed.hostname || 'localhost',
-    port:            parseInt(parsed.port || '6379', 10),
-    // If Redis ever gets a password set, add it here:
-    // password:     parsed.password || undefined,
+    host:                 process.env.REDIS_HOST     || 'localhost',
+    port:                 parseInt(process.env.REDIS_PORT || '6379', 10),
+    username:             process.env.REDIS_USERNAME || 'default',
+    password:             process.env.REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: null  // Required by BullMQ — disables ioredis auto-retry per command
   };
 }
