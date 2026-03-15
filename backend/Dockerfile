@@ -16,13 +16,16 @@ WORKDIR /app
 # Copy package files FIRST before source code.
 # This is a Docker best practice: if only source code changes
 # (not dependencies), Docker reuses the cached npm install layer.
-COPY package*.json ./
+COPY backend/package*.json ./
 
 # Install production dependencies
 RUN npm install --omit=dev
 
-# Copy the rest of the backend source code into the container
-COPY . .
+# Copy the backend source code into the container
+COPY backend/ .
+
+# Copy the frontend so Express can serve it as static files
+COPY frontend/ ../frontend/
 
 # The port our Express server listens on (must match PORT in .env)
 EXPOSE 3000
