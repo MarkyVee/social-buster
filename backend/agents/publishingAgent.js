@@ -46,10 +46,12 @@ const BATCH_CAP   = 50;  // Max posts processed per BullMQ job cycle
 // ----------------------------------------------------------------
 async function processQueue() {
   try {
-    // Recover posts stuck in 'publishing' for more than 2 minutes.
-    // Worst-case legitimate publish time: 3 attempts × 30s timeout + backoffs ≈ 105s.
-    // 2 minutes gives that headroom while catching truly stuck posts quickly.
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    // Recover posts stuck in 'publishing' for more than 15 minutes.
+    // Worst-case legitimate publish time for video:
+    //   Drive download (5 min) + H.264 re-encode at ultrafast (2-3 min) +
+    //   3 attempts × 30s timeout + backoffs ≈ 12-13 minutes total.
+    // 15 minutes gives headroom without leaving truly stuck posts waiting too long.
+    const twoMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     const { data: stale } = await supabaseAdmin
       .from('posts')
       .select('id')

@@ -264,7 +264,7 @@ async function trimWithReencode(inputPath, outputPath, startTime = 0, durationSe
       .videoCodec('libx264')
       .audioCodec('aac')
       .outputOptions([
-        '-preset fast',        // Balance quality/speed
+        '-preset ultrafast',   // Fastest encode — quality difference imperceptible for social media
         '-crf 23',             // Quality level (lower = better, 23 is fine for social)
         '-movflags +faststart'
       ])
