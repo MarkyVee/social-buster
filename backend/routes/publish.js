@@ -81,7 +81,7 @@ router.get('/oauth/meta/callback', async (req, res) => {
     if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
 
     // Step 1: Exchange the one-time code for a short-lived user access token
-    const tokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+    const tokenRes = await axios.get('https://graph.facebook.com/v21.0/oauth/access_token', {
       params: {
         client_id:     process.env.META_APP_ID,
         client_secret: process.env.META_APP_SECRET,
@@ -92,7 +92,7 @@ router.get('/oauth/meta/callback', async (req, res) => {
     const shortToken = tokenRes.data.access_token;
 
     // Step 2: Exchange short-lived token for a long-lived token (60 days)
-    const longTokenRes = await axios.get('https://graph.facebook.com/v19.0/oauth/access_token', {
+    const longTokenRes = await axios.get('https://graph.facebook.com/v21.0/oauth/access_token', {
       params: {
         grant_type:        'fb_exchange_token',
         client_id:         process.env.META_APP_ID,
@@ -105,7 +105,7 @@ router.get('/oauth/meta/callback', async (req, res) => {
     const expiresAt  = new Date(Date.now() + expiresIn * 1000).toISOString();
 
     // Step 3: Get the user's Facebook Pages (each page has its own permanent token)
-    const pagesRes = await axios.get('https://graph.facebook.com/v19.0/me/accounts', {
+    const pagesRes = await axios.get('https://graph.facebook.com/v21.0/me/accounts', {
       params: {
         access_token: longToken,
         fields:       'id,name,access_token,instagram_business_account'
@@ -171,7 +171,7 @@ async function saveMetaPageConnection(userId, page, finish) {
   if (page.instagram_business_account?.id) {
     try {
       const igRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${page.instagram_business_account.id}`,
+        `https://graph.facebook.com/v21.0/${page.instagram_business_account.id}`,
         { params: { access_token: page.access_token, fields: 'id,username' } }
       );
       const igAccount = igRes.data;
@@ -693,12 +693,13 @@ router.post('/oauth/meta/start', standardLimiter, (req, res) => {
   // Request scopes directly — no config_id needed.
   // pages_show_list       — list the user's Facebook Pages
   // pages_read_engagement — read page engagement (also enables IG account lookup)
-  // pages_manage_posts    — create/publish posts to a Page
-  //                         (requires Meta App Review for public launch, but works in
-  //                          Development mode for the app's own admin/developer accounts)
+  // pages_manage_posts    — create/publish posts to a Page (text, image, AND video
+  //                         via the Uploads API once the app is in Live mode)
+  // Note: publish_video does not exist as a use case for Business Apps — pages_manage_posts
+  //       covers video publishing once the app is published to Live mode.
   const scopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'].join(',');
 
-  const authUrl = `https://www.facebook.com/v19.0/dialog/oauth` +
+  const authUrl = `https://www.facebook.com/v21.0/dialog/oauth` +
     `?client_id=${encodeURIComponent(process.env.META_APP_ID)}` +
     `&redirect_uri=${encodeURIComponent(META_REDIRECT_URI)}` +
     `&scope=${encodeURIComponent(scopes)}` +

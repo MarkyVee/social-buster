@@ -170,21 +170,21 @@ async function seedPendingVideoAnalysis() {
 
     if (!staleError && staleItems && staleItems.length > 0) {
       console.log(`[Workers] Reset ${staleItems.length} stale 'analyzing' video(s) back to 'pending'`);
+
+      // Also wipe any partial segments left over from the interrupted analysis run.
+      // Without this, the re-run would insert duplicates on top of the partial data.
+      const staleIds = staleItems.map(i => i.id);
+      await supabaseAdmin
+        .from('video_segments')
+        .delete()
+        .in('media_item_id', staleIds);
     }
 
-    // ---- Reset 'failed' items so transient failures (network, concurrent stream,
-    //      etc.) are automatically retried on next startup rather than staying
-    //      stuck with "Analysis unavailable" in the UI forever. ----
-    const { data: failedItems, error: failedError } = await supabaseAdmin
-      .from('media_items')
-      .update({ analysis_status: 'pending' })
-      .eq('file_type', 'video')
-      .eq('analysis_status', 'failed')
-      .select('id');
-
-    if (!failedError && failedItems && failedItems.length > 0) {
-      console.log(`[Workers] Reset ${failedItems.length} failed video analysis item(s) back to 'pending' for retry`);
-    }
+    // NOTE: We intentionally do NOT auto-reset 'failed' items here.
+    // A video marked 'failed' either timed out repeatedly or has a corrupt/unsupported
+    // format. Auto-retrying it would loop forever and block the concurrency-1 analysis
+    // queue, starving newly uploaded videos. 'failed' shows a badge in the UI — the
+    // user can trigger a manual re-probe if they want to retry.
 
     // ---- Queue all pending items (including the ones we just reset) ----
     const { data: pendingVideos, error } = await supabaseAdmin

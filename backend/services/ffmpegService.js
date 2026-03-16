@@ -263,10 +263,15 @@ async function trimWithReencode(inputPath, outputPath, startTime = 0, durationSe
       .setDuration(durationSeconds)
       .videoCodec('libx264')
       .audioCodec('aac')
+      // scale filter: trunc(iw/2)*2 forces even pixel dimensions required by H.264.
+      // Odd-sized videos (e.g. from some Android phones) are rejected with error 351
+      // by Facebook and other platforms if dimensions aren't divisible by 2.
+      .videoFilters('scale=trunc(iw/2)*2:trunc(ih/2)*2')
       .outputOptions([
         '-preset ultrafast',   // Fastest encode — quality difference imperceptible for social media
         '-crf 23',             // Quality level (lower = better, 23 is fine for social)
-        '-movflags +faststart'
+        '-pix_fmt yuv420p',    // Force YUV 4:2:0 — required by Facebook, Instagram, TikTok
+        '-movflags +faststart' // Optimise for streaming: move moov atom to front of file
       ])
       .output(outputPath)
       .on('end', () => resolve(outputPath))

@@ -224,6 +224,13 @@ async function analyzeVideo(mediaItemId) {
 
     // ---- Step 8: Save segments to DB ----
     if (segmentRows.length > 0) {
+      // Delete any existing segments for this media item before inserting new ones.
+      // Without this, re-running analysis stacks duplicate rows (e.g. 5 runs × 10 chapters = 50 rows).
+      await supabaseAdmin
+        .from('video_segments')
+        .delete()
+        .eq('media_item_id', mediaItemId);
+
       const { error: insertError } = await supabaseAdmin
         .from('video_segments')
         .insert(segmentRows);

@@ -152,13 +152,23 @@ async function publishToFacebook(post, accessToken, connection) {
   // Wrap every axios call so Facebook's actual error message is surfaced.
   // Without this, axios throws "Request failed with status code 400" and the
   // real reason (e.g. "Duplicate post", "Invalid token") is silently discarded.
+  // error_subcode gives more specific info than error code alone — always log it.
   const fbCall = async (fn) => {
     try {
       return await fn();
     } catch (err) {
+      // Log the full raw response for diagnostics — helps identify permission errors
+      // vs. file errors vs. API configuration errors.
+      if (err.response) {
+        console.log('[PlatformAPIs] FB raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] FB network error (no response):', err.message);
+      }
       const fb = err.response?.data?.error;
       if (fb) {
-        throw new Error(`Facebook error ${fb.code}: ${fb.message} (type: ${fb.type})`);
+        const sub = fb.error_subcode ? ` subcode=${fb.error_subcode}` : '';
+        const msg = fb.error_user_msg || fb.message;
+        throw new Error(`Facebook error ${fb.code}${sub}: ${msg} (type: ${fb.type})`);
       }
       throw err;
     }
@@ -177,7 +187,7 @@ async function publishToFacebook(post, accessToken, connection) {
     form.append('published',    'true');
 
     const photoRes = await fbCall(() => axios.post(
-      `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
+      `https://graph.facebook.com/v21.0/${connection.platform_user_id}/photos`,
       form,
       { headers: form.getHeaders(), timeout: TIMEOUT }
     ));
@@ -186,16 +196,54 @@ async function publishToFacebook(post, accessToken, connection) {
   } else if (post.media_url && post.media_file_type === 'image' && !isGoogleDrive) {
     // Image from a public URL — Facebook fetches it directly, no server upload needed.
     const photoRes = await fbCall(() => axios.post(
-      `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
+      `https://graph.facebook.com/v21.0/${connection.platform_user_id}/photos`,
       null,
       { params: { url: post.media_url, caption: message, access_token: accessToken, published: true }, timeout: TIMEOUT }
     ));
     return { platformPostId: photoRes.data.post_id || photoRes.data.id };
 
-  } else if (post.media_url && post.media_file_type === 'video') {
-    // Facebook can pull a video directly from a URL
+  } else if (post.media_local_path && post.media_file_type === 'video') {
+    // Video from local temp file (re-encoded to H.264/AAC by publishingAgent).
+    //
+    // Simple multipart upload directly to /{page-id}/videos on graph-video.facebook.com.
+    // This is the primary documented approach for Page video publishing.
+    // Requires: pages_manage_posts on the Page token + app must be in Live mode.
+    const FormData = require('form-data');
+    const fs       = require('fs');
+    const fileSize = fs.statSync(post.media_local_path).size;
+    const title    = post.hook ? String(post.hook).slice(0, 100) : 'Video';
+
+    console.log(`[PlatformAPIs] FB video upload: multipart to graph-video.facebook.com — fileSize=${fileSize} bytes`);
+
+    const form = new FormData();
+    // knownLength is required — without it form-data can't set Content-Length for the file
+    // part, and Facebook rejects the upload immediately with error 351.
+    form.append('source',      fs.createReadStream(post.media_local_path), { filename: 'video.mp4', contentType: 'video/mp4', knownLength: fileSize });
+    form.append('description', message);
+    form.append('title',       title);
+    form.append('published',   'true');
+    // access_token goes in URL params, not form body — more reliable for large multipart uploads
+
     const videoRes = await fbCall(() => axios.post(
-      `https://graph.facebook.com/v19.0/${connection.platform_user_id}/videos`,
+      `https://graph-video.facebook.com/v21.0/${connection.platform_user_id}/videos`,
+      form,
+      {
+        params:           { access_token: accessToken },
+        headers:          form.getHeaders(),
+        maxBodyLength:    Infinity,
+        maxContentLength: Infinity,
+        timeout:          120_000  // 2-minute timeout — large video uploads can take a while
+      }
+    ));
+
+    console.log(`[PlatformAPIs] FB video upload OK — id=${videoRes.data.id}`);
+    return { platformPostId: videoRes.data.id };
+
+  } else if (post.media_url && post.media_file_type === 'video') {
+    // Fallback: Facebook pulls the video from a public URL (e.g. Supabase CDN).
+    // Only used when no local file is available.
+    const videoRes = await fbCall(() => axios.post(
+      `https://graph.facebook.com/v21.0/${connection.platform_user_id}/videos`,
       null,
       { params: { file_url: post.media_url, description: message, access_token: accessToken }, timeout: TIMEOUT }
     ));
@@ -205,7 +253,7 @@ async function publishToFacebook(post, accessToken, connection) {
     // Text-only post — optionally attach a link preview
     if (post.media_url && !isGoogleDrive) params.link = post.media_url;
     const res = await fbCall(() => axios.post(
-      `https://graph.facebook.com/v19.0/${connection.platform_user_id}/feed`,
+      `https://graph.facebook.com/v21.0/${connection.platform_user_id}/feed`,
       null,
       { params, timeout: TIMEOUT }
     ));
