@@ -135,11 +135,22 @@ router.put('/:id', standardLimiter, async (req, res) => {
           .single();
 
         if (mediaItem && mediaItem.process_status !== 'ready') {
-          // jobId deduplicates: re-attaching the same media won't queue it twice
+          const jobId = `process-media-${updates.media_id}`;
+
+          // Remove any existing failed/completed job with this ID so BullMQ
+          // doesn't silently ignore the new add() call (duplicate jobId prevention).
+          try {
+            const existing = await mediaProcessQueue.getJob(jobId);
+            if (existing) {
+              const state = await existing.getState();
+              if (state !== 'active') await existing.remove();
+            }
+          } catch (_) { /* non-fatal */ }
+
           await mediaProcessQueue.add(
             'process-media-item',
             { mediaItemId: updates.media_id },
-            { jobId: `process-media-${updates.media_id}`, removeOnComplete: true }
+            { jobId, removeOnComplete: true, removeOnFail: true }
           );
           console.log(`[Posts] Queued media processing for item ${updates.media_id}`);
         }
