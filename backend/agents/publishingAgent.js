@@ -192,8 +192,24 @@ async function publishPost(post) {
 
     console.log(`[PublishingAgent]    media ready: ${post.media_file_type} @ ${post.media_url}`);
 
+    // For images: download locally so we can upload via multipart form data.
+    // URL-based upload (/photos?url=) is unreliable — Facebook may reject Supabase
+    // URLs depending on size, headers, or CDN behaviour. Multipart is always reliable.
+    if (mediaItem.file_type === 'image') {
+      try {
+        const extension = (mediaItem.filename?.split('.').pop() || 'jpg').toLowerCase();
+        console.log(`[PublishingAgent]    Downloading image from Supabase for multipart upload...`);
+        const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
+        tempFilePaths.push(downloadedPath);
+        post.media_local_path = downloadedPath;
+        console.log(`[PublishingAgent]    Image downloaded → ${downloadedPath}`);
+      } catch (imgErr) {
+        // Non-fatal: fall back to URL-based upload if download fails.
+        console.warn(`[PublishingAgent]    Image download failed, falling back to URL: ${imgErr.message}`);
+      }
+    }
+
     // For videos: download locally and trim to the platform's duration limit.
-    // Images go straight to the platform API via URL — no local file needed.
     if (mediaItem.file_type === 'video' && PLATFORM_LIMITS[post.platform]) {
       try {
         const extension  = (mediaItem.filename?.split('.').pop() || 'mp4').toLowerCase();
