@@ -38,6 +38,25 @@ const BATCH_CAP   = 50;  // Max posts processed per BullMQ job cycle
 // ----------------------------------------------------------------
 async function processQueue() {
   try {
+    // Recover posts that have been stuck in 'publishing' for more than 5 minutes.
+    // This happens when an API call hangs without throwing (no timeout), or when
+    // the server restarted mid-publish. Mark them failed so the user can retry.
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: stale } = await supabaseAdmin
+      .from('posts')
+      .select('id')
+      .eq('status', 'publishing')
+      .lte('updated_at', fiveMinutesAgo);
+
+    if (stale?.length > 0) {
+      const staleIds = stale.map(p => p.id);
+      await supabaseAdmin
+        .from('posts')
+        .update({ status: 'failed', error_message: 'Publish timed out — please retry.' })
+        .in('id', staleIds);
+      console.warn(`[PublishingAgent] Reset ${staleIds.length} stale publishing post(s) to failed.`);
+    }
+
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
