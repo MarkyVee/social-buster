@@ -333,13 +333,37 @@ async function extractChapterThumbnails(item, interval, tempDir) {
 // Returns a Node.js ReadableStream for the video source.
 // ----------------------------------------------------------------
 async function getVideoStream(item) {
-  if (item.cloud_provider === 'google_drive' && item.cloud_file_id) {
-    return getGoogleDriveStream(item.user_id, item.cloud_file_id);
+  if (item.cloud_provider === 'google_drive') {
+    // Prefer stored file ID; fall back to extracting it from the cloud_url.
+    // We must NEVER use getUrlStream() for Drive files — Drive webViewLinks
+    // require a browser session. A plain HTTP GET returns an HTML login page,
+    // not video bytes, causing FFmpeg to report "no packets."
+    const fileId = item.cloud_file_id || extractDriveFileId(item.cloud_url);
+    if (fileId) {
+      return getGoogleDriveStream(item.user_id, fileId);
+    }
+    throw new Error('Google Drive video has no file ID and could not extract one from cloud_url');
   }
   if (item.cloud_url) {
     return getUrlStream(item.cloud_url);
   }
   throw new Error('No cloud source available for streaming');
+}
+
+// ----------------------------------------------------------------
+// extractDriveFileId
+//
+// Extracts the Drive file ID from common Drive URL formats:
+//   https://drive.google.com/file/d/{id}/view
+//   https://drive.google.com/open?id={id}
+// Returns null if no ID found.
+// ----------------------------------------------------------------
+function extractDriveFileId(url) {
+  if (!url) return null;
+  const match =
+    url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
 }
 
 async function getGoogleDriveStream(userId, fileId) {
