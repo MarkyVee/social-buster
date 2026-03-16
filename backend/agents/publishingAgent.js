@@ -30,6 +30,7 @@ const {
   downloadToTemp,
   probeVideo,
   trimVideo,
+  resizeImageIfNeeded,
   cleanupTemp,
   PLATFORM_LIMITS
 } = require('../services/ffmpegService');
@@ -201,8 +202,13 @@ async function publishPost(post) {
         console.log(`[PublishingAgent]    Downloading image from Supabase for multipart upload...`);
         const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
         tempFilePaths.push(downloadedPath);
-        post.media_local_path = downloadedPath;
-        console.log(`[PublishingAgent]    Image downloaded → ${downloadedPath}`);
+
+        // Resize if the image exceeds the platform's size limit
+        const resizedPath = await resizeImageIfNeeded(downloadedPath, post.platform);
+        if (resizedPath !== downloadedPath) tempFilePaths.push(resizedPath);
+
+        post.media_local_path = resizedPath;
+        console.log(`[PublishingAgent]    Image ready → ${resizedPath}`);
       } catch (imgErr) {
         // Non-fatal: fall back to URL-based upload if download fails.
         console.warn(`[PublishingAgent]    Image download failed, falling back to URL: ${imgErr.message}`);

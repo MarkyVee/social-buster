@@ -45,6 +45,24 @@ const PLATFORM_LIMITS = {
   threads:   300
 };
 
+// ----------------------------------------------------------------
+// Platform-specific maximum image file sizes in bytes.
+// Images larger than these limits will be downsampled before publishing.
+// ----------------------------------------------------------------
+const PLATFORM_IMAGE_LIMITS = {
+  facebook:  4  * 1024 * 1024,  // 4 MB
+  instagram: 8  * 1024 * 1024,  // 8 MB
+  x:         5  * 1024 * 1024,  // 5 MB
+  linkedin:  10 * 1024 * 1024,  // 10 MB
+  tiktok:    10 * 1024 * 1024,  // 10 MB
+  threads:   8  * 1024 * 1024,  // 8 MB
+  youtube:   Infinity            // YouTube does not accept image posts
+};
+
+// Max pixel length of the longest side after downsampling.
+// 2048px preserves high quality while keeping most photos well under 4 MB.
+const IMAGE_MAX_DIMENSION_PX = 2048;
+
 // Where temp files live — matches the Docker volume mount
 const TEMP_DIR = process.env.FFMPEG_TEMP_DIR || '/tmp/social-buster/videos';
 
@@ -293,11 +311,76 @@ function cleanupOldTempFiles(maxAgeHours = 24) {
   }
 }
 
+// ----------------------------------------------------------------
+// resizeImageIfNeeded
+//
+// Checks whether an image file exceeds the platform's size limit.
+// If it does, uses FFmpeg to scale down the longest side to
+// IMAGE_MAX_DIMENSION_PX (preserving aspect ratio, no re-encoding
+// of colour data — just a resolution reduction).
+//
+// Returns the path to the (possibly new) file.
+// If the image is already within the limit, the original path is
+// returned unchanged — no temp file is created.
+//
+// The caller is responsible for adding the returned path to
+// tempFilePaths so it gets cleaned up after publishing.
+// ----------------------------------------------------------------
+async function resizeImageIfNeeded(inputPath, platform) {
+  const limitBytes = PLATFORM_IMAGE_LIMITS[platform];
+
+  // Unknown platform or no limit defined — leave the file alone
+  if (!limitBytes || limitBytes === Infinity) return inputPath;
+
+  const fileSizeBytes = fs.statSync(inputPath).size;
+  if (fileSizeBytes <= limitBytes) return inputPath; // already within limit
+
+  ensureTempDir();
+
+  // Preserve the original extension so the output format matches the input
+  const ext        = path.extname(inputPath).replace('.', '') || 'jpg';
+  const outputPath = path.join(TEMP_DIR, `resized_${uuidv4()}.${ext}`);
+
+  console.log(
+    `[FFmpeg] Image ${Math.round(fileSizeBytes / 1024)}KB exceeds ` +
+    `${platform} limit (${Math.round(limitBytes / 1024)}KB) — ` +
+    `downsampling to max ${IMAGE_MAX_DIMENSION_PX}px on longest side...`
+  );
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      // Scale the longest side down to IMAGE_MAX_DIMENSION_PX.
+      // force_original_aspect_ratio=decrease: only shrinks, never enlarges.
+      // flags=lanczos: high-quality downsampling kernel (no blurry bicubic).
+      .videoFilters(
+        `scale=${IMAGE_MAX_DIMENSION_PX}:${IMAGE_MAX_DIMENSION_PX}` +
+        `:force_original_aspect_ratio=decrease:flags=lanczos`
+      )
+      .outputOptions([
+        '-q:v', '2',      // High-quality JPEG (scale 1–31, 2 = near-lossless)
+        '-frames:v', '1'  // Single image output — tell FFmpeg to stop after 1 frame
+      ])
+      .output(outputPath)
+      .on('end', resolve)
+      .on('error', (err) => reject(new Error(`Image resize failed: ${err.message}`)));
+  });
+
+  const newSizeBytes = fs.statSync(outputPath).size;
+  console.log(
+    `[FFmpeg] Image resized: ${Math.round(fileSizeBytes / 1024)}KB → ` +
+    `${Math.round(newSizeBytes / 1024)}KB`
+  );
+
+  return outputPath;
+}
+
 module.exports = {
   PLATFORM_LIMITS,
+  PLATFORM_IMAGE_LIMITS,
   downloadToTemp,
   probeVideo,
   trimVideo,
+  resizeImageIfNeeded,
   cleanupTemp,
   cleanupOldTempFiles
 };
