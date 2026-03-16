@@ -126,12 +126,49 @@
   flex-wrap: wrap;
 }
 
-/* Action button group — Save, Approve, Delete sit side by side */
+/* Action button group — Save Draft, Schedule, Publish Now, Delete */
 .post-card-actions {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   INLINE SCHEDULE FORM
+   Appears below the action buttons when the user clicks Schedule.
+   ============================================================ */
+
+/* Wrapper — slides in below the header row */
+.inline-schedule-form {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.inline-schedule-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+
+/* Input + buttons on one row */
+.inline-schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-schedule-input {
+  flex: 1;
+  min-width: 180px;
+  font-size: 13px;
 }
 
 /* Editable field containers — reused from brief.js styles */

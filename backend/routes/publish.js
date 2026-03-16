@@ -425,8 +425,8 @@ router.get('/queue', standardLimiter, async (req, res) => {
 
 // ----------------------------------------------------------------
 // DELETE /publish/queue/:id
-// Removes a post from the queue by reverting its status to 'approved'.
-// Only works for posts in 'scheduled' or 'failed' status.
+// Cancels a queued post and returns it to draft status so the user
+// can edit and re-schedule it. Works for scheduled, failed, or approved posts.
 // ----------------------------------------------------------------
 router.delete('/queue/:id', standardLimiter, async (req, res) => {
   try {
@@ -440,24 +440,24 @@ router.delete('/queue/:id', standardLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (!['scheduled', 'failed'].includes(post.status)) {
+    if (!['approved', 'scheduled', 'failed'].includes(post.status)) {
       return res.status(400).json({
-        error: `Cannot unqueue a post with status "${post.status}". Only scheduled or failed posts can be removed from the queue.`
+        error: `Cannot cancel a post with status "${post.status}".`
       });
     }
 
     const { error } = await req.db
       .from('posts')
-      .update({ status: 'approved', scheduled_at: null, error_message: null })
+      .update({ status: 'draft', scheduled_at: null, error_message: null })
       .eq('id', req.params.id);
 
     if (error) throw new Error(error.message);
 
-    return res.json({ message: 'Post removed from queue and returned to approved status' });
+    return res.json({ message: 'Post cancelled and returned to drafts' });
 
   } catch (err) {
     console.error('[Publish] Queue remove error:', err.message);
-    return res.status(500).json({ error: 'Failed to remove post from queue' });
+    return res.status(500).json({ error: 'Failed to cancel post' });
   }
 });
 

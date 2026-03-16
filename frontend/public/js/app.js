@@ -672,7 +672,7 @@ async function renderQueuePlaceholder(el) {
     <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div>
         <div class="page-title">Publishing Queue</div>
-        <div class="page-subtitle">Scheduled, approved, and recently published posts.</div>
+        <div class="page-subtitle">Posts scheduled for publishing and your recent publish history.</div>
       </div>
       <button class="btn btn-primary btn-sm" onclick="navigate('brief')">✏️ New Brief</button>
     </div>
@@ -692,41 +692,66 @@ async function renderQueuePlaceholder(el) {
       container.innerHTML = `
         <div class="card" style="text-align:center;padding:48px;">
           <div style="font-size:40px;margin-bottom:12px;">🗓️</div>
-          <div style="font-weight:600;margin-bottom:8px;">Queue is empty</div>
+          <div style="font-weight:600;margin-bottom:8px;">Nothing scheduled yet</div>
           <p class="text-muted text-sm" style="margin-bottom:20px;">
-            Approve a post and schedule it for publishing — it will appear here.
+            Create a brief, generate posts, then hit Publish Now or Schedule.
           </p>
           <button class="btn btn-primary" onclick="navigate('brief')">Create a Brief</button>
         </div>`;
       return;
     }
 
-    // Group by status for display order: scheduled → approved → failed → published
-    const order = ['scheduled','approved','publishing','failed','published'];
-    const sorted = [...posts].sort((a, b) =>
-      order.indexOf(a.status) - order.indexOf(b.status)
-    );
+    // Sort: publishing first, then scheduled (by time), then failed, then published (newest first)
+    const statusOrder = { publishing: 0, scheduled: 1, approved: 2, failed: 3, published: 4 };
+    const sorted = [...posts].sort((a, b) => {
+      const orderDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+      if (orderDiff !== 0) return orderDiff;
+      // Within the same status, sort by scheduled_at ascending (soonest first)
+      return new Date(a.scheduled_at || 0) - new Date(b.scheduled_at || 0);
+    });
 
+    // Renders a colour-coded status pill
     const statusBadge = s => {
-      const map = {
-        scheduled:  'background:#dbeafe;color:#1e40af',
-        approved:   'background:#dcfce7;color:#166534',
-        publishing: 'background:#fef9c3;color:#854d0e',
-        failed:     'background:#fee2e2;color:#b91c1c',
-        published:  'background:#f1f5f9;color:#475569'
+      const labels = {
+        scheduled:  { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
+        approved:   { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' }, // legacy
+        publishing: { bg: '#fef9c3', color: '#854d0e', text: 'Publishing…' },
+        failed:     { bg: '#fee2e2', color: '#b91c1c', text: 'Failed' },
+        published:  { bg: '#dcfce7', color: '#166534', text: 'Published' }
       };
-      return `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;${map[s]||''}">${s}</span>`;
+      const { bg, color, text } = labels[s] || { bg: '#f1f5f9', color: '#475569', text: s };
+      return `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:${bg};color:${color};">${text}</span>`;
     };
 
     container.innerHTML = sorted.map(post => {
-      const icon       = platformIcons[post.platform] || '📱';
-      const hook       = (post.hook || '').slice(0, 80);
-      const schedTime  = post.scheduled_at
-        ? new Date(post.scheduled_at).toLocaleString('en-AU', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+      const icon      = platformIcons[post.platform] || '📱';
+      const hook      = (post.hook || '').slice(0, 80);
+
+      // Format the relevant time depending on status
+      const schedTime = post.scheduled_at
+        ? new Date(post.scheduled_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
         : null;
-      const pubTime    = post.published_at
-        ? new Date(post.published_at).toLocaleString('en-AU', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+      const pubTime   = post.published_at
+        ? new Date(post.published_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
         : null;
+
+      // Build the time/info line under the hook text
+      let infoLine = '';
+      if (post.status === 'publishing') {
+        infoLine = `<span style="color:#854d0e;">⏳ Publishing now…</span>`;
+      } else if (post.status === 'published' && pubTime) {
+        infoLine = `✅ Published ${pubTime}`;
+      } else if ((post.status === 'scheduled' || post.status === 'approved') && schedTime) {
+        infoLine = `⏰ Sends ${schedTime}`;
+      } else if (post.status === 'failed') {
+        const errMsg = post.error_message ? post.error_message.slice(0, 100) : 'Unknown error';
+        infoLine = `<span style="color:#ef4444;">⚠ ${errMsg}</span>`;
+      }
+
+      // Build the action buttons for this post
+      const canCancel  = ['scheduled', 'approved', 'failed'].includes(post.status);
+      const canRetry   = post.status === 'failed';
+      const canDelete  = ['scheduled', 'approved', 'failed'].includes(post.status);
 
       return `
         <div class="card" style="margin-bottom:12px;">
@@ -736,21 +761,17 @@ async function renderQueuePlaceholder(el) {
               <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                 ${hook || '(no hook)'}
               </div>
-              <div style="font-size:11px;color:#94a3b8;margin-top:2px;">
-                ${schedTime ? `⏰ Scheduled: ${schedTime}` : ''}
-                ${pubTime   ? `✅ Published: ${pubTime}` : ''}
-                ${post.error_message ? `<span style="color:#ef4444;">⚠ ${post.error_message.slice(0,80)}</span>` : ''}
-              </div>
+              <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${infoLine}</div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
               ${statusBadge(post.status)}
-              ${['scheduled','failed'].includes(post.status)
-                ? `<button class="btn btn-secondary btn-xs" onclick="unqueuePost('${post.id}')">Unschedule</button>`
+              ${canRetry
+                ? `<button class="btn btn-secondary btn-xs" onclick="retryQueuePost('${post.id}', '${post.platform}')">Retry</button>`
                 : ''}
-              ${post.status === 'approved'
-                ? `<button class="btn btn-secondary btn-xs" onclick="publishNowFromQueue('${post.id}', '${post.platform}')">Publish Now</button>`
+              ${canCancel && !canRetry
+                ? `<button class="btn btn-secondary btn-xs" onclick="cancelQueuePost('${post.id}')">Cancel</button>`
                 : ''}
-              ${post.status !== 'published'
+              ${canDelete
                 ? `<button class="btn btn-danger btn-xs" onclick="deleteQueuePost('${post.id}')">Delete</button>`
                 : ''}
             </div>
@@ -764,32 +785,37 @@ async function renderQueuePlaceholder(el) {
   }
 }
 
-async function unqueuePost(postId) {
+// Cancels a scheduled post and returns it to drafts (user can re-edit and re-schedule)
+async function cancelQueuePost(postId) {
   try {
     await apiFetch(`/publish/queue/${postId}`, { method: 'DELETE' });
-    showAlert('queue-alerts', 'Post returned to approved status.', 'success');
+    showAlert('queue-alerts', 'Post cancelled — it\'s back in your drafts.', 'success');
     renderQueuePlaceholder(document.getElementById('main-content-area'));
   } catch (err) {
     showAlert('queue-alerts', err.message, 'error');
   }
 }
 
+// Retries a failed post by scheduling it for right now
+async function retryQueuePost(postId, platform) {
+  try {
+    await apiFetch(`/posts/${postId}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_at: new Date().toISOString() })
+    });
+    showAlert('queue-alerts', `Retrying ${platform} post — publishing within 60 seconds…`, 'success');
+    renderQueuePlaceholder(document.getElementById('main-content-area'));
+  } catch (err) {
+    showAlert('queue-alerts', err.message, 'error');
+  }
+}
+
+// Permanently deletes a post from the queue
 async function deleteQueuePost(postId) {
   if (!confirm('Permanently delete this post? This cannot be undone.')) return;
   try {
     await apiFetch(`/posts/${postId}`, { method: 'DELETE' });
     showAlert('queue-alerts', 'Post deleted.', 'success');
-    renderQueuePlaceholder(document.getElementById('main-content-area'));
-  } catch (err) {
-    showAlert('queue-alerts', err.message, 'error');
-  }
-}
-
-async function publishNowFromQueue(postId, platform) {
-  if (!confirm(`Publish this ${platform} post immediately?`)) return;
-  try {
-    await apiFetch(`/publish/${postId}`, { method: 'POST' });
-    showAlert('queue-alerts', `Post published to ${platform}!`, 'success');
     renderQueuePlaceholder(document.getElementById('main-content-area'));
   } catch (err) {
     showAlert('queue-alerts', err.message, 'error');

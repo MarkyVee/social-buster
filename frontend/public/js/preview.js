@@ -191,18 +191,43 @@ function renderWysiwygCard(post, platform) {
               class="btn btn-sm btn-secondary save-post-btn"
               data-id="${post.id}"
               onclick="savePostEdits('${post.id}')"
-            >💾 Save</button>
+            >Save Draft</button>
             <button
-              class="btn btn-sm btn-primary approve-post-btn"
+              class="btn btn-sm btn-secondary schedule-post-btn"
               data-id="${post.id}"
-              onclick="showPublishOptions('${post.id}')"
-            >✅ Approve</button>
+              onclick="toggleInlineSchedule('${post.id}')"
+            >🗓️ Schedule</button>
+            <button
+              class="btn btn-sm btn-primary publish-now-btn"
+              data-id="${post.id}"
+              onclick="handlePublishNow('${post.id}')"
+            >🚀 Publish Now</button>
             <button
               class="btn btn-sm btn-danger delete-post-btn"
               data-id="${post.id}"
               onclick="deletePost('${post.id}')"
               title="Delete this post"
             >🗑️</button>
+          </div>
+        </div>
+
+        <!-- Inline schedule form — hidden until user clicks Schedule -->
+        <div class="inline-schedule-form" id="inline-schedule-${post.id}" style="display:none;">
+          <label class="inline-schedule-label">Pick a date and time to auto-publish:</label>
+          <div class="inline-schedule-row">
+            <input
+              type="datetime-local"
+              class="form-control form-control-sm inline-schedule-input"
+              id="inline-schedule-dt-${post.id}"
+            />
+            <button
+              class="btn btn-sm btn-primary"
+              onclick="submitInlineSchedule('${post.id}')"
+            >Confirm</button>
+            <button
+              class="btn btn-sm btn-secondary"
+              onclick="toggleInlineSchedule('${post.id}')"
+            >Cancel</button>
           </div>
         </div>
 
