@@ -60,7 +60,7 @@ async function processQueue() {
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, ai_image_url, trim_start_seconds, scheduled_at')
+      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, scheduled_at')
       .eq('status', 'scheduled')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
