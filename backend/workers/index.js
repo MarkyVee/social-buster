@@ -172,6 +172,20 @@ async function seedPendingVideoAnalysis() {
       console.log(`[Workers] Reset ${staleItems.length} stale 'analyzing' video(s) back to 'pending'`);
     }
 
+    // ---- Reset 'failed' items so transient failures (network, concurrent stream,
+    //      etc.) are automatically retried on next startup rather than staying
+    //      stuck with "Analysis unavailable" in the UI forever. ----
+    const { data: failedItems, error: failedError } = await supabaseAdmin
+      .from('media_items')
+      .update({ analysis_status: 'pending' })
+      .eq('file_type', 'video')
+      .eq('analysis_status', 'failed')
+      .select('id');
+
+    if (!failedError && failedItems && failedItems.length > 0) {
+      console.log(`[Workers] Reset ${failedItems.length} failed video analysis item(s) back to 'pending' for retry`);
+    }
+
     // ---- Queue all pending items (including the ones we just reset) ----
     const { data: pendingVideos, error } = await supabaseAdmin
       .from('media_items')

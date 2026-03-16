@@ -26,6 +26,7 @@
 
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { publish }        = require('../services/platformAPIs');
+const { downloadGoogleDriveFile } = require('../services/googleDriveService');
 const {
   downloadToTemp,
   probeVideo,
@@ -221,8 +222,16 @@ async function publishPost(post) {
         const extension  = (mediaItem.filename?.split('.').pop() || 'mp4').toLowerCase();
         const startTime  = post.trim_start_seconds || 0;
 
-        console.log(`[PublishingAgent]    Downloading video from Supabase for trim check...`);
-        const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
+        // Google Drive videos are never copied to Supabase (file size can exceed
+        // Supabase's 50 MB free tier limit). Download via the Drive API instead.
+        let downloadedPath;
+        if (mediaItem.cloud_provider === 'google_drive') {
+          console.log(`[PublishingAgent]    Downloading video from Google Drive via API...`);
+          downloadedPath = await downloadGoogleDriveFile(post.user_id, mediaItem.cloud_url, extension);
+        } else {
+          console.log(`[PublishingAgent]    Downloading video from Supabase for trim check...`);
+          downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
+        }
         tempFilePaths.push(downloadedPath);
 
         const { duration } = await probeVideo(downloadedPath);

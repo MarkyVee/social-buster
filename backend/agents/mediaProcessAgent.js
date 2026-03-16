@@ -122,7 +122,15 @@ async function resolveProcessedUrl(item) {
     return item.cloud_url;
   }
 
-  // Google Drive: download via authenticated Drive API, then upload to Supabase.
+  // Google Drive VIDEOS: skip Supabase copy entirely.
+  // Videos can be hundreds of MB — Supabase free tier limits uploads to 50 MB.
+  // At publish time, publishingAgent downloads the video directly via Drive API.
+  if (item.cloud_provider === 'google_drive' && item.file_type === 'video') {
+    console.log(`[MediaProcess] Google Drive video — skipping Supabase copy, will download via Drive API at publish time`);
+    return item.cloud_url;
+  }
+
+  // Google Drive IMAGES: download via authenticated Drive API, then upload to Supabase.
   // We CANNOT use the webViewLink URL directly — it requires a browser session.
   if (item.cloud_provider === 'google_drive') {
     const extension   = getExtension(item.filename, item.file_type);
