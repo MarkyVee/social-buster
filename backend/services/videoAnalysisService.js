@@ -46,12 +46,13 @@ const os        = require('os');
 const fs        = require('fs/promises');
 const fssync    = require('fs');
 const axios     = require('axios');
-const { spawn } = require('child_process');    // native spawn for pipe:0
+const { spawn } = require('child_process');
 const ffmpeg    = require('fluent-ffmpeg');    // kept only for ffprobe
 
-const { supabaseAdmin }        = require('./supabaseService');
-const { getGoogleDriveClient } = require('./googleDriveService');
-const { tagSegmentWithVision } = require('./visionTaggingService');
+const { supabaseAdmin }                              = require('./supabaseService');
+const { getGoogleDriveClient, downloadGoogleDriveFile } = require('./googleDriveService');
+const { tagSegmentWithVision }                       = require('./visionTaggingService');
+const { downloadToTemp, cleanupTemp }                = require('./ffmpegService');
 
 // Use FFMPEG_PATH env var if set (e.g. in Docker). Applies to both ffprobe and spawn.
 const FFMPEG_BIN = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -152,11 +153,23 @@ async function analyzeVideo(mediaItemId) {
     const expectedChapters = Math.floor(durationSeconds / interval);
     console.log(`[VideoAnalysis] ${item.filename}: ${Math.round(durationSeconds)}s → 1 chapter every ${interval}s (~${expectedChapters} total)`);
 
-    // ---- Step 5: Stream video → FFmpeg pipe → extract chapter JPEGs ----
-    // No full download — the stream is piped directly into FFmpeg stdin.
+    // ---- Step 5: Download video then extract chapter JPEGs ----
+    // We download to a local temp file rather than streaming via pipe:0.
+    // Piping MP4/MOV into FFmpeg stdin fails when the moov atom (metadata)
+    // is stored at the END of the file — FFmpeg reads to EOF without finding
+    // the format header and reports "Invalid data found when processing input."
+    // Downloading first lets FFmpeg seek freely, which always works correctly.
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-analysis-'));
 
-    await extractChapterThumbnails(item, interval, tempDir);
+    const extension       = (item.filename?.split('.').pop() || 'mp4').toLowerCase();
+    const downloadedVideo = await downloadVideoForAnalysis(item, extension);
+
+    try {
+      await extractChapterThumbnails(downloadedVideo, interval, tempDir);
+    } finally {
+      // Clean up the downloaded video regardless of whether thumbnail extraction succeeded
+      cleanupTemp(downloadedVideo);
+    }
 
     // ---- Step 6: Find generated thumbnails ----
     const thumbFiles = (await fs.readdir(tempDir))
@@ -242,50 +255,50 @@ async function analyzeVideo(mediaItemId) {
 // ----------------------------------------------------------------
 // extractChapterThumbnails
 //
-// The core of the v2 pipeline. Opens a stream from the video source
-// and pipes it directly into FFmpeg's stdin (pipe:0). FFmpeg extracts
-// one JPEG frame every `interval` seconds in a single pass.
+// Runs FFmpeg on a local video file to extract one JPEG thumbnail
+// every `interval` seconds. Saves them to `tempDir` as thumb001.jpg,
+// thumb002.jpg, etc.
 //
-// No video file is written to disk — only small JPEG thumbnails.
-//
-// Uses native child_process.spawn (not fluent-ffmpeg) because
-// fluent-ffmpeg doesn't handle pipe:0 input cleanly.
+// Takes a local file path — NOT a stream. The previous pipe:0 approach
+// failed for MP4/MOV files whose moov atom is at the end of the file:
+// FFmpeg can't seek backwards in a pipe, so it reads to EOF without
+// finding the format header and reports "Invalid data."
 // ----------------------------------------------------------------
-async function extractChapterThumbnails(item, interval, tempDir) {
+async function extractChapterThumbnails(videoPath, interval, tempDir) {
   const outputPattern = path.join(tempDir, 'thumb%03d.jpg');
 
-  // fps=1/N  → exactly one frame every N seconds (reliable, works at any frame rate)
-  // scale=320:-2 → resize to 320px wide, height auto (aspect ratio preserved)
-  // -vsync vfr  → variable frame rate output so FFmpeg doesn't duplicate frames
-  // -q:v 3      → good quality JPEG (scale 1=best, 31=worst)
+  // fps=1/N  → exactly one frame every N seconds
+  // scale=320:-2 → 320px wide, height auto (aspect ratio preserved)
+  // -vsync vfr  → variable frame rate so FFmpeg doesn't pad with duplicate frames
+  // -q:v 3      → good quality JPEG (1=best, 31=worst)
   // -an         → strip audio (not needed for thumbnails)
   const ffmpegArgs = [
-    '-i',      'pipe:0',
-    '-vf',     `fps=1/${interval},scale=320:-2`,
-    '-vsync',  'vfr',
-    '-q:v',    '3',
+    '-i',     videoPath,
+    '-vf',    `fps=1/${interval},scale=320:-2`,
+    '-vsync', 'vfr',
+    '-q:v',   '3',
     '-an',
     outputPattern
   ];
 
-  return new Promise(async (resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const proc = spawn(FFMPEG_BIN, ffmpegArgs);
 
     // Collect stderr so we can include it in error messages for debugging
     let stderr = '';
     proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
 
-    // Hard timeout — if the stream or FFmpeg hangs, kill the process
+    // Hard timeout — if FFmpeg hangs (e.g. corrupt file), kill the process
     let timedOut = false;
     const timeoutId = setTimeout(() => {
       timedOut = true;
       proc.kill('SIGTERM');
-      reject(new Error(`Stream pipe timed out after ${STREAM_TIMEOUT_MS / 60000} minutes`));
+      reject(new Error(`FFmpeg timed out after ${STREAM_TIMEOUT_MS / 60000} minutes`));
     }, STREAM_TIMEOUT_MS);
 
     proc.on('close', (code) => {
       clearTimeout(timeoutId);
-      if (timedOut) return; // already rejected
+      if (timedOut) return;
       if (code === 0) {
         resolve();
       } else {
@@ -297,103 +310,29 @@ async function extractChapterThumbnails(item, interval, tempDir) {
       clearTimeout(timeoutId);
       reject(new Error(`FFmpeg spawn failed: ${err.message}`));
     });
-
-    // Suppress EPIPE errors on stdin — these are expected when FFmpeg closes
-    // its end of the pipe after receiving all the data it needs.
-    proc.stdin.on('error', (err) => {
-      if (err.code !== 'EPIPE') {
-        clearTimeout(timeoutId);
-        reject(new Error(`FFmpeg stdin error: ${err.message}`));
-      }
-    });
-
-    // Open the video stream and pipe it into FFmpeg's stdin
-    try {
-      const inputStream = await getVideoStream(item);
-
-      inputStream.on('error', (err) => {
-        clearTimeout(timeoutId);
-        proc.kill('SIGTERM');
-        reject(new Error(`Video stream error: ${err.message}`));
-      });
-
-      inputStream.pipe(proc.stdin);
-
-    } catch (streamErr) {
-      clearTimeout(timeoutId);
-      proc.kill('SIGTERM');
-      reject(streamErr);
-    }
   });
 }
 
 // ----------------------------------------------------------------
-// getVideoStream
+// downloadVideoForAnalysis
 //
-// Returns a Node.js ReadableStream for the video source.
+// Downloads the video to a local temp file so FFmpeg can run on it.
+// Using a local file (vs piping) lets FFmpeg seek freely, which is
+// required for MP4/MOV files that store metadata at the end.
 // ----------------------------------------------------------------
-async function getVideoStream(item) {
+async function downloadVideoForAnalysis(item, extension) {
   if (item.cloud_provider === 'google_drive') {
-    // Prefer stored file ID; fall back to extracting it from the cloud_url.
-    // We must NEVER use getUrlStream() for Drive files — Drive webViewLinks
-    // require a browser session. A plain HTTP GET returns an HTML login page,
-    // not video bytes, causing FFmpeg to report "no packets."
-    const fileId = item.cloud_file_id || extractDriveFileId(item.cloud_url);
-    if (fileId) {
-      return getGoogleDriveStream(item.user_id, fileId);
-    }
-    throw new Error('Google Drive video has no file ID and could not extract one from cloud_url');
+    // Drive webViewLinks require OAuth — use the authenticated Drive API
+    console.log(`[VideoAnalysis] Downloading from Google Drive for analysis...`);
+    return downloadGoogleDriveFile(item.user_id, item.cloud_url, extension);
   }
   if (item.cloud_url) {
-    return getUrlStream(item.cloud_url);
+    console.log(`[VideoAnalysis] Downloading from URL for analysis: ${item.cloud_url}`);
+    return downloadToTemp(item.cloud_url, extension);
   }
-  throw new Error('No cloud source available for streaming');
+  throw new Error('No cloud source available for download');
 }
 
-// ----------------------------------------------------------------
-// extractDriveFileId
-//
-// Extracts the Drive file ID from common Drive URL formats:
-//   https://drive.google.com/file/d/{id}/view
-//   https://drive.google.com/open?id={id}
-// Returns null if no ID found.
-// ----------------------------------------------------------------
-function extractDriveFileId(url) {
-  if (!url) return null;
-  const match =
-    url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
-    url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  return match ? match[1] : null;
-}
-
-async function getGoogleDriveStream(userId, fileId) {
-  const { data: connection, error } = await supabaseAdmin
-    .from('cloud_connections')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('provider', 'google_drive')
-    .single();
-
-  if (error || !connection) {
-    throw new Error('Google Drive connection not found — user may have disconnected');
-  }
-
-  const { drive }  = await getGoogleDriveClient(userId, connection);
-  const response   = await drive.files.get(
-    { fileId, alt: 'media' },
-    { responseType: 'stream' }
-  );
-
-  return response.data;
-}
-
-async function getUrlStream(url) {
-  const response = await axios.get(url, {
-    responseType: 'stream',
-    timeout:      30000   // connection/header timeout; stream itself is managed by the pipe timeout
-  });
-  return response.data;
-}
 
 // ----------------------------------------------------------------
 // resolveVideoDuration
