@@ -150,7 +150,7 @@ async function publishToFacebook(post, accessToken, connection) {
   // For actual photo/video uploads the Graph API requires separate upload steps —
   // those are handled below if media_local_path is present (image) or media_url (video).
   if (post.media_local_path && post.media_file_type === 'image') {
-    // Upload photo via multipart to /{page-id}/photos, then publish to feed
+    // Image from local temp file — upload via multipart to /{page-id}/photos
     const FormData = require('form-data');
     const fs       = require('fs');
     const form     = new FormData();
@@ -163,6 +163,16 @@ async function publishToFacebook(post, accessToken, connection) {
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
       form,
       { headers: form.getHeaders() }
+    );
+    return { platformPostId: photoRes.data.post_id || photoRes.data.id };
+
+  } else if (post.media_url && post.media_file_type === 'image' && !isGoogleDrive) {
+    // Image from a public URL (e.g. AI-generated image in Supabase storage)
+    // Facebook can fetch images directly from a URL via the /photos endpoint
+    const photoRes = await axios.post(
+      `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
+      null,
+      { params: { url: post.media_url, caption: message, access_token: accessToken, published: true } }
     );
     return { platformPostId: photoRes.data.post_id || photoRes.data.id };
 

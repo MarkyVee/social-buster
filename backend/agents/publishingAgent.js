@@ -41,7 +41,7 @@ async function processQueue() {
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, scheduled_at')
+      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, ai_image_url, trim_start_seconds, scheduled_at')
       .eq('status', 'scheduled')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -169,6 +169,13 @@ async function publishPost(post) {
         }
       }
     }
+  }
+
+  // If no media library item was attached but the post has an AI-generated image,
+  // use that as the image to publish. ai_image_url is a public Supabase storage URL.
+  if (!post.media_url && post.ai_image_url) {
+    post.media_url       = post.ai_image_url;
+    post.media_file_type = 'image';
   }
 
   // Attempt publish with retries and exponential backoff.
