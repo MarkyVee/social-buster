@@ -134,20 +134,31 @@ function checkLimit(feature) {
     if (!userId) return next();
 
     try {
-      // 1. Get the user's current plan from the subscriptions table.
-      // Plan values: free | starter | professional | enterprise
-      // We normalise 'free' → 'free_trial' to match the tier_limits table keys.
-      // Treat cancelled or past_due subscriptions as free_trial for limit purposes.
-      const { data: sub } = await supabaseAdmin
-        .from('subscriptions')
-        .select('plan, status')
+      // 1. Get the user's current plan.
+      // Admin overrides are stored in user_profiles.subscription_tier and take
+      // priority over the Stripe subscriptions table. This lets admins manually
+      // upgrade/downgrade any user without needing a Stripe event.
+      const { data: profile } = await supabaseAdmin
+        .from('user_profiles')
+        .select('subscription_tier')
         .eq('user_id', userId)
         .single();
 
-      const activePlan = (sub?.status === 'active' || sub?.status === 'trialing')
-        ? (sub?.plan || 'free')
-        : 'free';
-      const tier = activePlan === 'free' ? 'free_trial' : activePlan;
+      let tier = profile?.subscription_tier || null;
+
+      // If no admin override, fall back to the Stripe subscriptions table
+      if (!tier) {
+        const { data: sub } = await supabaseAdmin
+          .from('subscriptions')
+          .select('plan, status')
+          .eq('user_id', userId)
+          .single();
+
+        const activePlan = (sub?.status === 'active' || sub?.status === 'trialing')
+          ? (sub?.plan || 'free')
+          : 'free';
+        tier = activePlan === 'free' ? 'free_trial' : activePlan;
+      }
 
       // 2. Look up this tier's limit for the feature
       const limit = await getLimitForFeature(tier, feature);
