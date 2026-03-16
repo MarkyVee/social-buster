@@ -236,18 +236,17 @@ async function publishPost(post) {
 
         const { duration } = await probeVideo(downloadedPath);
         const platformLimit = PLATFORM_LIMITS[post.platform];
-        const needsTrim = (duration - startTime) > platformLimit || startTime > 0;
 
-        console.log(`[PublishingAgent]    Video: duration=${duration}s limit=${platformLimit}s needsTrim=${needsTrim}`);
+        console.log(`[PublishingAgent]    Video: duration=${duration}s limit=${platformLimit}s startTime=${startTime}s`);
 
-        if (needsTrim) {
-          const trimmedPath = await trimVideo(downloadedPath, post.platform, startTime);
-          if (trimmedPath !== downloadedPath) tempFilePaths.push(trimmedPath);
-          post.media_local_path = trimmedPath;
-          console.log(`[PublishingAgent]    Trimmed video → ${trimmedPath}`);
-        } else {
-          post.media_local_path = downloadedPath;
-        }
+        // Always re-encode to H.264/AAC (forceReencode=true).
+        // Source videos from phones are often H.265/HEVC — Facebook and other
+        // platforms reject those even in an MP4 container (error 351).
+        // trimVideo handles both trimming AND codec conversion in one pass.
+        const reEncodedPath = await trimVideo(downloadedPath, post.platform, startTime, true);
+        if (reEncodedPath !== downloadedPath) tempFilePaths.push(reEncodedPath);
+        post.media_local_path = reEncodedPath;
+        console.log(`[PublishingAgent]    Video ready → ${reEncodedPath}`);
 
       } catch (videoErr) {
         // Non-fatal: fall back to the cloud URL and let the platform API try to

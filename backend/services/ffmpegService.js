@@ -180,7 +180,11 @@ async function probeVideo(inputPath) {
 //
 // Returns the path to the output file.
 // ----------------------------------------------------------------
-async function trimVideo(inputPath, platform, startTime = 0) {
+// forceReencode — when true, always re-encode to H.264/AAC regardless of the
+// source codec. Pass true when publishing to social media platforms, since they
+// require H.264 video + AAC audio. Source videos from phones are often H.265/HEVC
+// which all major platforms reject with a codec error even if the container is MP4.
+async function trimVideo(inputPath, platform, startTime = 0, forceReencode = false) {
   const maxDuration = PLATFORM_LIMITS[platform];
   if (!maxDuration) {
     throw new Error(`Unknown platform "${platform}". Check PLATFORM_LIMITS in ffmpegService.js`);
@@ -192,12 +196,6 @@ async function trimVideo(inputPath, platform, startTime = 0) {
   // Effective duration = total video length minus the start offset
   const effectiveDuration = duration - startTime;
 
-  if (startTime === 0 && effectiveDuration <= maxDuration) {
-    // Already within limit and no offset — no trim needed, return input path as-is
-    console.log(`[FFmpeg] Video is ${duration}s (limit: ${maxDuration}s) — no trim needed`);
-    return inputPath;
-  }
-
   // Cap the output duration at the platform limit
   const outputDuration = Math.min(effectiveDuration, maxDuration);
 
@@ -205,19 +203,32 @@ async function trimVideo(inputPath, platform, startTime = 0) {
   const outputFilename = `trimmed_${uuidv4()}.mp4`;
   const outputPath     = path.join(TEMP_DIR, outputFilename);
 
+  // When forceReencode is set (social media publishing), skip stream copy entirely
+  // and go straight to re-encode. Guarantees H.264/AAC output that every platform accepts.
+  // Also handles the case where no trim is needed but re-encoding is still required
+  // (e.g. a short H.265 video that's within duration but has the wrong codec).
+  if (forceReencode) {
+    console.log(`[FFmpeg] Re-encoding to H.264/AAC: start=${startTime}s duration=${outputDuration}s for ${platform}`);
+    return trimWithReencode(inputPath, outputPath, startTime, outputDuration);
+  }
+
+  if (startTime === 0 && effectiveDuration <= maxDuration) {
+    // Already within limit, no offset, no re-encode needed — return input as-is
+    console.log(`[FFmpeg] Video is ${duration}s (limit: ${maxDuration}s) — no trim needed`);
+    return inputPath;
+  }
+
   console.log(`[FFmpeg] Trimming video: start=${startTime}s duration=${outputDuration}s (platform limit: ${maxDuration}s) for ${platform}`);
 
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
       .setStartTime(startTime)
       .setDuration(outputDuration)
-      // Use stream copy when possible (no re-encoding = much faster + no quality loss)
-      // If the source is already H264/AAC this works; for other codecs it falls back
       .videoCodec('copy')
       .audioCodec('copy')
       .outputOptions([
         '-avoid_negative_ts make_zero',
-        '-movflags +faststart' // Optimize MP4 for streaming
+        '-movflags +faststart'
       ])
       .output(outputPath)
       .on('start', cmd => console.log(`[FFmpeg] Command: ${cmd}`))
@@ -225,9 +236,8 @@ async function trimVideo(inputPath, platform, startTime = 0) {
         console.log(`[FFmpeg] Trim complete → ${outputFilename}`);
         resolve(outputPath);
       })
-      .on('error', (err, stdout, stderr) => {
+      .on('error', (err) => {
         console.error('[FFmpeg] Trim error:', err.message);
-        // If stream copy failed (incompatible codec), retry with re-encode
         if (err.message.includes('Invalid data')) {
           console.log('[FFmpeg] Stream copy failed, retrying with re-encode...');
           trimWithReencode(inputPath, outputPath, startTime, outputDuration)
