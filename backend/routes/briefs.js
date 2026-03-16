@@ -41,7 +41,7 @@ const VALID_PLATFORMS  = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 't
 // 7. Return the brief and all generated posts
 // ----------------------------------------------------------------
 router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => {
-  const { post_type, objective, tone, target_audience, platforms, notes } = req.body;
+  const { post_type, objective, tone, platforms, notes } = req.body;
   const userId = req.userId;
 
   // --- Validate required fields ---
@@ -55,9 +55,7 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
   if (!tone || !VALID_TONES.includes(tone.toLowerCase())) {
     errors.push('Invalid or missing tone');
   }
-  if (!target_audience || target_audience.trim().length < 5) {
-    errors.push('target_audience must be at least 5 characters');
-  }
+
   if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
     errors.push('At least one platform must be selected');
   }
@@ -78,7 +76,6 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
     post_type:       post_type.toLowerCase(),
     objective:       objective.toLowerCase(),
     tone:            tone.toLowerCase(),
-    target_audience: target_audience.trim(),
     platforms:       platforms.map(p => p.toLowerCase()),
     notes:           notes?.trim() || null
   };
