@@ -12,6 +12,7 @@ const { requireAuth } = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter } = require('../middleware/rateLimit');
 const { supabaseAdmin } = require('../services/supabaseService');
+const { publishQueue }  = require('../queues');
 
 // Apply auth + tenancy to ALL routes in this file
 router.use(requireAuth, enforceTenancy);
@@ -200,6 +201,19 @@ router.post('/:id/schedule', standardLimiter, async (req, res) => {
 
     if (error || !data) {
       return res.status(404).json({ error: 'Post not found or scheduling failed' });
+    }
+
+    // If the post is scheduled for right now (within the next 5 minutes),
+    // fire an immediate one-off scan job so it publishes within seconds
+    // instead of waiting up to 60s for the next repeatable scan cycle.
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+    if (scheduledDate <= fiveMinutesFromNow) {
+      try {
+        await publishQueue.add('scan-and-publish', {}, { priority: 1 });
+      } catch (qErr) {
+        // Non-fatal — the repeatable scan will still pick it up within 60s
+        console.warn('[Posts] Could not trigger immediate publish scan:', qErr.message);
+      }
     }
 
     return res.json({ message: 'Post scheduled', post: data });

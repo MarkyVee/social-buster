@@ -133,6 +133,22 @@ async function publishPost(post) {
       post.media_url       = mediaItem.cloud_url;
       post.media_file_type = mediaItem.file_type;
 
+      // For images, download to a temp file and use multipart upload.
+      // This is more reliable than passing a URL to the platform API because
+      // the cloud URL may require authentication (e.g. Supabase private buckets).
+      if (mediaItem.file_type === 'image') {
+        try {
+          const extension      = (mediaItem.filename?.split('.').pop() || 'jpg').toLowerCase();
+          const downloadedPath = await downloadToTemp(mediaItem.cloud_url, extension);
+          tempFilePaths.push(downloadedPath);
+          post.media_local_path = downloadedPath;
+          console.log(`[PublishingAgent] Image downloaded for post ${post.id}`);
+        } catch (imgErr) {
+          // Non-fatal: fall back to URL-based upload if download fails
+          console.warn(`[PublishingAgent] Image download failed for post ${post.id}, falling back to URL: ${imgErr.message}`);
+        }
+      }
+
       // For videos, download locally and trim if the video exceeds the platform limit
       if (mediaItem.file_type === 'video' && PLATFORM_LIMITS[post.platform]) {
         try {
@@ -172,10 +188,19 @@ async function publishPost(post) {
   }
 
   // If no media library item was attached but the post has an AI-generated image,
-  // use that as the image to publish. ai_image_url is a public Supabase storage URL.
+  // download it to a temp file for reliable multipart upload.
   if (!post.media_url && post.ai_image_url) {
     post.media_url       = post.ai_image_url;
     post.media_file_type = 'image';
+    try {
+      const downloadedPath = await downloadToTemp(post.ai_image_url, 'jpg');
+      tempFilePaths.push(downloadedPath);
+      post.media_local_path = downloadedPath;
+      console.log(`[PublishingAgent] AI image downloaded for post ${post.id}`);
+    } catch (imgErr) {
+      // Non-fatal: fall back to URL-based upload
+      console.warn(`[PublishingAgent] AI image download failed for post ${post.id}, falling back to URL: ${imgErr.message}`);
+    }
   }
 
   // Attempt publish with retries and exponential backoff.
