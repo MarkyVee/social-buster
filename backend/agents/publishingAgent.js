@@ -60,7 +60,7 @@ async function processQueue() {
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, scheduled_at')
+      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, ai_image_url, trim_start_seconds, scheduled_at')
       .eq('status', 'scheduled')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -151,6 +151,23 @@ async function publishPost(post) {
     if (mediaItem?.cloud_url) {
       post.media_url       = mediaItem.cloud_url;
       post.media_file_type = mediaItem.file_type;
+
+      // Google Drive URLs require authentication — Facebook can't fetch them directly.
+      // Download the file to a temp path so we can upload it as a file instead.
+      const isGoogleDrive = mediaItem.cloud_url.includes('drive.google.com');
+      if (mediaItem.file_type === 'image' && isGoogleDrive) {
+        try {
+          const extension      = (mediaItem.filename?.split('.').pop() || 'jpg').toLowerCase();
+          const downloadedPath = await downloadToTemp(mediaItem.cloud_url, extension);
+          tempFilePaths.push(downloadedPath);
+          post.media_local_path = downloadedPath;
+          console.log(`[PublishingAgent] Google Drive image downloaded for post ${post.id}`);
+        } catch (dlErr) {
+          // Non-fatal — post will publish without the image rather than failing entirely
+          console.warn(`[PublishingAgent] Google Drive image download failed for post ${post.id}: ${dlErr.message}`);
+          post.media_url = null;
+        }
+      }
 
       // For videos, download locally and trim if the video exceeds the platform limit
       if (mediaItem.file_type === 'video' && PLATFORM_LIMITS[post.platform]) {
