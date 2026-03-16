@@ -123,6 +123,23 @@ const researchQueue = new Queue('research', {
   }
 });
 
+// Media process queue — copies user media from cloud storage (Google Drive etc.) to
+// Supabase Storage at the moment a user attaches media to a post.
+// This decouples OAuth-dependent downloads from the publish step, so publishing
+// never has to deal with Drive tokens, redirects, or network timeouts.
+// Max 2 concurrent — Drive downloads are I/O-bound, 2 is plenty without rate-limiting.
+const mediaProcessQueue = new Queue('media-process', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 3,
+    backoff: {
+      type:  'exponential',
+      delay: 10000      // First retry after 10s — give Drive API time to recover
+    }
+  }
+});
+
 // Video analysis queue — runs FFmpeg scene detection + audio energy analysis on videos.
 // Max 2 concurrent — FFmpeg is CPU-intensive; running too many at once slows the server.
 // Only processes videos that are newly added to the library (analysis_status = 'pending').
@@ -150,5 +167,6 @@ module.exports = {
   performanceQueue,
   researchQueue,
   mediaAnalysisQueue,
+  mediaProcessQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

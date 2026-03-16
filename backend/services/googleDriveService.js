@@ -21,6 +21,9 @@
 const { google }                     = require('googleapis');
 const { decryptToken, encryptToken } = require('./tokenEncryption');
 const { supabaseAdmin }              = require('./supabaseService');
+const path                           = require('path');
+const fs                             = require('fs');
+const { v4: uuidv4 }                 = require('uuid');
 
 // ----------------------------------------------------------------
 // getGoogleDriveClient
@@ -88,4 +91,75 @@ async function getGoogleDriveClient(userId, connection) {
   return { drive, oauth2Client };
 }
 
-module.exports = { getGoogleDriveClient };
+// ----------------------------------------------------------------
+// downloadGoogleDriveFile
+//
+// Downloads a Google Drive file to a local temp path using the Drive API
+// with the user's stored OAuth credentials.
+//
+// This is necessary because Drive webViewLink URLs (drive.google.com/file/d/…)
+// require authentication — unauthenticated HTTP requests return an HTML login
+// page, not the actual file binary. The googleapis SDK handles auth correctly.
+//
+// userId   - user's UUID (used to fetch their cloud_connections row)
+// driveUrl - webViewLink or open URL containing the file ID
+// extension - file extension for the temp file (e.g. 'jpg', 'png')
+//
+// Returns: local temp file path
+// ----------------------------------------------------------------
+async function downloadGoogleDriveFile(userId, driveUrl, extension = 'jpg') {
+  // Extract the file ID from common Drive URL formats:
+  //   https://drive.google.com/file/d/{id}/view
+  //   https://drive.google.com/open?id={id}
+  const fileIdMatch =
+    driveUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    driveUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+
+  if (!fileIdMatch) {
+    throw new Error('Could not extract Google Drive file ID from URL: ' + driveUrl);
+  }
+
+  const fileId = fileIdMatch[1];
+
+  // Fetch the user's Google Drive OAuth connection
+  const { data: connection, error } = await supabaseAdmin
+    .from('cloud_connections')
+    .select('access_token, refresh_token, token_expires_at')
+    .eq('user_id', userId)
+    .eq('provider', 'google_drive')
+    .single();
+
+  if (error || !connection) {
+    throw new Error('No Google Drive connection found for this user — cannot download Drive image.');
+  }
+
+  const { drive } = await getGoogleDriveClient(userId, connection);
+
+  // Ensure the temp directory exists (same path used by ffmpegService)
+  const TEMP_DIR = process.env.FFMPEG_TEMP_DIR || '/tmp/social-buster/videos';
+  if (!fs.existsSync(TEMP_DIR)) {
+    fs.mkdirSync(TEMP_DIR, { recursive: true });
+  }
+
+  const tempPath = path.join(TEMP_DIR, `gdrive_${uuidv4()}.${extension}`);
+
+  // Download via Drive API — this uses the user's access token, so auth is
+  // handled correctly regardless of file sharing settings.
+  const response = await drive.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+
+  await new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(tempPath);
+    response.data
+      .on('error', reject)
+      .pipe(writer);
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+
+  return tempPath;
+}
+
+module.exports = { getGoogleDriveClient, downloadGoogleDriveFile };

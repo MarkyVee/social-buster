@@ -580,7 +580,14 @@ async function renderPostsPlaceholder(el) {
 
     const platformIcons = { instagram:'📸', facebook:'👥', tiktok:'🎵', linkedin:'💼', x:'𝕏', threads:'🧵', youtube:'▶️' };
 
-    container.innerHTML = Object.entries(byBrief).map(([briefId, briefPosts]) => {
+    // Sort brief sessions newest first by the latest post creation date in each group
+    const sortedBriefs = Object.entries(byBrief).sort(([, a], [, b]) => {
+      const aLatest = Math.max(...a.map(p => new Date(p.created_at).getTime()));
+      const bLatest = Math.max(...b.map(p => new Date(p.created_at).getTime()));
+      return bLatest - aLatest;
+    });
+
+    container.innerHTML = sortedBriefs.map(([briefId, briefPosts]) => {
       const first = briefPosts[0];
       const platforms = [...new Set(briefPosts.map(p => p.platform))];
       const dateStr = new Date(first.created_at).toLocaleDateString('en-AU', { day:'numeric', month:'short', year:'numeric' });
@@ -706,8 +713,8 @@ async function renderQueuePlaceholder(el) {
     const sorted = [...posts].sort((a, b) => {
       const orderDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
       if (orderDiff !== 0) return orderDiff;
-      // Within the same status, sort by scheduled_at ascending (soonest first)
-      return new Date(a.scheduled_at || 0) - new Date(b.scheduled_at || 0);
+      // Within the same status, newest first (most recently created/scheduled at top)
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
     });
 
     // Renders a colour-coded status pill

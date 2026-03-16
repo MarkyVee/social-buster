@@ -62,12 +62,16 @@ function switchAdminTab(tab) {
     panel.classList.toggle('hidden', !panel.id.endsWith(tab));
   });
 
-  // Lazy-load content on first visit to each tab
+  // Always reload users tab so new registrations appear immediately.
+  // Other tabs are lazy-loaded once and cached (data doesn't change as often).
   const panel = document.getElementById(`admin-tab-${tab}`);
-  if (!panel || panel.dataset.loaded) return;
+  if (!panel) return;
+
+  if (tab === 'users') { loadAdminUsers(); return; }
+
+  if (panel.dataset.loaded) return;
 
   if (tab === 'overview')  loadAdminOverview();
-  if (tab === 'users')     loadAdminUsers();
   if (tab === 'queues')    loadAdminQueues();
   if (tab === 'messages')  loadAdminMessages();
   if (tab === 'limits')    loadAdminLimits();

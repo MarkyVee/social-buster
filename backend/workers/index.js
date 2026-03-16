@@ -25,7 +25,8 @@ const {
   mediaScanQueue,
   performanceQueue,
   researchQueue,
-  mediaAnalysisQueue
+  mediaAnalysisQueue,
+  mediaProcessQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -34,7 +35,8 @@ require('./commentWorker');
 require('./mediaWorker');
 require('./performanceWorker');
 require('./researchWorker');
-require('./mediaAnalysisWorker');  // Video segment analysis (FFmpeg scene detection)
+require('./mediaAnalysisWorker');   // Video segment analysis (FFmpeg scene detection)
+require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -222,20 +224,93 @@ async function seedPendingVideoAnalysis() {
 }
 
 // ----------------------------------------------------------------
+// seedPendingMediaProcessing
+//
+// On startup, queues 'process-media-item' jobs for media that is
+// attached to posts that still need publishing (draft, approved,
+// scheduled, or failed) but hasn't been copied to Supabase yet.
+//
+// IMPORTANT: We only process media that is actually needed for
+// upcoming posts — NOT every item in the media library. Scanning
+// the entire library would queue large video downloads that compete
+// with video analysis and could fill VPS disk space.
+//
+// Jobs are deduplicated by jobId so re-running on every startup is
+// safe — nothing already queued will be double-added.
+// ----------------------------------------------------------------
+async function seedPendingMediaProcessing() {
+  try {
+    // Find media items attached to posts that still need publishing
+    const { data: posts, error } = await supabaseAdmin
+      .from('posts')
+      .select('media_id')
+      .in('status', ['draft', 'approved', 'scheduled', 'failed'])
+      .not('media_id', 'is', null);
+
+    if (error || !posts || posts.length === 0) return;
+
+    // Deduplicate — multiple posts may reference the same media item
+    const mediaIds = [...new Set(posts.map(p => p.media_id))];
+
+    // Fetch only the items that aren't ready yet
+    const { data: pendingItems, error: fetchErr } = await supabaseAdmin
+      .from('media_items')
+      .select('id, file_type')
+      .in('id', mediaIds)
+      .not('process_status', 'eq', 'ready')
+      .not('process_status', 'eq', 'processing');
+
+    if (fetchErr || !pendingItems || pendingItems.length === 0) return;
+
+    let seededCount = 0;
+
+    for (const item of pendingItems) {
+      const jobId = `process-media-${item.id}`;
+      try {
+        const existing = await mediaProcessQueue.getJob(jobId);
+        if (!existing) {
+          await mediaProcessQueue.add(
+            'process-media-item',
+            { mediaItemId: item.id },
+            { jobId, removeOnComplete: true }
+          );
+          seededCount++;
+        }
+      } catch (_) { /* Non-fatal — will be picked up when user re-attaches */ }
+    }
+
+    if (seededCount > 0) {
+      console.log(`[Workers] Seeded ${seededCount} pending media processing job(s)`);
+    }
+  } catch (err) {
+    // Non-fatal — media processing still triggers on-demand when media is attached
+    console.error('[Workers] Failed to seed pending media processing jobs:', err.message);
+  }
+}
+
+// ----------------------------------------------------------------
 // startAllWorkers — called by server.js at startup.
 // ----------------------------------------------------------------
 async function startAllWorkers() {
-  try {
-    await registerRepeatableJobs();
-    await seedWeeklyResearchJobs();
-    await seedPendingVideoAnalysis();
-    await retagUntaggedSegments();   // Phase 2: back-fill vision tags on existing segments
-    console.log('[Workers] All BullMQ workers started and scheduled');
-  } catch (err) {
-    // Worker startup failures are logged but don't crash the server.
-    // The HTTP API remains functional even if background workers fail to start.
-    console.error('[Workers] Failed to start workers:', err.message);
-  }
+  // Each step is wrapped independently so one failure cannot prevent the others
+  // from running. The original single try/catch meant a failure in step N would
+  // silently skip all subsequent steps (e.g. retagUntaggedSegments never ran).
+
+  const run = async (label, fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[Workers] ${label} failed (non-fatal): ${err.message}`);
+    }
+  };
+
+  await run('registerRepeatableJobs',    registerRepeatableJobs);
+  await run('seedWeeklyResearchJobs',    seedWeeklyResearchJobs);
+  await run('seedPendingVideoAnalysis',  seedPendingVideoAnalysis);
+  await run('seedPendingMediaProcessing', seedPendingMediaProcessing);
+  await run('retagUntaggedSegments',     retagUntaggedSegments);
+
+  console.log('[Workers] All BullMQ workers started and scheduled');
 }
 
 module.exports = { startAllWorkers };

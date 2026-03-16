@@ -15,11 +15,17 @@
  *   Posts from different users are processed concurrently.
  *   Posts from the SAME user are processed sequentially to respect
  *   per-user rate limits on platform APIs.
+ *
+ * Media handling:
+ *   All media has been pre-copied to Supabase Storage by mediaProcessAgent
+ *   BEFORE the post is published. This agent only needs to check that
+ *   media_items.process_status = 'ready' and use media_items.processed_url.
+ *   No Drive API calls, no OAuth, no temp downloads for images.
+ *   Videos still need a local download + FFmpeg trim (platform-specific).
  */
 
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { publish }        = require('../services/platformAPIs');
-const { decryptToken }   = require('../services/tokenEncryption');
 const {
   downloadToTemp,
   probeVideo,
@@ -38,21 +44,21 @@ const BATCH_CAP   = 50;  // Max posts processed per BullMQ job cycle
 // ----------------------------------------------------------------
 async function processQueue() {
   try {
-    // Recover posts that have been stuck in 'publishing' for more than 5 minutes.
-    // This happens when an API call hangs without throwing (no timeout), or when
-    // the server restarted mid-publish. Mark them failed so the user can retry.
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    // Recover posts stuck in 'publishing' for more than 2 minutes.
+    // Worst-case legitimate publish time: 3 attempts × 30s timeout + backoffs ≈ 105s.
+    // 2 minutes gives that headroom while catching truly stuck posts quickly.
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     const { data: stale } = await supabaseAdmin
       .from('posts')
       .select('id')
       .eq('status', 'publishing')
-      .lte('updated_at', fiveMinutesAgo);
+      .lte('updated_at', twoMinutesAgo);
 
     if (stale?.length > 0) {
       const staleIds = stale.map(p => p.id);
       await supabaseAdmin
         .from('posts')
-        .update({ status: 'failed', error_message: 'Publish timed out — please retry.' })
+        .update({ status: 'failed', error_message: 'Publish timed out (2 min) — please retry.' })
         .in('id', staleIds);
       console.warn(`[PublishingAgent] Reset ${staleIds.length} stale publishing post(s) to failed.`);
     }
@@ -60,7 +66,7 @@ async function processQueue() {
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, ai_image_url, trim_start_seconds, scheduled_at')
+      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, scheduled_at')
       .eq('status', 'scheduled')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -83,9 +89,7 @@ async function processQueue() {
     });
 
     await Promise.allSettled(
-      Object.entries(byUser).map(([userId, userPosts]) =>
-        processUserQueue(userId, userPosts)
-      )
+      Object.values(byUser).map(userPosts => processUserQueue(userPosts))
     );
 
   } catch (err) {
@@ -98,7 +102,7 @@ async function processQueue() {
 // ----------------------------------------------------------------
 // processUserQueue — processes one user's due posts sequentially.
 // ----------------------------------------------------------------
-async function processUserQueue(userId, posts) {
+async function processUserQueue(posts) {
   for (const post of posts) {
     try {
       await publishPost(post);
@@ -113,7 +117,8 @@ async function processUserQueue(userId, posts) {
 // publishPost — attempts to publish a single post with retry logic.
 // ----------------------------------------------------------------
 async function publishPost(post) {
-  console.log(`[PublishingAgent] Publishing post ${post.id} to ${post.platform}...`);
+  console.log(`[PublishingAgent] ── START post ${post.id} → ${post.platform} ──`);
+  console.log(`[PublishingAgent]    media_id=${post.media_id || 'none'} scheduled_at=${post.scheduled_at}`);
 
   // Immediately mark as 'publishing' to prevent double-processing
   // if another process picks up the same post before we finish
@@ -132,98 +137,107 @@ async function publishPost(post) {
     .single();
 
   if (connError || !connection) {
+    console.error(`[PublishingAgent] No ${post.platform} connection for user ${post.user_id}`);
     await markFailed(post.id, `No ${post.platform} account connected for this user.`);
     return;
   }
 
-  // If the post references a media item, resolve the UUID → cloud URL.
-  // For videos, download to a temp file and trim if needed before publishing.
-  // tempFilePaths is declared outside the try so the finally block can always clean up,
+  console.log(`[PublishingAgent]    platform_user_id=${connection.platform_user_id}`);
+
+  // ── Media resolution ──────────────────────────────────────────
+  // tempFilePaths declared outside try so the finally block always cleans up,
   // even if markFailed() or a DB update throws unexpectedly.
   let tempFilePaths = [];
+
   if (post.media_id) {
-    const { data: mediaItem } = await supabaseAdmin
+    console.log(`[PublishingAgent]    Looking up media item ${post.media_id}...`);
+
+    const { data: mediaItem, error: mediaErr } = await supabaseAdmin
       .from('media_items')
-      .select('cloud_url, file_type, filename, duration_seconds')
+      .select('id, processed_url, cloud_url, file_type, filename, duration_seconds, process_status, process_error, cloud_provider')
       .eq('id', post.media_id)
       .single();
 
-    if (mediaItem?.cloud_url) {
-      post.media_url       = mediaItem.cloud_url;
-      post.media_file_type = mediaItem.file_type;
+    // Log everything we know — this is the single most important diagnostic line
+    console.log(`[PublishingAgent]    media lookup: found=${!!mediaItem} err=${mediaErr?.message || 'none'}`);
+    if (mediaItem) {
+      console.log(`[PublishingAgent]    media: provider=${mediaItem.cloud_provider} type=${mediaItem.file_type} status=${mediaItem.process_status} processedUrl=${mediaItem.processed_url || 'NULL'}`);
+    }
 
-      // Google Drive URLs require authentication — Facebook can't fetch them directly.
-      // Download the file to a temp path so we can upload it as a file instead.
-      const isGoogleDrive = mediaItem.cloud_url.includes('drive.google.com');
-      if (mediaItem.file_type === 'image' && isGoogleDrive) {
-        try {
-          const extension      = (mediaItem.filename?.split('.').pop() || 'jpg').toLowerCase();
-          const downloadedPath = await downloadToTemp(mediaItem.cloud_url, extension);
-          tempFilePaths.push(downloadedPath);
+    if (!mediaItem) {
+      // Media row missing — fail loudly so the user knows to re-attach
+      await markFailed(post.id, `Media item ${post.media_id} not found. Please re-attach the media and try again.`);
+      return;
+    }
+
+    if (mediaItem.process_status !== 'ready') {
+      // Media hasn't been copied to Supabase yet.
+      // This can happen if the user published too quickly after attaching media
+      // (the background processMedia job hasn't finished yet).
+      const detail = mediaItem.process_error
+        ? `Error: ${mediaItem.process_error}`
+        : `Status is '${mediaItem.process_status}' — still processing. Try publishing again in a moment.`;
+      await markFailed(post.id, `Media is not ready for publishing. ${detail}`);
+      return;
+    }
+
+    if (!mediaItem.processed_url) {
+      await markFailed(post.id, 'Media processed_url is missing even though status is ready. Please re-attach the media.');
+      return;
+    }
+
+    // All good — use the pre-copied Supabase URL
+    post.media_url       = mediaItem.processed_url;
+    post.media_file_type = mediaItem.file_type;
+
+    console.log(`[PublishingAgent]    media ready: ${post.media_file_type} @ ${post.media_url}`);
+
+    // For videos: download locally and trim to the platform's duration limit.
+    // Images go straight to the platform API via URL — no local file needed.
+    if (mediaItem.file_type === 'video' && PLATFORM_LIMITS[post.platform]) {
+      try {
+        const extension  = (mediaItem.filename?.split('.').pop() || 'mp4').toLowerCase();
+        const startTime  = post.trim_start_seconds || 0;
+
+        console.log(`[PublishingAgent]    Downloading video from Supabase for trim check...`);
+        const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
+        tempFilePaths.push(downloadedPath);
+
+        const { duration } = await probeVideo(downloadedPath);
+        const platformLimit = PLATFORM_LIMITS[post.platform];
+        const needsTrim = (duration - startTime) > platformLimit || startTime > 0;
+
+        console.log(`[PublishingAgent]    Video: duration=${duration}s limit=${platformLimit}s needsTrim=${needsTrim}`);
+
+        if (needsTrim) {
+          const trimmedPath = await trimVideo(downloadedPath, post.platform, startTime);
+          if (trimmedPath !== downloadedPath) tempFilePaths.push(trimmedPath);
+          post.media_local_path = trimmedPath;
+          console.log(`[PublishingAgent]    Trimmed video → ${trimmedPath}`);
+        } else {
           post.media_local_path = downloadedPath;
-          console.log(`[PublishingAgent] Google Drive image downloaded for post ${post.id}`);
-        } catch (dlErr) {
-          // Non-fatal — post will publish without the image rather than failing entirely
-          console.warn(`[PublishingAgent] Google Drive image download failed for post ${post.id}: ${dlErr.message}`);
-          post.media_url = null;
         }
-      }
 
-      // For videos, download locally and trim if the video exceeds the platform limit
-      if (mediaItem.file_type === 'video' && PLATFORM_LIMITS[post.platform]) {
-        try {
-          const extension  = (mediaItem.filename?.split('.').pop() || 'mp4').toLowerCase();
-          const startTime  = post.trim_start_seconds || 0;
-
-          console.log(`[PublishingAgent] Downloading video for post ${post.id}...`);
-          const downloadedPath = await downloadToTemp(mediaItem.cloud_url, extension);
-          tempFilePaths.push(downloadedPath);
-
-          // Check if trim is needed (video too long, or user set a custom start offset)
-          const { duration } = await probeVideo(downloadedPath);
-          const platformLimit = PLATFORM_LIMITS[post.platform];
-          const needsTrim = (duration - startTime) > platformLimit || startTime > 0;
-
-          if (needsTrim) {
-            console.log(`[PublishingAgent] Trimming video (${duration}s → ${platformLimit}s from ${startTime}s)`);
-            const trimmedPath = await trimVideo(downloadedPath, post.platform, startTime);
-            // trimVideo may return the same path if no trim was needed
-            if (trimmedPath !== downloadedPath) {
-              tempFilePaths.push(trimmedPath);
-            }
-            // Pass the local file path so platform publishers can upload the trimmed file
-            post.media_local_path = trimmedPath;
-          } else {
-            // No trim needed — just pass the local downloaded file
-            post.media_local_path = downloadedPath;
-          }
-
-        } catch (trimErr) {
-          // Non-fatal: log the trim failure and fall back to using the cloud URL directly.
-          // Some platforms (Facebook, TikTok) can pull from a URL without a local file.
-          console.warn(`[PublishingAgent] Video prep failed for post ${post.id}, falling back to cloud URL: ${trimErr.message}`);
-        }
+      } catch (videoErr) {
+        // Non-fatal: fall back to the cloud URL and let the platform API try to
+        // fetch it directly. Facebook/TikTok support file_url= for videos.
+        console.warn(`[PublishingAgent]    Video prep failed, falling back to cloud URL: ${videoErr.message}`);
       }
     }
+
+  } else {
+    console.log(`[PublishingAgent]    No media attached — text-only post`);
   }
 
-  // If no media library item was attached but the post has an AI-generated image,
-  // use that URL directly. Facebook fetches it from Supabase Storage — no download needed.
-  if (!post.media_url && post.ai_image_url) {
-    post.media_url       = post.ai_image_url;
-    post.media_file_type = 'image';
-  }
-
-  // Attempt publish with retries and exponential backoff.
-  // The finally block guarantees temp files are cleaned up no matter what happens —
-  // even if markFailed() or a DB update throws an unexpected error.
+  // ── Publish with retries ──────────────────────────────────────
   let lastError;
   try {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
+        console.log(`[PublishingAgent]    Attempt ${attempt}/${MAX_RETRIES}: calling publish()...`);
         const result = await publish(post, connection);
 
-        // Success — update the post record with the platform's returned post ID
+        // Success
         await supabaseAdmin
           .from('posts')
           .update({
@@ -234,12 +248,12 @@ async function publishPost(post) {
           })
           .eq('id', post.id);
 
-        console.log(`[PublishingAgent] Post ${post.id} → published (${result.platformPostId})`);
+        console.log(`[PublishingAgent] ── DONE post ${post.id} → published (${result.platformPostId}) ──`);
         return;
 
       } catch (err) {
         lastError = err;
-        console.warn(`[PublishingAgent] Attempt ${attempt}/${MAX_RETRIES} failed for post ${post.id}: ${err.message}`);
+        console.warn(`[PublishingAgent]    Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
 
         if (attempt < MAX_RETRIES) {
           // Backoff: 5s after attempt 1, 15s after attempt 2
@@ -248,8 +262,15 @@ async function publishPost(post) {
       }
     }
 
-    // All retries exhausted — mark the post as failed
-    await markFailed(post.id, lastError.message);
+    // All retries exhausted — mark failed inside its own try/catch.
+    // If this update throws (transient Supabase error), the post would
+    // stay in 'publishing' forever. The catch logs it and the 2-minute
+    // stale recovery acts as the fallback safety net.
+    try {
+      await markFailed(post.id, lastError.message);
+    } catch (markErr) {
+      console.error(`[PublishingAgent] markFailed threw for post ${post.id}: ${markErr.message} — stale recovery will catch it`);
+    }
 
   } finally {
     // Always clean up temp files — runs whether we succeed, fail, or throw
@@ -261,7 +282,7 @@ async function publishPost(post) {
 // markFailed — sets post status to 'failed' with the error message.
 // ----------------------------------------------------------------
 async function markFailed(postId, errorMessage) {
-  console.error(`[PublishingAgent] Post ${postId} permanently failed: ${errorMessage}`);
+  console.error(`[PublishingAgent] FAILED post ${postId}: ${errorMessage}`);
 
   await supabaseAdmin
     .from('posts')

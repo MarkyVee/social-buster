@@ -20,6 +20,13 @@ const { Worker } = require('bullmq');
 const { connection } = require('../queues');
 const { processQueue } = require('../agents/publishingAgent');
 
+// Surface any promise rejections that escape job error handling.
+// Without this, a crash inside publishPost() can look like a silent success —
+// the job completes with no error logged and no post marked failed.
+process.on('unhandledRejection', (err) => {
+  console.error('[PublishWorker] UNHANDLED REJECTION:', err);
+});
+
 // ----------------------------------------------------------------
 // Create the worker
 // ----------------------------------------------------------------

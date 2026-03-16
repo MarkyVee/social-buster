@@ -144,15 +144,27 @@ async function publishToFacebook(post, accessToken, connection) {
   const params = { message, access_token: accessToken };
 
   // Only attach media_url as a link if it's a real public URL (not Google Drive).
-  // Google Drive URLs are not publicly fetchable by Facebook's servers.
   const isGoogleDrive = post.media_url && post.media_url.includes('drive.google.com');
 
-  // For actual photo/video uploads the Graph API requires separate upload steps —
-  // those are handled below if media_local_path is present (image) or media_url (video).
   // 30-second hard timeout on every Facebook API call.
-  // Without this, axios hangs indefinitely on network stalls inside Docker/VPS
-  // environments — the job stays "active" forever and no error is ever thrown.
   const TIMEOUT = 30_000;
+
+  // Wrap every axios call so Facebook's actual error message is surfaced.
+  // Without this, axios throws "Request failed with status code 400" and the
+  // real reason (e.g. "Duplicate post", "Invalid token") is silently discarded.
+  const fbCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      const fb = err.response?.data?.error;
+      if (fb) {
+        throw new Error(`Facebook error ${fb.code}: ${fb.message} (type: ${fb.type})`);
+      }
+      throw err;
+    }
+  };
+
+  console.log(`[PlatformAPIs] Facebook publish — pageId=${connection.platform_user_id} mediaType=${post.media_file_type || 'text'} mediaLocalPath=${post.media_local_path || 'none'} mediaUrl=${post.media_url || 'none'}`);
 
   if (post.media_local_path && post.media_file_type === 'image') {
     // Image from local temp file — upload via multipart to /{page-id}/photos
@@ -164,40 +176,39 @@ async function publishToFacebook(post, accessToken, connection) {
     form.append('access_token', accessToken);
     form.append('published',    'true');
 
-    const photoRes = await axios.post(
+    const photoRes = await fbCall(() => axios.post(
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
       form,
       { headers: form.getHeaders(), timeout: TIMEOUT }
-    );
+    ));
     return { platformPostId: photoRes.data.post_id || photoRes.data.id };
 
   } else if (post.media_url && post.media_file_type === 'image' && !isGoogleDrive) {
     // Image from a public URL — Facebook fetches it directly, no server upload needed.
-    // This is the fastest path: zero server bandwidth, FB handles the image fetch.
-    const photoRes = await axios.post(
+    const photoRes = await fbCall(() => axios.post(
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/photos`,
       null,
       { params: { url: post.media_url, caption: message, access_token: accessToken, published: true }, timeout: TIMEOUT }
-    );
+    ));
     return { platformPostId: photoRes.data.post_id || photoRes.data.id };
 
   } else if (post.media_url && post.media_file_type === 'video') {
     // Facebook can pull a video directly from a URL
-    const videoRes = await axios.post(
+    const videoRes = await fbCall(() => axios.post(
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/videos`,
       null,
       { params: { file_url: post.media_url, description: message, access_token: accessToken }, timeout: TIMEOUT }
-    );
+    ));
     return { platformPostId: videoRes.data.id };
 
   } else {
     // Text-only post — optionally attach a link preview
     if (post.media_url && !isGoogleDrive) params.link = post.media_url;
-    const res = await axios.post(
+    const res = await fbCall(() => axios.post(
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/feed`,
       null,
       { params, timeout: TIMEOUT }
-    );
+    ));
     return { platformPostId: res.data.id };
   }
 }

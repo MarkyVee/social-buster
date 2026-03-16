@@ -12,7 +12,7 @@ const { requireAuth } = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter } = require('../middleware/rateLimit');
 const { supabaseAdmin } = require('../services/supabaseService');
-const { publishQueue }  = require('../queues');
+const { publishQueue, mediaProcessQueue } = require('../queues');
 
 // Apply auth + tenancy to ALL routes in this file
 router.use(requireAuth, enforceTenancy);
@@ -119,6 +119,35 @@ router.put('/:id', standardLimiter, async (req, res) => {
 
     if (error || !data) {
       return res.status(404).json({ error: 'Post not found or update failed' });
+    }
+
+    // If media was attached, kick off background processing.
+    // This copies the file from its cloud source (Google Drive, etc.) to Supabase
+    // Storage so the publish worker can use a simple public URL — no OAuth at publish time.
+    if (updates.media_id) {
+      try {
+        // Check if this item already has a processed URL (e.g. AI-generated images
+        // that were backfilled by the SQL migration). Skip if already ready.
+        const { data: mediaItem } = await supabaseAdmin
+          .from('media_items')
+          .select('process_status')
+          .eq('id', updates.media_id)
+          .single();
+
+        if (mediaItem && mediaItem.process_status !== 'ready') {
+          // jobId deduplicates: re-attaching the same media won't queue it twice
+          await mediaProcessQueue.add(
+            'process-media-item',
+            { mediaItemId: updates.media_id },
+            { jobId: `process-media-${updates.media_id}`, removeOnComplete: true }
+          );
+          console.log(`[Posts] Queued media processing for item ${updates.media_id}`);
+        }
+      } catch (qErr) {
+        // Non-fatal: if queueing fails, the worker will catch it at startup via
+        // seedPendingMediaProcessing(). The post is still saved correctly.
+        console.warn('[Posts] Could not queue media processing:', qErr.message);
+      }
     }
 
     return res.json({ message: 'Post updated', post: data });
