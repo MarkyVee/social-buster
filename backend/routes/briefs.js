@@ -83,7 +83,26 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
   let briefId = null;
 
   try {
-    // --- Step 1: Save brief with 'generating' status ---
+    // --- Step 1: Fetch user profile (needed before insert to derive target_audience) ---
+    let userProfile = {};
+    try {
+      userProfile = await getUserProfile(userId);
+    } catch {
+      // Non-fatal — we'll proceed without profile context
+    }
+
+    // Derive target_audience from the user's saved profile fields.
+    // This replaces the old free-text field and gives the LLM richer,
+    // consistent context without requiring the user to type it every time.
+    const audienceParts = [
+      userProfile.target_age_range,
+      userProfile.target_gender && userProfile.target_gender !== 'all' ? userProfile.target_gender : null,
+      userProfile.audience_location,
+      userProfile.industry
+    ].filter(Boolean);
+    briefData.target_audience = audienceParts.length > 0 ? audienceParts.join(', ') : 'General audience';
+
+    // --- Step 2: Save brief with 'generating' status ---
     const { data: brief, error: briefError } = await supabaseAdmin
       .from('briefs')
       .insert({ user_id: userId, ...briefData, status: 'generating' })
@@ -92,15 +111,6 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
 
     if (briefError) throw new Error(`Failed to save brief: ${briefError.message}`);
     briefId = brief.id;
-
-    // --- Step 2: Build context for the LLM ---
-    // Pull user profile for brand voice, industry etc.
-    let userProfile = {};
-    try {
-      userProfile = await getUserProfile(userId);
-    } catch {
-      // Non-fatal — we'll proceed without profile context
-    }
 
     // Pull intelligence cache from Redis (non-fatal if missing)
     let intelligence = null;

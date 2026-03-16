@@ -110,7 +110,7 @@ BRIEF:
 - Post Type: ${brief.post_type}
 - Objective: ${brief.objective}
 - Tone: ${brief.tone}
-- Target Audience: ${brief.target_audience}
+- Target Audience: ${brief.target_audience || 'General audience'}
 - Platforms: ${platformList}
 - Additional Notes: ${brief.notes || 'None'}
 
