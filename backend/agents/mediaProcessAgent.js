@@ -172,11 +172,13 @@ async function uploadToSupabase(localPath, userId, extension, contentType) {
     },
     maxBodyLength:    Infinity,
     maxContentLength: Infinity,
-    timeout:          5 * 60 * 1000  // 5 minutes — large video files take time
+    timeout:          5 * 60 * 1000,  // 5 minutes — large video files take time
+    validateStatus:   () => true       // Don't throw on non-2xx — we'll log the real error
   });
 
   if (response.status !== 200) {
-    throw new Error(`Supabase Storage upload failed with HTTP ${response.status}`);
+    const detail = response.data?.message || response.data?.error || JSON.stringify(response.data);
+    throw new Error(`Supabase Storage upload failed HTTP ${response.status}: ${detail}`);
   }
 
   return `${process.env.SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${storagePath}`;
