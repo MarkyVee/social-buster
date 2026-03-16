@@ -135,12 +135,18 @@ async function publishToInstagram(post, accessToken, connection) {
 // connection.platform_user_id must be the Page ID (stored during OAuth)
 // ----------------------------------------------------------------
 async function publishToFacebook(post, accessToken, connection) {
-  // Build the post text from the post fields
-  const message = [post.hook, post.caption, post.cta].filter(Boolean).join('\n\n');
+  // Build the post text — hook, caption, hashtags, cta
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const message = [post.hook, post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
 
   const params = { message, access_token: accessToken };
 
-  // If the post has a media URL, attach it as a link preview.
+  // Only attach media_url as a link if it's a real public URL (not Google Drive).
+  // Google Drive URLs are not publicly fetchable by Facebook's servers.
+  const isGoogleDrive = post.media_url && post.media_url.includes('drive.google.com');
+
   // For actual photo/video uploads the Graph API requires separate upload steps —
   // those are handled below if media_local_path is present (image) or media_url (video).
   if (post.media_local_path && post.media_file_type === 'image') {
@@ -170,8 +176,8 @@ async function publishToFacebook(post, accessToken, connection) {
     return { platformPostId: videoRes.data.id };
 
   } else {
-    // Text-only post (or post with a link preview)
-    if (post.media_url) params.link = post.media_url;
+    // Only attach as link preview if it's a real public URL (not Google Drive)
+    if (post.media_url && !isGoogleDrive) params.link = post.media_url;
     const res = await axios.post(
       `https://graph.facebook.com/v19.0/${connection.platform_user_id}/feed`,
       null,
