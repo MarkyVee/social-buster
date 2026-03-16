@@ -247,21 +247,9 @@ function renderBriefForm(el) {
         <div class="field-error hidden" id="err-tone">Please select a tone</div>
       </div>
 
-      <!-- TARGET AUDIENCE -->
-      <div class="brief-section">
-        <div class="brief-section-label">4. Who is this post for?</div>
-        <textarea
-          id="brief-audience"
-          placeholder="Describe your target audience — e.g. 'Female gym-goers aged 25-40 who are new to weightlifting and want simple, practical advice'"
-          rows="3"
-          style="width:100%;"
-        ></textarea>
-        <div class="field-error hidden" id="err-audience">Please describe your target audience</div>
-      </div>
-
       <!-- PLATFORMS -->
       <div class="brief-section">
-        <div class="brief-section-label">5. Which platforms should we generate posts for?</div>
+        <div class="brief-section-label">4. Which platforms should we generate posts for?</div>
         <div class="platform-grid">
           ${PLATFORMS.map(p => `
             <label class="platform-option">
@@ -392,10 +380,6 @@ function validateBriefForm() {
   if (!tone) valid = false;
 
   // Target audience
-  const audience = document.getElementById('brief-audience').value.trim();
-  document.getElementById('err-audience').classList.toggle('hidden', audience.length >= 5);
-  if (audience.length < 5) valid = false;
-
   // Platforms
   const platforms = [...document.querySelectorAll('input[name="platforms"]:checked')].map(cb => cb.value);
   document.getElementById('err-platforms').classList.toggle('hidden', platforms.length > 0);
@@ -407,7 +391,6 @@ function validateBriefForm() {
     post_type:       postType.value,
     objective:       objective.value,
     tone:            tone.value,
-    target_audience: audience,
     platforms:       platforms,
     notes:           document.getElementById('brief-notes').value.trim() || null
   };
