@@ -12,7 +12,7 @@ const { requireAuth } = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter } = require('../middleware/rateLimit');
 const { supabaseAdmin } = require('../services/supabaseService');
-const { publishQueue, mediaProcessQueue } = require('../queues');
+const { publishQueue, mediaProcessQueue, mediaAnalysisQueue } = require('../queues');
 
 // Apply auth + tenancy to ALL routes in this file
 router.use(requireAuth, enforceTenancy);
@@ -121,24 +121,19 @@ router.put('/:id', standardLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Post not found or update failed' });
     }
 
-    // If media was attached, kick off background processing.
-    // This copies the file from its cloud source (Google Drive, etc.) to Supabase
-    // Storage so the publish worker can use a simple public URL — no OAuth at publish time.
+    // If media was attached, kick off background jobs for processing and analysis.
     if (updates.media_id) {
       try {
-        // Check if this item already has a processed URL (e.g. AI-generated images
-        // that were backfilled by the SQL migration). Skip if already ready.
         const { data: mediaItem } = await supabaseAdmin
           .from('media_items')
-          .select('process_status')
+          .select('process_status, file_type')
           .eq('id', updates.media_id)
           .single();
 
+        // ── Media processing (copy to Supabase Storage) ──
+        // Skip if already ready (e.g. AI-generated images are ready from creation).
         if (mediaItem && mediaItem.process_status !== 'ready') {
           const jobId = `process-media-${updates.media_id}`;
-
-          // Remove any existing failed/completed job with this ID so BullMQ
-          // doesn't silently ignore the new add() call (duplicate jobId prevention).
           try {
             const existing = await mediaProcessQueue.getJob(jobId);
             if (existing) {
@@ -154,10 +149,35 @@ router.put('/:id', standardLimiter, async (req, res) => {
           );
           console.log(`[Posts] Queued media processing for item ${updates.media_id}`);
         }
+
+        // ── Video analysis (extract chapter thumbnails + vision tags) ──
+        // Triggered for ALL videos regardless of process_status. This covers:
+        //   - New videos that haven't been analysed yet
+        //   - Videos with analysis_status = 'failed' (e.g. from a previous Drive
+        //     stream error) that the startup seeder hasn't retried yet
+        // Without this, the user sees "Analysis unavailable" until the next restart.
+        if (mediaItem && mediaItem.file_type === 'video') {
+          try {
+            const analysisJobId = `analyze-video-${updates.media_id}`;
+            const existingAnalysis = await mediaAnalysisQueue.getJob(analysisJobId);
+            if (existingAnalysis) {
+              const state = await existingAnalysis.getState();
+              if (state !== 'active') await existingAnalysis.remove();
+            }
+            await mediaAnalysisQueue.add(
+              'analyze-video',
+              { mediaItemId: updates.media_id },
+              { jobId: analysisJobId }
+            );
+            console.log(`[Posts] Queued video analysis for item ${updates.media_id}`);
+          } catch (aErr) {
+            console.warn('[Posts] Could not queue video analysis:', aErr.message);
+          }
+        }
+
       } catch (qErr) {
-        // Non-fatal: if queueing fails, the worker will catch it at startup via
-        // seedPendingMediaProcessing(). The post is still saved correctly.
-        console.warn('[Posts] Could not queue media processing:', qErr.message);
+        // Non-fatal — startup seeders will catch missed jobs on next restart.
+        console.warn('[Posts] Could not queue media jobs:', qErr.message);
       }
     }
 
