@@ -1208,12 +1208,12 @@ async function openClipPicker(postId) {
         const matchData = await apiFetch('/media/match-clips', {
           method: 'POST',
           body: JSON.stringify({
-            media_item_id: mediaId,
-            post_type:     _previewBrief.post_type,
-            objective:     _previewBrief.objective,
-            tone:          _previewBrief.tone,
+            mediaItemId: mediaId,
+            postType:    _previewBrief.post_type,
+            objective:   _previewBrief.objective,
+            tone:        _previewBrief.tone,
             platform,
-            limit:         segments.length // rank all, we'll show top ones first
+            maxResults:  segments.length // rank all, we'll show top ones first
           })
         });
         // rankedIds is ordered best→worst; segments not in this list come after

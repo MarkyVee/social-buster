@@ -162,7 +162,9 @@ async function analyzeVideo(mediaItemId) {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-analysis-'));
 
     const extension       = (item.filename?.split('.').pop() || 'mp4').toLowerCase();
+    console.log(`[VideoAnalysis] Downloading ${item.filename} for analysis...`);
     const downloadedVideo = await downloadVideoForAnalysis(item, extension);
+    console.log(`[VideoAnalysis] Download complete — running FFmpeg scene detection...`);
 
     try {
       await extractChapterThumbnails(downloadedVideo, interval, tempDir);

@@ -242,20 +242,33 @@ function isMediaFile(filename) { return isVideo(filename) || isImage(filename); 
 // Adds an 'analyze-video' job to the media-analysis queue for a
 // newly catalogued video item. Images are skipped.
 //
-// jobId deduplication: using the media item's UUID as jobId ensures
-// the same video is never queued for analysis twice, even if the
-// scan runs multiple times.
+// BullMQ deduplicates by jobId across ALL states (waiting, active,
+// completed, failed). Without the removal below, a video that was
+// previously analyzed (job in completed set) would silently never
+// get re-analyzed if its analysis_status was reset to 'pending'.
 // ----------------------------------------------------------------
 async function queueVideoAnalysis(item) {
   if (item.file_type !== 'video') return;
 
+  const jobId = `analyze-video-${item.id}`;
+
   try {
+    // Remove any existing non-active job with this ID before adding a fresh one.
+    // If an old completed/failed job sits in Redis, add() with the same jobId
+    // returns the stale job instead of creating a new runnable one.
+    // We skip removal if the job is 'active' — that means analysis is currently running.
+    try {
+      const existing = await mediaAnalysisQueue.getJob(jobId);
+      if (existing) {
+        const state = await existing.getState();
+        if (state !== 'active') await existing.remove();
+      }
+    } catch (_) { /* non-fatal — proceed with add even if removal fails */ }
+
     await mediaAnalysisQueue.add(
       'analyze-video',
       { mediaItemId: item.id },
-      {
-        jobId: `analyze-video-${item.id}`  // Prevents duplicate analysis jobs
-      }
+      { jobId }
     );
     console.log(`[MediaAgent] Queued video analysis job for item ${item.id}`);
   } catch (err) {
