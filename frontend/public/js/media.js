@@ -26,6 +26,77 @@
 let _mediaItems    = [];   // Current list being displayed
 let _mediaFilter   = 'all'; // 'all' | 'video' | 'image'
 let _mediaProviders = [];   // Connected cloud providers
+let _analysisPoller = null; // setInterval handle for analysis status polling
+
+// ----------------------------------------------------------------
+// startAnalysisPoller / stopAnalysisPoller
+//
+// Polls GET /media/:id every 5 seconds for any video currently in
+// 'analyzing' or 'pending' state. When a video finishes (status
+// becomes 'ready', 'failed', or 'too_large') its badge is updated
+// in-place — no full page re-render needed.
+//
+// The poller stops automatically when no more videos are in-progress.
+// ----------------------------------------------------------------
+function startAnalysisPoller() {
+  if (_analysisPoller) return; // already running
+
+  _analysisPoller = setInterval(async () => {
+    // Find all videos still in-progress
+    const inProgress = _mediaItems.filter(
+      m => m.file_type === 'video' && (m.analysis_status === 'analyzing' || m.analysis_status === 'pending')
+    );
+
+    if (inProgress.length === 0) {
+      stopAnalysisPoller();
+      return;
+    }
+
+    // Poll each in-progress video for a status update
+    for (const item of inProgress) {
+      try {
+        const data = await apiFetch(`/media/${item.id}`);
+        const fresh = data.media;
+        if (!fresh) continue;
+
+        // Only update if status actually changed
+        if (fresh.analysis_status !== item.analysis_status) {
+          item.analysis_status = fresh.analysis_status;
+
+          // Update just the analysis badge on this card — no full re-render
+          const card = document.querySelector(`.media-card[data-id="${item.id}"]`);
+          if (card) {
+            const header = card.querySelector('.media-card-header');
+            if (header) {
+              // Remove old analysis badge (last child if it has the analysis class)
+              const oldBadge = header.querySelector('.badge-analysis-ready, .badge-analysis-pending, .badge-analysis-failed');
+              if (oldBadge) oldBadge.remove();
+
+              // Insert new badge
+              const badgeHtml =
+                fresh.analysis_status === 'ready'
+                  ? `<span class="badge badge-analysis-ready" title="AI analysis complete — clip suggestions available">✅ Analyzed</span>`
+                  : fresh.analysis_status === 'failed'
+                  ? `<span class="badge badge-analysis-failed" title="Analysis failed">⚠ Analysis failed</span>`
+                  : fresh.analysis_status === 'too_large'
+                  ? `<span class="badge badge-analysis-failed" title="Video exceeds the 500 MB / 5-minute analysis limit">⚠ Too large to analyze</span>`
+                  : null;
+
+              if (badgeHtml) header.insertAdjacentHTML('beforeend', badgeHtml);
+            }
+          }
+        }
+      } catch (_) { /* non-fatal — will retry next tick */ }
+    }
+  }, 5000); // poll every 5 seconds
+}
+
+function stopAnalysisPoller() {
+  if (_analysisPoller) {
+    clearInterval(_analysisPoller);
+    _analysisPoller = null;
+  }
+}
 
 // ----------------------------------------------------------------
 // renderMediaLibrary — called by app.js when the user navigates to 'media'
@@ -262,6 +333,14 @@ async function loadMedia(searchQuery = '') {
   }
 
   renderMediaGrid(grid);
+
+  // Start polling for analysis status updates on any in-progress videos.
+  // Stops automatically once all videos reach a terminal state (ready/failed/too_large).
+  stopAnalysisPoller(); // clear any previous poller before starting fresh
+  const hasAnalyzing = _mediaItems.some(
+    m => m.file_type === 'video' && (m.analysis_status === 'analyzing' || m.analysis_status === 'pending')
+  );
+  if (hasAnalyzing) startAnalysisPoller();
 }
 
 // ----------------------------------------------------------------

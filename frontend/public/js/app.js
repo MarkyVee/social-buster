@@ -133,6 +133,10 @@ function showAlert(containerId, message, type = 'error', allowHtml = false) {
 // ============================================================
 
 function navigate(view) {
+  // Stop media analysis poller when leaving the media view
+  if (App.currentView === 'media' && view !== 'media') {
+    if (typeof stopAnalysisPoller === 'function') stopAnalysisPoller();
+  }
   App.currentView = view;
   window.location.hash = view;
   renderView(view);
