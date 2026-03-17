@@ -180,11 +180,12 @@ async function seedPendingVideoAnalysis() {
         .in('media_item_id', staleIds);
     }
 
-    // NOTE: We intentionally do NOT auto-reset 'failed' items here.
-    // A video marked 'failed' either timed out repeatedly or has a corrupt/unsupported
-    // format. Auto-retrying it would loop forever and block the concurrency-1 analysis
-    // queue, starving newly uploaded videos. 'failed' shows a badge in the UI — the
-    // user can trigger a manual re-probe if they want to retry.
+    // ⚠️  DO NOT auto-reset 'failed' items here.
+    // A video marked 'failed' either timed out or has a corrupt/unsupported format.
+    // Auto-resetting failed → pending causes an infinite retry loop: the video fails,
+    // restarts on next deploy, fails again, loops forever — holding the concurrency-1
+    // analysis queue and starving every new video the user uploads. This was a real bug.
+    // 'failed' stays 'failed'. The UI shows a badge. Users can manually retry.
 
     // ---- Queue all pending items (including the ones we just reset) ----
     const { data: pendingVideos, error } = await supabaseAdmin

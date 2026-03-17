@@ -226,8 +226,11 @@ async function analyzeVideo(mediaItemId) {
 
     // ---- Step 8: Save segments to DB ----
     if (segmentRows.length > 0) {
-      // Delete any existing segments for this media item before inserting new ones.
-      // Without this, re-running analysis stacks duplicate rows (e.g. 5 runs × 10 chapters = 50 rows).
+      // ⚠️  DO NOT REMOVE THIS DELETE.
+      // Deletes existing segments before inserting new ones.
+      // Without it, every re-run of analysis stacks duplicate rows on top of old ones
+      // (5 runs × 10 chapters = 50 rows for the same video). This caused a real bug
+      // where the media library showed 50 segments per video. Took significant debugging.
       await supabaseAdmin
         .from('video_segments')
         .delete()
