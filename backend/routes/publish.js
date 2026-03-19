@@ -697,7 +697,13 @@ router.post('/oauth/meta/start', standardLimiter, (req, res) => {
   //                         via the Uploads API once the app is in Live mode)
   // Note: publish_video does not exist as a use case for Business Apps — pages_manage_posts
   //       covers video publishing once the app is published to Live mode.
-  const scopes = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'].join(',');
+  const scopes = [
+    'pages_show_list',
+    'pages_read_engagement',
+    'pages_manage_posts',
+    'instagram_basic',
+    'instagram_content_publish'
+  ].join(',');
 
   const authUrl = `https://www.facebook.com/v21.0/dialog/oauth` +
     `?client_id=${encodeURIComponent(process.env.META_APP_ID)}` +

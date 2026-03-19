@@ -99,34 +99,124 @@ async function fetchComments(platformPostId, platform, accessToken, sinceTimesta
 
 // ----------------------------------------------------------------
 // INSTAGRAM — Meta Graph API (two-step: create container → publish)
-// Required .env: INSTAGRAM_APP_ID, INSTAGRAM_APP_SECRET
 // Scopes needed: instagram_basic, instagram_content_publish
 // Docs: developers.facebook.com/docs/instagram-api/guides/content-publishing
 //
-// async function publishToInstagram(post, accessToken, connection) {
-//   const caption = [post.hook, post.caption, post.hashtags.map(h => '#'+h).join(' '), post.cta]
-//     .filter(Boolean).join('\n\n');
-//   const isVideo = post.media_url && /\.(mp4|mov)$/i.test(post.media_url);
-//   const containerParams = { caption, access_token: accessToken };
-//   if (post.media_url) {
-//     containerParams[isVideo ? 'video_url' : 'image_url'] = post.media_url;
-//     if (isVideo) containerParams.media_type = 'REELS';
-//   } else {
-//     throw new Error('Instagram requires a media URL (image or video)');
-//   }
-//   const container = await axios.post(
-//     'https://graph.instagram.com/v19.0/me/media', null, { params: containerParams }
-//   );
-//   const publish = await axios.post(
-//     'https://graph.instagram.com/v19.0/me/media_publish', null,
-//     { params: { creation_id: container.data.id, access_token: accessToken } }
-//   );
-//   return { platformPostId: publish.data.id };
-// }
+// Instagram does NOT accept multipart file uploads. All media must be provided
+// as a public URL that Instagram's servers can fetch. Our processed_url from
+// Supabase Storage (processed-media bucket, set to PUBLIC) works for this.
+//
+// connection.platform_user_id = the Instagram Business Account ID
+//   (NOT the Facebook Page ID — stored separately during Facebook OAuth)
+//
+// Flow:
+//   1. POST /{ig-user-id}/media → create a media container (returns container ID)
+//   2. For video: poll GET /{container-id}?fields=status_code until FINISHED
+//   3. POST /{ig-user-id}/media_publish → publish the container (returns media ID)
 // ----------------------------------------------------------------
 async function publishToInstagram(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] Instagram not configured. Add INSTAGRAM_APP_ID/SECRET to .env.');
-  throw new Error('Instagram publishing requires OAuth setup. See services/platformAPIs.js.');
+  const igUserId = connection.platform_user_id;
+
+  // Build caption — Instagram combines everything into one caption field
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const caption = [post.hook, post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
+
+  const TIMEOUT = 30_000;
+  const API_BASE = 'https://graph.facebook.com/v21.0';
+
+  // Reuse the same error-extractor pattern as Facebook
+  const igCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] IG raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] IG network error (no response):', err.message);
+      }
+      const fb = err.response?.data?.error;
+      if (fb) {
+        const sub = fb.error_subcode ? ` subcode=${fb.error_subcode}` : '';
+        const msg = fb.error_user_msg || fb.message;
+        throw new Error(`Instagram error ${fb.code}${sub}: ${msg} (type: ${fb.type})`);
+      }
+      throw err;
+    }
+  };
+
+  // Instagram requires a public media URL — no text-only posts allowed
+  if (!post.media_url) {
+    throw new Error('Instagram requires media (image or video). Text-only posts are not supported.');
+  }
+
+  const isVideo = post.media_file_type === 'video';
+
+  console.log(`[PlatformAPIs] Instagram publish — igUserId=${igUserId} mediaType=${post.media_file_type} mediaUrl=${post.media_url}`);
+
+  // ---- Step 1: Create media container ----
+  const containerParams = {
+    caption,
+    access_token: accessToken
+  };
+
+  if (isVideo) {
+    containerParams.media_type = 'REELS';
+    containerParams.video_url  = post.media_url;
+  } else {
+    containerParams.image_url = post.media_url;
+  }
+
+  const containerRes = await igCall(() => axios.post(
+    `${API_BASE}/${igUserId}/media`,
+    null,
+    { params: containerParams, timeout: TIMEOUT }
+  ));
+
+  const containerId = containerRes.data.id;
+  console.log(`[PlatformAPIs] IG container created — id=${containerId}`);
+
+  // ---- Step 2: For video, poll until container is ready ----
+  // Instagram processes video asynchronously. The container goes through:
+  //   IN_PROGRESS → FINISHED (ready to publish)
+  //   IN_PROGRESS → ERROR (upload/encoding failed)
+  // Images are ready immediately — skip polling.
+  if (isVideo) {
+    const MAX_POLLS = 30;         // 30 polls × 10 seconds = 5 minutes max wait
+    const POLL_INTERVAL_MS = 10_000;
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
+      const statusRes = await igCall(() => axios.get(
+        `${API_BASE}/${containerId}`,
+        { params: { fields: 'status_code', access_token: accessToken }, timeout: TIMEOUT }
+      ));
+
+      const status = statusRes.data.status_code;
+      console.log(`[PlatformAPIs] IG container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})`);
+
+      if (status === 'FINISHED') break;
+      if (status === 'ERROR') {
+        throw new Error('Instagram video processing failed. The video may be in an unsupported format or too large.');
+      }
+
+      if (i === MAX_POLLS - 1) {
+        throw new Error('Instagram video processing timed out after 5 minutes. Try a shorter video.');
+      }
+    }
+  }
+
+  // ---- Step 3: Publish the container ----
+  const publishRes = await igCall(() => axios.post(
+    `${API_BASE}/${igUserId}/media_publish`,
+    null,
+    { params: { creation_id: containerId, access_token: accessToken }, timeout: TIMEOUT }
+  ));
+
+  console.log(`[PlatformAPIs] IG publish OK — mediaId=${publishRes.data.id}`);
+  return { platformPostId: publishRes.data.id };
 }
 
 // ----------------------------------------------------------------
