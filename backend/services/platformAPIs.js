@@ -76,7 +76,7 @@ async function fetchMetrics(platformPostId, platform, accessToken) {
 
 /**
  * fetchComments — returns new comments on a published post since sinceTimestamp.
- * @returns {Array<{ platformCommentId, text, authorHandle, timestamp }>}
+ * @returns {Array<{ platformCommentId, text, authorHandle, authorPlatformId, timestamp }>}
  */
 async function fetchComments(platformPostId, platform, accessToken, sinceTimestamp = null) {
   switch (platform) {
@@ -521,8 +521,102 @@ async function fetchYouTubeMetrics(postId, accessToken)   { return emptyMetrics(
 //   YouTube:   GET /commentThreads?videoId={id}&part=snippet
 // ================================================================
 
-async function fetchInstagramComments(postId, accessToken, since) { return []; }
-async function fetchFacebookComments(postId, accessToken, since)  { return []; }
+// ----------------------------------------------------------------
+// fetchFacebookComments — fetches comments on a Facebook Page post.
+//
+// API: GET /{post-id}/comments?fields=id,message,from,created_time
+// The 'from' field contains { name, id } where 'id' is the commenter's
+// Page-Scoped User ID (PSID) — this is what we need to send DMs.
+//
+// Note: 'from' is only returned if the user has granted 'pages_read_engagement'.
+// ----------------------------------------------------------------
+async function fetchFacebookComments(postId, accessToken, since) {
+  try {
+    const params = {
+      fields:       'id,message,from,created_time',
+      access_token: accessToken,
+      limit:        100
+    };
+    if (since) params.since = since;
+
+    const res = await axios.get(
+      `https://graph.facebook.com/v21.0/${postId}/comments`,
+      { params, timeout: 30_000 }
+    );
+
+    const comments = (res.data?.data || []).map(c => ({
+      platformCommentId: c.id,
+      text:              c.message || '',
+      authorHandle:      c.from?.name || 'Unknown',
+      authorPlatformId:  c.from?.id || null,    // PSID — needed for DM sending
+      timestamp:         c.created_time
+    }));
+
+    // Filter by timestamp if a 'since' cursor was provided
+    if (since) {
+      const sinceDate = new Date(since);
+      return comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    if (fbErr) {
+      console.error(`[PlatformAPIs] Facebook comments error ${fbErr.code}: ${fbErr.message}`);
+    } else {
+      console.error('[PlatformAPIs] Facebook comments error:', err.message);
+    }
+    return [];
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchInstagramComments — fetches comments on an Instagram media post.
+//
+// API: GET /{media-id}/comments?fields=id,text,username,timestamp,from
+// The 'from' field contains { id } which is the commenter's Instagram-Scoped
+// User ID (IGSID) — this is what we need to send DMs via Instagram Messaging API.
+//
+// Note: 'from' requires 'instagram_manage_comments' or 'instagram_basic' scope.
+// ----------------------------------------------------------------
+async function fetchInstagramComments(postId, accessToken, since) {
+  try {
+    const params = {
+      fields:       'id,text,username,timestamp,from',
+      access_token: accessToken,
+      limit:        100
+    };
+
+    const res = await axios.get(
+      `https://graph.facebook.com/v21.0/${postId}/comments`,
+      { params, timeout: 30_000 }
+    );
+
+    const comments = (res.data?.data || []).map(c => ({
+      platformCommentId: c.id,
+      text:              c.text || '',
+      authorHandle:      c.username || 'Unknown',
+      authorPlatformId:  c.from?.id || null,    // IGSID — needed for DM sending
+      timestamp:         c.timestamp
+    }));
+
+    // Filter by timestamp if a 'since' cursor was provided
+    if (since) {
+      const sinceDate = new Date(since);
+      return comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    if (fbErr) {
+      console.error(`[PlatformAPIs] Instagram comments error ${fbErr.code}: ${fbErr.message}`);
+    } else {
+      console.error('[PlatformAPIs] Instagram comments error:', err.message);
+    }
+    return [];
+  }
+}
 async function fetchTikTokComments(postId, accessToken, since)    { return []; }
 async function fetchLinkedInComments(postId, accessToken, since)  { return []; }
 async function fetchXComments(postId, accessToken, since)         { return []; }

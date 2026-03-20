@@ -185,6 +185,9 @@ function renderView(view) {
       if (typeof renderMessagesView === 'function') renderMessagesView(contentEl);
       else contentEl.innerHTML = '<div class="page-header"><div class="page-title">Messages</div><p>messages.js not loaded.</p></div>';
       break;
+    case 'automations':
+      renderAutomationsView(contentEl);
+      break;
     case 'admin':
       if (typeof renderAdminDashboard === 'function') renderAdminDashboard(contentEl);
       else contentEl.innerHTML = '<div class="page-header"><div class="page-title">Admin</div><p>admin.js not loaded.</p></div>';
@@ -414,6 +417,9 @@ function renderAppShell() {
           <button class="sidebar-link" data-view="messages" onclick="navigate('messages')" style="display:flex;align-items:center;">
             <span class="sidebar-icon">💬</span> Messages
             <span id="sidebar-msg-badge" class="msg-unread-badge" style="display:none;"></span>
+          </button>
+          <button class="sidebar-link" data-view="automations" onclick="navigate('automations')">
+            <span class="sidebar-icon">🤖</span> DM Automations
           </button>
 
           <div class="sidebar-section-label" style="margin-top:12px;">Insights</div>
@@ -1846,6 +1852,232 @@ async function boot() {
     // Token is invalid or expired — clear it and show login
     clearToken();
     renderAuthScreen();
+  }
+}
+
+// ============================================================
+// DM AUTOMATIONS VIEW — Leads dashboard + automation overview
+// ============================================================
+
+async function renderAutomationsView(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div class="page-title">DM Automations</div>
+      <div class="page-subtitle">Manage comment-to-DM workflows and view collected leads.</div>
+    </div>
+
+    <!-- Stats cards -->
+    <div id="automation-stats" style="display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap;">
+      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Active Automations</div>
+        <div id="stat-active-automations" style="font-size:1.5rem;font-weight:700;">-</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Total Conversations</div>
+        <div id="stat-total-conversations" style="font-size:1.5rem;font-weight:700;">-</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Leads Collected</div>
+        <div id="stat-total-leads" style="font-size:1.5rem;font-weight:700;">-</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Facebook DMs Today</div>
+        <div id="stat-fb-usage" style="font-size:1.5rem;font-weight:700;">-</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Instagram DMs Today</div>
+        <div id="stat-ig-usage" style="font-size:1.5rem;font-weight:700;">-</div>
+      </div>
+    </div>
+
+    <!-- Automations list -->
+    <div class="card" style="margin-bottom:24px;">
+      <div class="card-header">
+        <div class="card-title">All Automations</div>
+        <div class="text-muted text-sm">Set up automations from the "DM Automation" button on each published post.</div>
+      </div>
+      <div id="automations-list">
+        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+      </div>
+    </div>
+
+    <!-- Leads table -->
+    <div class="card">
+      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div class="card-title">Collected Leads</div>
+          <div class="text-muted text-sm">Data collected from multi-step DM conversations.</div>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="exportLeadsCSV()">Export CSV</button>
+      </div>
+      <div id="leads-table">
+        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+      </div>
+    </div>
+  `;
+
+  // Load all data in parallel
+  try {
+    const [statsRes, automationsRes] = await Promise.all([
+      apiFetch('/automations/stats'),
+      apiFetch('/automations')
+    ]);
+
+    // Render stats
+    const s = statsRes;
+    document.getElementById('stat-active-automations').textContent =
+      (automationsRes.automations || []).filter(a => a.active).length;
+    document.getElementById('stat-total-conversations').textContent = s.conversations?.total || 0;
+    document.getElementById('stat-total-leads').textContent = s.total_leads || 0;
+    document.getElementById('stat-fb-usage').textContent =
+      `${s.daily_usage?.facebook?.count || 0}/${s.daily_usage?.facebook?.limit || 100}`;
+    document.getElementById('stat-ig-usage').textContent =
+      `${s.daily_usage?.instagram?.count || 0}/${s.daily_usage?.instagram?.limit || 80}`;
+
+    // Render automations list
+    const automations = automationsRes.automations || [];
+    const listEl = document.getElementById('automations-list');
+
+    if (automations.length === 0) {
+      listEl.innerHTML = `
+        <div style="padding:16px;text-align:center;">
+          <p class="text-muted">No automations yet.</p>
+          <p class="text-muted text-sm">Publish a post to Facebook or Instagram, then click the "DM Automation" button on the post card.</p>
+        </div>
+      `;
+    } else {
+      listEl.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);text-align:left;">
+              <th style="padding:8px;">Name</th>
+              <th style="padding:8px;">Platform</th>
+              <th style="padding:8px;">Keywords</th>
+              <th style="padding:8px;">Type</th>
+              <th style="padding:8px;">Conversations</th>
+              <th style="padding:8px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${automations.map(a => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px;">${escapeHtml(a.name || 'Unnamed')}</td>
+                <td style="padding:8px;">
+                  <span class="platform-chip platform-chip-${a.posts?.platform || 'unknown'}">
+                    ${a.posts?.platform || '—'}
+                  </span>
+                </td>
+                <td style="padding:8px;">
+                  ${(a.trigger_keywords || []).map(k =>
+                    `<span class="badge" style="background:var(--primary-light);color:var(--primary);margin:1px;">${escapeHtml(k)}</span>`
+                  ).join(' ')}
+                </td>
+                <td style="padding:8px;">${a.flow_type === 'single' ? 'Single' : 'Multi-step'}</td>
+                <td style="padding:8px;">${a.conversation_count || 0} (${a.completed_count || 0} done)</td>
+                <td style="padding:8px;">
+                  <span class="badge badge-${a.active ? 'published' : 'draft'}">
+                    ${a.active ? 'Active' : 'Paused'}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    // Load leads
+    await loadLeadsTable();
+
+  } catch (err) {
+    console.error('[Automations] Failed to load:', err);
+    document.getElementById('automations-list').innerHTML =
+      `<div style="padding:12px;color:var(--danger);">Failed to load automations: ${err.message}</div>`;
+  }
+}
+
+async function loadLeadsTable() {
+  const tableEl = document.getElementById('leads-table');
+  if (!tableEl) return;
+
+  try {
+    const res = await apiFetch('/automations');
+    const automations = res.automations || [];
+
+    // Load leads for each automation
+    let allLeads = [];
+    for (const a of automations) {
+      try {
+        const leadsRes = await apiFetch(`/automations/${a.id}/leads`);
+        const leads = (leadsRes.leads || []).map(l => ({
+          ...l,
+          automation_name: a.name || 'Unnamed'
+        }));
+        allLeads = allLeads.concat(leads);
+      } catch { /* skip */ }
+    }
+
+    if (allLeads.length === 0) {
+      tableEl.innerHTML = '<div style="padding:16px;text-align:center;" class="text-muted">No leads collected yet.</div>';
+      return;
+    }
+
+    // Build leads table — each lead is a dm_conversation with dm_collected_data
+    tableEl.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);text-align:left;">
+            <th style="padding:8px;">Date</th>
+            <th style="padding:8px;">Handle</th>
+            <th style="padding:8px;">Platform</th>
+            <th style="padding:8px;">Automation</th>
+            <th style="padding:8px;">Collected Data</th>
+            <th style="padding:8px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${allLeads.map(lead => `
+            <tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:8px;" class="text-sm">${new Date(lead.created_at).toLocaleDateString()}</td>
+              <td style="padding:8px;">@${escapeHtml(lead.author_handle || '?')}</td>
+              <td style="padding:8px;">${escapeHtml(lead.platform)}</td>
+              <td style="padding:8px;">${escapeHtml(lead.automation_name)}</td>
+              <td style="padding:8px;">
+                ${(lead.dm_collected_data || []).map(d =>
+                  `<span class="text-sm"><strong>${escapeHtml(d.field_name)}:</strong> ${escapeHtml(d.field_value)}</span>`
+                ).join('<br/>') || '<span class="text-muted text-sm">—</span>'}
+              </td>
+              <td style="padding:8px;">
+                <span class="badge badge-${lead.status === 'completed' ? 'published' : lead.status === 'active' ? 'scheduled' : 'draft'}">
+                  ${lead.status}
+                </span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    tableEl.innerHTML = `<div style="padding:12px;color:var(--danger);">Failed to load leads: ${err.message}</div>`;
+  }
+}
+
+async function exportLeadsCSV() {
+  try {
+    const response = await fetch('/automations/leads/export', {
+      headers: { Authorization: `Bearer ${App.token}` }
+    });
+    if (!response.ok) throw new Error('Export failed');
+
+    const blob = await response.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'leads.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Failed to export: ' + err.message);
   }
 }
 

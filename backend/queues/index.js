@@ -84,7 +84,7 @@ const publishQueue = new Queue('publish', {
   }
 });
 
-// Comment queue — ingests platform comments and fires DM automation via n8n.
+// Comment queue — ingests platform comments and checks DM automation triggers.
 const commentQueue = new Queue('comment', {
   connection,
   defaultJobOptions: DEFAULT_JOB_OPTIONS
@@ -160,6 +160,21 @@ const mediaAnalysisQueue = new Queue('media-analysis', {
   }
 });
 
+// DM queue — sends DMs via Meta Graph API when comment triggers match.
+// Rate-limited to prevent hitting platform DM caps.
+// Also handles periodic cleanup of expired conversations (24hr window).
+const dmQueue = new Queue('dm', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 3,
+    backoff: {
+      type:  'exponential',
+      delay: 5000
+    }
+  }
+});
+
 module.exports = {
   publishQueue,
   commentQueue,
@@ -168,5 +183,6 @@ module.exports = {
   researchQueue,
   mediaAnalysisQueue,
   mediaProcessQueue,
+  dmQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

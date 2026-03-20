@@ -313,7 +313,15 @@ function renderWysiwygCard(post, platform) {
 
         <div class="post-card-status" style="margin-top:6px;">
           <span class="badge badge-${post.status}" id="status-badge-${post.id}">${post.status}</span>
+          ${(post.status === 'published' && ['facebook', 'instagram'].includes(post.platform))
+            ? `<button class="btn btn-xs btn-secondary" style="margin-left:8px;" onclick="toggleAutomationPanel('${post.id}')">
+                 💬 DM Automation
+               </button>`
+            : ''}
         </div>
+
+        <!-- DM Automation panel — shown for published Facebook/Instagram posts -->
+        <div id="automation-panel-${post.id}" style="display:none;"></div>
 
       </div>
     </div>
@@ -1576,5 +1584,378 @@ function closeClipPicker() {
   if (overlay) overlay.remove();
 
   _clipPickerMediaId = null;
+}
+
+
+// ================================================================
+// DM AUTOMATION — Per-post trigger keyword + DM flow setup
+//
+// Each published Facebook/Instagram post can have DM automations:
+//   - Trigger keywords (user comments "link" → gets DM'd)
+//   - Single message (send a link/resource immediately)
+//   - Multi-step (ask questions to collect email, phone, name, etc.)
+//
+// The panel appears inline on each post card via the "DM Automation" button.
+// ================================================================
+
+// Cache loaded automations so toggling the panel doesn't re-fetch
+const _automationCache = {};
+
+async function toggleAutomationPanel(postId) {
+  const panel = document.getElementById(`automation-panel-${postId}`);
+  if (!panel) return;
+
+  // Toggle visibility
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  panel.innerHTML = '<div style="padding:12px;"><div class="spinner spinner-sm"></div> Loading...</div>';
+
+  try {
+    // Load existing automation for this post
+    const res = await apiFetch('/automations');
+    const all = res.automations || [];
+    const existing = all.find(a => a.post_id === postId);
+
+    if (existing) {
+      // Load full automation with steps
+      const detail = await apiFetch(`/automations/${existing.id}`);
+      _automationCache[postId] = detail.automation;
+      renderAutomationPanel(postId, detail.automation);
+    } else {
+      _automationCache[postId] = null;
+      renderAutomationPanel(postId, null);
+    }
+  } catch (err) {
+    panel.innerHTML = `<div style="padding:12px;color:var(--danger);">Failed to load automation: ${err.message}</div>`;
+  }
+}
+
+function renderAutomationPanel(postId, automation) {
+  const panel = document.getElementById(`automation-panel-${postId}`);
+  if (!panel) return;
+
+  if (automation) {
+    // Show existing automation with edit/delete options
+    const steps = automation.steps || [];
+    const keywords = (automation.trigger_keywords || []).map(k => escapeHtml(k));
+
+    panel.innerHTML = `
+      <div class="automation-panel" style="border-top:1px solid var(--border);padding:12px 0;margin-top:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <strong>💬 ${escapeHtml(automation.name || 'DM Automation')}</strong>
+            <span class="badge badge-${automation.active ? 'published' : 'draft'}" style="margin-left:6px;">
+              ${automation.active ? 'Active' : 'Paused'}
+            </span>
+          </div>
+          <div>
+            <button class="btn btn-xs btn-secondary" onclick="toggleAutomationActive('${automation.id}', ${!automation.active}, '${postId}')">
+              ${automation.active ? 'Pause' : 'Resume'}
+            </button>
+            <button class="btn btn-xs btn-secondary" onclick="editAutomation('${postId}')">Edit</button>
+            <button class="btn btn-xs btn-danger" onclick="deleteAutomation('${automation.id}', '${postId}')">Delete</button>
+          </div>
+        </div>
+        <div style="margin-bottom:6px;">
+          <span class="text-muted text-sm">Triggers:</span>
+          ${keywords.map(k => `<span class="badge" style="background:var(--primary-light);color:var(--primary);margin:2px;">${k}</span>`).join(' ')}
+        </div>
+        <div style="margin-bottom:6px;">
+          <span class="text-muted text-sm">Type:</span>
+          ${automation.flow_type === 'single' ? 'Single message' : `Multi-step (${steps.length} steps)`}
+        </div>
+        <div class="text-muted text-sm">
+          ${automation.conversation_count || 0} conversations
+          · ${automation.completed_count || 0} completed
+        </div>
+      </div>
+    `;
+  } else {
+    // No automation — show setup form
+    renderAutomationForm(postId, null);
+  }
+}
+
+function editAutomation(postId) {
+  const existing = _automationCache[postId];
+  renderAutomationForm(postId, existing);
+}
+
+function renderAutomationForm(postId, existing) {
+  const panel = document.getElementById(`automation-panel-${postId}`);
+  if (!panel) return;
+
+  const keywords = existing?.trigger_keywords || [];
+  const flowType = existing?.flow_type || 'single';
+  const steps    = existing?.steps || [{ message_template: '', collects_field: null }];
+  const name     = existing?.name || '';
+
+  panel.innerHTML = `
+    <div class="automation-panel" style="border-top:1px solid var(--border);padding:12px 0;margin-top:8px;">
+      <div style="font-weight:600;margin-bottom:8px;">💬 Set Up DM Automation</div>
+
+      <div class="post-field" style="margin-bottom:8px;">
+        <div class="post-field-label">Name (optional)</div>
+        <input type="text" class="form-control form-control-sm" id="auto-name-${postId}"
+               value="${escapeHtml(name)}" placeholder="e.g. Free guide automation" />
+      </div>
+
+      <div class="post-field" style="margin-bottom:8px;">
+        <div class="post-field-label">Trigger Keywords</div>
+        <div class="text-muted text-sm" style="margin-bottom:4px;">
+          When someone comments with any of these words, they get a DM.
+        </div>
+        <div id="auto-keywords-${postId}" class="automation-keywords" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px;">
+          ${keywords.map(k => `
+            <span class="badge automation-keyword-badge" style="background:var(--primary-light);color:var(--primary);cursor:pointer;"
+                  onclick="this.remove()">
+              ${escapeHtml(k)} ✕
+            </span>
+          `).join('')}
+        </div>
+        <div style="display:flex;gap:4px;">
+          <input type="text" class="form-control form-control-sm" id="auto-keyword-input-${postId}"
+                 placeholder="Type a keyword and press Enter"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();addAutomationKeyword('${postId}')}" />
+          <button class="btn btn-xs btn-secondary" onclick="addAutomationKeyword('${postId}')">Add</button>
+        </div>
+      </div>
+
+      <div class="post-field" style="margin-bottom:8px;">
+        <div class="post-field-label">Flow Type</div>
+        <div style="display:flex;gap:8px;">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="auto-flow-${postId}" value="single"
+                   ${flowType === 'single' ? 'checked' : ''}
+                   onchange="toggleFlowType('${postId}', 'single')" />
+            Send Link — one message with a link or resource
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input type="radio" name="auto-flow-${postId}" value="multi_step"
+                   ${flowType === 'multi_step' ? 'checked' : ''}
+                   onchange="toggleFlowType('${postId}', 'multi_step')" />
+            Lead Capture — ask questions to collect info
+          </label>
+        </div>
+      </div>
+
+      <div id="auto-steps-${postId}">
+        ${renderAutomationSteps(postId, flowType, steps)}
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-sm btn-primary" onclick="saveAutomation('${postId}', '${existing?.id || ''}')">
+          ${existing ? 'Update Automation' : 'Create Automation'}
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="toggleAutomationPanel('${postId}')">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAutomationSteps(postId, flowType, steps) {
+  if (flowType === 'single') {
+    const step = steps[0] || { message_template: '' };
+    return `
+      <div class="post-field">
+        <div class="post-field-label">DM Message</div>
+        <textarea class="form-control" rows="3" id="auto-step-msg-${postId}-0"
+                  placeholder="Hey {{commenter_name}}! Here's the link you asked for: https://..."
+        >${escapeHtml(step.message_template || '')}</textarea>
+        <div class="text-muted text-sm" style="margin-top:2px;">
+          Use {{commenter_name}} to insert their name.
+        </div>
+      </div>
+    `;
+  }
+
+  // Multi-step
+  let html = '<div class="post-field-label">Conversation Steps</div>';
+  html += '<div class="text-muted text-sm" style="margin-bottom:6px;">Each step sends a message and optionally collects a field. The last step is the final "thank you" message.</div>';
+
+  steps.forEach((step, i) => {
+    const isLast = i === steps.length - 1;
+    html += `
+      <div class="automation-step" style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;" data-step-index="${i}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <strong>Step ${i + 1}</strong>
+          ${steps.length > 1 ? `<button class="btn btn-xs btn-danger" onclick="removeAutomationStep('${postId}', ${i})">Remove</button>` : ''}
+        </div>
+        <textarea class="form-control form-control-sm" rows="2" id="auto-step-msg-${postId}-${i}"
+                  placeholder="${isLast && steps.length > 1 ? 'Thanks! Here\'s your resource: ...' : 'Hey {{commenter_name}}! What\'s your email?'}"
+        >${escapeHtml(step.message_template || '')}</textarea>
+        <div style="margin-top:4px;">
+          <label class="text-sm">Collect:</label>
+          <select class="form-control form-control-sm" id="auto-step-field-${postId}-${i}" style="display:inline-block;width:auto;margin-left:4px;">
+            <option value="" ${!step.collects_field ? 'selected' : ''}>Nothing (final message)</option>
+            <option value="email" ${step.collects_field === 'email' ? 'selected' : ''}>Email</option>
+            <option value="phone" ${step.collects_field === 'phone' ? 'selected' : ''}>Phone</option>
+            <option value="name" ${step.collects_field === 'name' ? 'selected' : ''}>Name</option>
+            <option value="custom" ${step.collects_field === 'custom' ? 'selected' : ''}>Custom</option>
+          </select>
+          ${step.collects_field === 'custom' ? `
+            <input type="text" class="form-control form-control-sm" style="display:inline-block;width:120px;margin-left:4px;"
+                   id="auto-step-custom-${postId}-${i}" value="${escapeHtml(step.custom_field_label || '')}" placeholder="Field label" />
+          ` : ''}
+        </div>
+      </div>
+    `;
+  });
+
+  html += `<button class="btn btn-xs btn-secondary" onclick="addAutomationStep('${postId}')" style="margin-top:4px;">+ Add Step</button>`;
+  return html;
+}
+
+function toggleFlowType(postId, type) {
+  const stepsEl = document.getElementById(`auto-steps-${postId}`);
+  if (!stepsEl) return;
+  const defaultSteps = type === 'single'
+    ? [{ message_template: '', collects_field: null }]
+    : [
+        { message_template: '', collects_field: 'email' },
+        { message_template: '', collects_field: null }
+      ];
+  stepsEl.innerHTML = renderAutomationSteps(postId, type, defaultSteps);
+}
+
+function addAutomationKeyword(postId) {
+  const input = document.getElementById(`auto-keyword-input-${postId}`);
+  if (!input || !input.value.trim()) return;
+
+  const container = document.getElementById(`auto-keywords-${postId}`);
+  const keyword = input.value.trim();
+
+  const badge = document.createElement('span');
+  badge.className = 'badge automation-keyword-badge';
+  badge.style = 'background:var(--primary-light);color:var(--primary);cursor:pointer;';
+  badge.textContent = keyword + ' ✕';
+  badge.onclick = () => badge.remove();
+  container.appendChild(badge);
+
+  input.value = '';
+  input.focus();
+}
+
+function addAutomationStep(postId) {
+  const stepsEl = document.getElementById(`auto-steps-${postId}`);
+  if (!stepsEl) return;
+
+  // Collect current steps from the DOM
+  const currentSteps = collectStepsFromDOM(postId);
+  currentSteps.push({ message_template: '', collects_field: null });
+  stepsEl.innerHTML = renderAutomationSteps(postId, 'multi_step', currentSteps);
+}
+
+function removeAutomationStep(postId, index) {
+  const stepsEl = document.getElementById(`auto-steps-${postId}`);
+  if (!stepsEl) return;
+
+  const currentSteps = collectStepsFromDOM(postId);
+  currentSteps.splice(index, 1);
+  if (currentSteps.length === 0) currentSteps.push({ message_template: '', collects_field: null });
+  stepsEl.innerHTML = renderAutomationSteps(postId, 'multi_step', currentSteps);
+}
+
+function collectStepsFromDOM(postId) {
+  const steps = [];
+  let i = 0;
+  while (true) {
+    const msgEl = document.getElementById(`auto-step-msg-${postId}-${i}`);
+    if (!msgEl) break;
+
+    const fieldEl = document.getElementById(`auto-step-field-${postId}-${i}`);
+    const customEl = document.getElementById(`auto-step-custom-${postId}-${i}`);
+
+    steps.push({
+      message_template:   msgEl.value || '',
+      collects_field:     fieldEl?.value || null,
+      custom_field_label: customEl?.value || null
+    });
+    i++;
+  }
+  return steps;
+}
+
+async function saveAutomation(postId, existingId) {
+  // Collect keywords from badges
+  const keywordBadges = document.querySelectorAll(`#auto-keywords-${postId} .automation-keyword-badge`);
+  const keywords = Array.from(keywordBadges).map(b => b.textContent.replace(' ✕', '').trim()).filter(Boolean);
+
+  if (keywords.length === 0) {
+    alert('Please add at least one trigger keyword.');
+    return;
+  }
+
+  // Collect flow type
+  const flowType = document.querySelector(`input[name="auto-flow-${postId}"]:checked`)?.value || 'single';
+
+  // Collect steps
+  const steps = collectStepsFromDOM(postId);
+  if (steps.length === 0 || !steps[0].message_template.trim()) {
+    alert('Please enter a DM message.');
+    return;
+  }
+
+  const name = document.getElementById(`auto-name-${postId}`)?.value?.trim() || null;
+
+  const payload = {
+    post_id: postId,
+    name,
+    flow_type: flowType,
+    trigger_keywords: keywords,
+    steps
+  };
+
+  try {
+    if (existingId) {
+      await apiFetch(`/automations/${existingId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+    } else {
+      await apiFetch('/automations', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+    }
+
+    // Reload the panel to show the saved state
+    delete _automationCache[postId];
+    await toggleAutomationPanel(postId); // close
+    await toggleAutomationPanel(postId); // reopen with fresh data
+  } catch (err) {
+    alert('Failed to save automation: ' + err.message);
+  }
+}
+
+async function deleteAutomation(automationId, postId) {
+  if (!confirm('Delete this DM automation? This cannot be undone.')) return;
+
+  try {
+    await apiFetch(`/automations/${automationId}`, { method: 'DELETE' });
+    delete _automationCache[postId];
+    const panel = document.getElementById(`automation-panel-${postId}`);
+    if (panel) panel.style.display = 'none';
+  } catch (err) {
+    alert('Failed to delete: ' + err.message);
+  }
+}
+
+async function toggleAutomationActive(automationId, active, postId) {
+  try {
+    await apiFetch(`/automations/${automationId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ active })
+    });
+    delete _automationCache[postId];
+    await toggleAutomationPanel(postId);
+    await toggleAutomationPanel(postId);
+  } catch (err) {
+    alert('Failed to update: ' + err.message);
+  }
 }
 

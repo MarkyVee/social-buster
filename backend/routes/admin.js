@@ -226,7 +226,7 @@ router.get('/health', async (req, res) => {
     { key: 'FRONTEND_URL',              level: 'important', label: 'Frontend URL (CORS + reset links)' },
     { key: 'STRIPE_SECRET_KEY',         level: 'optional',  label: 'Stripe secret key (billing)' },
     { key: 'STRIPE_WEBHOOK_SECRET',     level: 'optional',  label: 'Stripe webhook secret' },
-    { key: 'N8N_WEBHOOK_URL',           level: 'optional',  label: 'n8n webhook URL (comment automation)' }
+    { key: 'META_WEBHOOK_VERIFY_TOKEN', level: 'optional',  label: 'Meta webhook verify token (DM automation)' }
   ];
 
   let missingCritical = false;
@@ -316,21 +316,10 @@ router.get('/health', async (req, res) => {
     health.status = health.status !== 'critical' ? 'degraded' : health.status;
   }
 
-  // n8n — ping the base URL if configured
-  try {
-    const n8nUrl = process.env.N8N_WEBHOOK_URL || '';
-    if (!n8nUrl) {
-      health.external_apis.n8n = 'not configured (ok — comment automation will use built-in fallback)';
-    } else {
-      // Extract base URL from webhook URL (e.g. http://n8n:5678/webhook/xyz → http://n8n:5678)
-      const n8nBase = new URL(n8nUrl).origin;
-      await axios.get(`${n8nBase}/healthz`, { timeout: 5000 });
-      health.external_apis.n8n = 'ok';
-    }
-  } catch (err) {
-    health.external_apis.n8n = `unreachable — ${err.message}`;
-    health.status = health.status !== 'critical' ? 'degraded' : health.status;
-  }
+  // Meta Webhook — check if DM automation webhook is configured
+  health.external_apis.meta_webhook = process.env.META_WEBHOOK_VERIFY_TOKEN
+    ? 'configured'
+    : 'not configured (DM reply handling disabled)';
 
   // ---- Final status determination ----
   // 'critical' = platform is fully down (Redis gone, DB gone, or required env vars missing)

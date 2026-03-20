@@ -27,7 +27,7 @@ services:
     environment:
       - NODE_ENV=development
       - REDIS_URL=redis://redis:6379
-      - N8N_BASE_URL=http://n8n:5678
+      # n8n removed — DM automation uses direct Meta Graph API calls
       - FFMPEG_TEMP_DIR=/tmp/social-buster/videos
     depends_on:
       redis:
@@ -57,28 +57,8 @@ services:
       - social-buster-net
     restart: unless-stopped
 
-  # ---- n8n Workflow Automation ----------------------------
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: social-buster-n8n
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      # Change this password immediately in production
-      - N8N_BASIC_AUTH_PASSWORD=changeme_n8n
-      - N8N_HOST=0.0.0.0
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
-      # Allow n8n to call our backend
-      - NODE_FUNCTION_ALLOW_EXTERNAL=axios
-    volumes:
-      - n8n-data:/home/node/.n8n
-    networks:
-      - social-buster-net
-    restart: unless-stopped
+  # n8n removed (2026-03-20) — DM automation now uses direct Meta Graph API calls.
+  # No external workflow engine needed. See backend/services/messagingService.js.
 
 # ============================================================
 # Networks
@@ -95,8 +75,6 @@ networks:
 # ============================================================
 volumes:
   redis-data:
-    driver: local
-  n8n-data:
     driver: local
   ffmpeg-temp:
     driver: local

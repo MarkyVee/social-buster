@@ -8,22 +8,24 @@
  *   1. Fetches all published posts from the last 30 days.
  *   2. For each post, fetches new comments since the last check.
  *   3. Runs sentiment analysis on each comment (keyword-based — no external API).
- *   4. Checks each comment against the user's active trigger phrases.
+ *   4. Checks each comment against:
+ *      a) Per-post DM automations (dm_automations table — primary)
+ *      b) Legacy global trigger phrases (trigger_phrases table — fallback)
  *   5. Stores the comment in the DB.
- *   6. If a trigger phrase matched, fires a webhook to n8n to send the DM workflow.
+ *   6. If a trigger matched, starts a DM conversation via dmAgent (direct Meta API).
  *
- * Trigger phrases are set by users in their settings.
- * When a comment contains "send me the link" (for example), n8n automatically DMs
- * the commenter with the user's configured message and form URL.
- *
- * .env required for DM automation: N8N_WEBHOOK_URL
+ * DM delivery uses the Meta Graph API directly (messagingService.js).
+ * No external workflow engine (n8n) required.
  */
 
 const { supabaseAdmin } = require('../services/supabaseService');
 const { decryptToken }  = require('../services/tokenEncryption');
 const { fetchComments } = require('../services/platformAPIs');
 const { cacheGet, cacheSet } = require('../services/redisService');
-const axios = require('axios');
+const { startConversation }  = require('./dmAgent');
+
+// Platforms that support DM automation (Meta Graph API)
+const DM_SUPPORTED_PLATFORMS = ['facebook', 'instagram'];
 
 // ----------------------------------------------------------------
 // runCommentCycle — the main comment ingestion cycle.
@@ -79,14 +81,22 @@ async function runCommentCycle() {
 // processUserComments — fetches and processes comments for one user's posts.
 // ----------------------------------------------------------------
 async function processUserComments(userId, posts) {
-  // Load all active trigger phrases for this user once (reuse across all posts)
-  const { data: triggers } = await supabaseAdmin
+  // Load per-post DM automations for this user (active only)
+  const { data: automations } = await supabaseAdmin
+    .from('dm_automations')
+    .select('id, post_id, name, flow_type, trigger_keywords, active')
+    .eq('user_id', userId)
+    .eq('active', true);
+
+  // Also load legacy trigger_phrases for backward compatibility
+  const { data: legacyTriggers } = await supabaseAdmin
     .from('trigger_phrases')
     .select('*')
     .eq('user_id', userId)
     .eq('active', true);
 
-  const activeTriggers = triggers || [];
+  const activeAutomations = automations || [];
+  const activeLegacyTriggers = legacyTriggers || [];
 
   for (const post of posts) {
     try {
@@ -117,9 +127,19 @@ async function processUserComments(userId, posts) {
 
       if (!newComments || newComments.length === 0) continue;
 
+      // Find automations that apply to this post
+      // Per-post automations match on post_id. Global automations have post_id = null.
+      const postAutomations = activeAutomations.filter(
+        a => a.post_id === post.id || a.post_id === null
+      );
+
       // Process and store each new comment
       for (const comment of newComments) {
-        await processComment(userId, post, comment, activeTriggers);
+        await processComment(
+          userId, post, comment,
+          postAutomations, activeLegacyTriggers,
+          accessToken
+        );
       }
 
       // Advance the cursor to now for the next cycle
@@ -132,9 +152,9 @@ async function processUserComments(userId, posts) {
 }
 
 // ----------------------------------------------------------------
-// processComment — analyzes and stores one comment, fires n8n if triggered.
+// processComment — analyzes and stores one comment, starts DM if triggered.
 // ----------------------------------------------------------------
-async function processComment(userId, post, comment, activeTriggers) {
+async function processComment(userId, post, comment, automations, legacyTriggers, accessToken) {
   // Guard against duplicates — the UNIQUE constraint on platform_comment_id handles this
   // but we check first to avoid wasting a DB call
   const { data: existing } = await supabaseAdmin
@@ -145,8 +165,17 @@ async function processComment(userId, post, comment, activeTriggers) {
 
   if (existing) return;
 
-  const sentiment      = analyzeSentiment(comment.text);
-  const matchedTrigger = matchTriggerPhrase(comment.text, activeTriggers, post.platform);
+  const sentiment = analyzeSentiment(comment.text);
+
+  // Try to match against DM automations first (per-post, then global)
+  const matchedAutomation = matchAutomationKeyword(comment.text, automations);
+
+  // Fall back to legacy trigger_phrases if no automation matched
+  const matchedLegacy = !matchedAutomation
+    ? matchTriggerPhrase(comment.text, legacyTriggers, post.platform)
+    : null;
+
+  const triggerMatched = !!(matchedAutomation || matchedLegacy);
 
   // Store the comment in the database
   const { error: insertError } = await supabaseAdmin
@@ -158,8 +187,9 @@ async function processComment(userId, post, comment, activeTriggers) {
       platform_comment_id: comment.platformCommentId,
       comment_text:        comment.text,
       author_handle:       comment.authorHandle,
+      author_platform_id:  comment.authorPlatformId || null,
       sentiment,
-      trigger_matched: !!matchedTrigger,
+      trigger_matched: triggerMatched,
       dm_sent:         false
     });
 
@@ -171,10 +201,61 @@ async function processComment(userId, post, comment, activeTriggers) {
     return;
   }
 
-  // Fire the n8n DM workflow if a trigger phrase was matched
-  if (matchedTrigger && matchedTrigger.dm_message) {
-    await triggerN8nDM(userId, comment, matchedTrigger, post);
+  // Start a DM conversation if a trigger matched AND the platform supports DMs
+  if (matchedAutomation && DM_SUPPORTED_PLATFORMS.includes(post.platform)) {
+    if (!comment.authorPlatformId) {
+      console.warn(`[CommentAgent] Trigger matched for @${comment.authorHandle} but no authorPlatformId — cannot DM`);
+      return;
+    }
+
+    try {
+      await startConversation(
+        userId,
+        matchedAutomation,
+        {
+          platformCommentId: comment.platformCommentId,
+          text:              comment.text,
+          authorHandle:      comment.authorHandle,
+          authorPlatformId:  comment.authorPlatformId
+        },
+        post.platform,
+        accessToken
+      );
+    } catch (err) {
+      console.error(`[CommentAgent] Failed to start DM conversation for @${comment.authorHandle}:`, err.message);
+    }
   }
+}
+
+// ----------------------------------------------------------------
+// matchAutomationKeyword — checks comment text against dm_automations keywords.
+// Uses the same normalization as the legacy matcher.
+// Returns the matched automation, or null.
+// ----------------------------------------------------------------
+function matchAutomationKeyword(commentText, automations) {
+  if (!commentText || !automations.length) return null;
+
+  const normalizedComment = commentText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim();
+
+  for (const automation of automations) {
+    if (!automation.trigger_keywords || !automation.trigger_keywords.length) continue;
+
+    for (const keyword of automation.trigger_keywords) {
+      const normalizedKeyword = keyword
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .trim();
+
+      if (normalizedComment.includes(normalizedKeyword)) {
+        return automation;
+      }
+    }
+  }
+
+  return null;
 }
 
 // ----------------------------------------------------------------
@@ -187,11 +268,11 @@ async function processComment(userId, post, comment, activeTriggers) {
 const POSITIVE_WORDS = [
   'love', 'great', 'amazing', 'awesome', 'fantastic', 'excellent', 'perfect',
   'wonderful', 'best', 'beautiful', 'helpful', 'thank you', 'thanks', 'need this',
-  'want this', 'incredible', 'brilliant', 'superb', 'outstanding', 'brilliant'
+  'want this', 'incredible', 'brilliant', 'superb', 'outstanding'
 ];
 const NEGATIVE_WORDS = [
   'hate', 'terrible', 'awful', 'horrible', 'worst', 'bad', 'useless', 'scam',
-  'fake', 'ridiculous', 'disappointed', 'waste', 'poor', 'disgusting', 'awful',
+  'fake', 'ridiculous', 'disappointed', 'waste', 'poor', 'disgusting',
   'broken', 'doesn\'t work', 'rip off'
 ];
 
@@ -208,9 +289,9 @@ function analyzeSentiment(text) {
 }
 
 // ----------------------------------------------------------------
-// matchTriggerPhrase — fuzzy phrase matching.
-// Normalizes both strings (lowercase, strip punctuation) before comparing.
-// Returns the matched trigger object, or null if none matched.
+// matchTriggerPhrase — legacy global trigger phrase matching.
+// Kept for backward compatibility with existing trigger_phrases table.
+// New automations should use dm_automations instead.
 // ----------------------------------------------------------------
 function matchTriggerPhrase(commentText, triggers, platform) {
   if (!commentText || !triggers.length) return null;
@@ -221,7 +302,6 @@ function matchTriggerPhrase(commentText, triggers, platform) {
     .trim();
 
   for (const trigger of triggers) {
-    // Skip triggers scoped to a different platform
     if (trigger.platform && trigger.platform !== platform) continue;
 
     const normalizedPhrase = trigger.phrase
@@ -235,55 +315,6 @@ function matchTriggerPhrase(commentText, triggers, platform) {
   }
 
   return null;
-}
-
-// ----------------------------------------------------------------
-// triggerN8nDM — sends a webhook payload to n8n.
-// n8n handles the actual DM delivery so we don't need platform DM SDKs here.
-//
-// Set N8N_WEBHOOK_URL in .env to the webhook URL of your n8n workflow.
-// The workflow should:
-//   1. Receive this payload.
-//   2. Use the platform API to send a DM to comment.authorHandle.
-//   3. Optionally log the conversion.
-// ----------------------------------------------------------------
-async function triggerN8nDM(userId, comment, trigger, post) {
-  const webhookUrl = process.env.N8N_WEBHOOK_URL;
-  if (!webhookUrl) {
-    console.warn('[CommentAgent] N8N_WEBHOOK_URL not set — DM trigger skipped.');
-    return;
-  }
-
-  try {
-    await axios.post(webhookUrl, {
-      event:          'trigger_phrase_matched',
-      userId,
-      platform:       post.platform,
-      postId:         post.id,
-      platformPostId: post.platform_post_id,
-      comment: {
-        id:     comment.platformCommentId,
-        text:   comment.text,
-        author: comment.authorHandle
-      },
-      dm: {
-        message: trigger.dm_message,
-        formUrl: trigger.form_url || null
-      }
-    }, { timeout: 10000 });
-
-    // Mark the DB record as DM sent
-    await supabaseAdmin
-      .from('comments')
-      .update({ dm_sent: true })
-      .eq('platform_comment_id', comment.platformCommentId);
-
-    console.log(`[CommentAgent] n8n DM triggered for @${comment.authorHandle} on ${post.platform}`);
-
-  } catch (err) {
-    console.error('[CommentAgent] Failed to trigger n8n webhook:', err.message);
-    // Non-fatal — the comment is stored; DM can be retried manually if needed
-  }
 }
 
 module.exports = { runCommentCycle, analyzeSentiment };

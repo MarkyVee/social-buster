@@ -29,6 +29,8 @@ const publishRoutes     = require('./routes/publish');       // Phase 5
 const intelligenceRoutes = require('./routes/intelligence'); // Phase 5
 const adminRoutes       = require('./routes/admin');          // Admin dashboard + BullMQ Board
 const messagesRoutes    = require('./routes/messages');       // User-facing inbox + messaging
+const automationsRoutes = require('./routes/automations');    // DM automation CRUD + leads
+const webhooksRoutes    = require('./routes/webhooks');       // Meta webhook receiver (DM replies)
 
 // ----------------------------------------------------------------
 // BullMQ worker orchestrator (Phase 5)
@@ -47,6 +49,11 @@ const PORT = process.env.PORT || 3000;
 // If express.json() runs first, the raw body is lost and verification fails.
 // ----------------------------------------------------------------
 app.use('/billing/webhook', billingRoutes);
+
+// IMPORTANT: Mount Meta webhook route BEFORE express.json().
+// Meta webhook signature verification needs the raw request body.
+// The route handles its own body parsing via express.raw().
+app.use('/webhooks/meta', webhooksRoutes);
 
 // ----------------------------------------------------------------
 // Global middleware
@@ -91,6 +98,7 @@ app.use('/publish', publishRoutes);       // Phase 5 — queue management + plat
 app.use('/intelligence', intelligenceRoutes); // Phase 5 — insights, research, comments
 app.use('/admin', adminRoutes);           // Admin dashboard + BullMQ Board (protected by requireAdmin)
 app.use('/messages', messagesRoutes);     // User inbox + messaging (protected by requireAuth)
+app.use('/automations', automationsRoutes); // DM automation CRUD + leads export
 
 // ----------------------------------------------------------------
 // Health check endpoint — Docker and load balancers use this

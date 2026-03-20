@@ -26,7 +26,8 @@ const {
   performanceQueue,
   researchQueue,
   mediaAnalysisQueue,
-  mediaProcessQueue
+  mediaProcessQueue,
+  dmQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -37,6 +38,7 @@ require('./performanceWorker');
 require('./researchWorker');
 require('./mediaAnalysisWorker');   // Video segment analysis (FFmpeg scene detection)
 require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
+require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -89,7 +91,17 @@ async function registerRepeatableJobs() {
     }
   );
 
-  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance)');
+  // DM queue — expires stale conversations (24hr messaging window) every 30 minutes
+  await dmQueue.add(
+    'expire-stale-conversations',
+    {},
+    {
+      repeat: { every: 30 * 60 * 1000 }, // every 30 minutes
+      jobId: 'repeatable:expire-stale-conversations'
+    }
+  );
+
+  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire)');
 }
 
 // ----------------------------------------------------------------

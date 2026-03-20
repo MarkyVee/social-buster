@@ -1,0 +1,184 @@
+/**
+ * services/messagingService.js
+ *
+ * Adapter layer for sending direct messages via platform APIs.
+ * Currently supports: Facebook Messenger, Instagram DMs.
+ * Both use the Meta Graph API under the same Page Access Token.
+ *
+ * This replaces n8n for DM delivery — no external workflow engine needed.
+ * The adapter pattern means adding a new platform = adding one function here.
+ *
+ * .env required:
+ *   FACEBOOK_APP_SECRET — used for webhook signature verification (in webhooks.js)
+ *   No additional keys needed — DMs use the same Page Access Token from platform_connections.
+ *
+ * Rate limits (conservative — well below Meta's hard limits):
+ *   Facebook Messenger: 100 DMs/day per Page
+ *   Instagram DMs:       80 DMs/day per business account
+ */
+
+const axios = require('axios');
+const { cacheGet, cacheSet } = require('./redisService');
+
+const API_BASE = 'https://graph.facebook.com/v21.0';
+const TIMEOUT  = 30_000;
+
+// Daily DM limits per platform (conservative — avoids spam flags)
+const DAILY_LIMITS = {
+  facebook:  100,
+  instagram:  80
+};
+
+// ----------------------------------------------------------------
+// sendDM — main entry point. Routes to the correct platform handler.
+//
+// Parameters:
+//   platform     — 'facebook' | 'instagram'
+//   accessToken  — decrypted Page Access Token
+//   recipientId  — commenter's PSID (Facebook) or IGSID (Instagram)
+//   messageText  — the DM body text
+//   userId       — our user's ID (for rate limiting)
+//
+// Returns: { success: true, messageId } or throws on failure.
+// ----------------------------------------------------------------
+async function sendDM(platform, accessToken, recipientId, messageText, userId) {
+  // Check rate limit before sending
+  const allowed = await checkDailyLimit(userId, platform);
+  if (!allowed) {
+    throw new Error(`Daily DM limit reached for ${platform} (${DAILY_LIMITS[platform]}/day). Will resume tomorrow.`);
+  }
+
+  let result;
+
+  if (platform === 'facebook') {
+    result = await sendFacebookDM(accessToken, recipientId, messageText);
+  } else if (platform === 'instagram') {
+    result = await sendInstagramDM(accessToken, recipientId, messageText);
+  } else {
+    throw new Error(`DM sending not supported for platform: ${platform}`);
+  }
+
+  // Increment the daily counter after successful send
+  await incrementDailyCount(userId, platform);
+
+  return result;
+}
+
+// ----------------------------------------------------------------
+// sendFacebookDM — sends a DM via Facebook Messenger Platform.
+//
+// Uses the Page Access Token to send a message from the Page to a user.
+// The recipient must have interacted with the Page within the last 24 hours
+// (commented on a post, sent a message, etc.) — Meta's messaging policy.
+//
+// API: POST /{page-id}/messages
+// Docs: https://developers.facebook.com/docs/messenger-platform/send-messages
+// ----------------------------------------------------------------
+async function sendFacebookDM(accessToken, recipientPSID, messageText) {
+  try {
+    const res = await axios.post(
+      `${API_BASE}/me/messages`,
+      {
+        recipient: { id: recipientPSID },
+        message:   { text: messageText },
+        messaging_type: 'RESPONSE'    // Required — indicates this is a reply to user interaction
+      },
+      {
+        params:  { access_token: accessToken },
+        timeout: TIMEOUT
+      }
+    );
+
+    console.log(`[MessagingService] Facebook DM sent to PSID ${recipientPSID}`);
+    return { success: true, messageId: res.data.message_id };
+
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    if (fbErr) {
+      const sub = fbErr.error_subcode ? ` subcode=${fbErr.error_subcode}` : '';
+      const msg = fbErr.error_user_msg || fbErr.message;
+      throw new Error(`Facebook Messenger error ${fbErr.code}${sub}: ${msg}`);
+    }
+    throw err;
+  }
+}
+
+// ----------------------------------------------------------------
+// sendInstagramDM — sends a DM via Instagram Messaging API.
+//
+// Uses the same Page Access Token (IG is managed through Facebook Pages).
+// The recipient must have interacted with the business account within 24 hours.
+//
+// API: POST /me/messages (with Instagram-scoped user ID)
+// Docs: https://developers.facebook.com/docs/instagram-messaging
+// ----------------------------------------------------------------
+async function sendInstagramDM(accessToken, recipientIGSID, messageText) {
+  try {
+    const res = await axios.post(
+      `${API_BASE}/me/messages`,
+      {
+        recipient: { id: recipientIGSID },
+        message:   { text: messageText },
+        messaging_type: 'RESPONSE'
+      },
+      {
+        params:  { access_token: accessToken },
+        timeout: TIMEOUT
+      }
+    );
+
+    console.log(`[MessagingService] Instagram DM sent to IGSID ${recipientIGSID}`);
+    return { success: true, messageId: res.data.message_id };
+
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    if (fbErr) {
+      const sub = fbErr.error_subcode ? ` subcode=${fbErr.error_subcode}` : '';
+      const msg = fbErr.error_user_msg || fbErr.message;
+      throw new Error(`Instagram DM error ${fbErr.code}${sub}: ${msg}`);
+    }
+    throw err;
+  }
+}
+
+// ----------------------------------------------------------------
+// Rate limiting — Redis counters per user per platform per day.
+//
+// Key format: dm_daily:{userId}:{platform}:{YYYY-MM-DD}
+// TTL: 86400 seconds (auto-expires at end of day)
+// ----------------------------------------------------------------
+
+function dailyKey(userId, platform) {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return `dm_daily:${userId}:${platform}:${today}`;
+}
+
+async function checkDailyLimit(userId, platform) {
+  const key   = dailyKey(userId, platform);
+  const count = parseInt(await cacheGet(key) || '0', 10);
+  const limit = DAILY_LIMITS[platform] || 80;
+  return count < limit;
+}
+
+async function incrementDailyCount(userId, platform) {
+  const key   = dailyKey(userId, platform);
+  const count = parseInt(await cacheGet(key) || '0', 10);
+  // Set with 24-hour TTL so the counter auto-resets at midnight
+  await cacheSet(key, String(count + 1), 86400);
+}
+
+// ----------------------------------------------------------------
+// getDailyUsage — returns the current DM count for display in the UI.
+// ----------------------------------------------------------------
+async function getDailyUsage(userId, platform) {
+  const key   = dailyKey(userId, platform);
+  const count = parseInt(await cacheGet(key) || '0', 10);
+  const limit = DAILY_LIMITS[platform] || 80;
+  return { count, limit, remaining: limit - count };
+}
+
+module.exports = {
+  sendDM,
+  getDailyUsage,
+  DAILY_LIMITS
+};

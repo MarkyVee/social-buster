@@ -51,7 +51,9 @@ Target: 5,000 U.S. users. Every external dependency has an adapter layer — swa
 │   │   ├── intelligence.js     Intelligence dashboard + research refresh
 │   │   ├── billing.js          Stripe (skeleton — not live)
 │   │   ├── admin.js            AdminJS + BullMQ Board
-│   │   └── messages.js         User inbox
+│   │   ├── messages.js         User inbox
+│   │   ├── automations.js      DM automation CRUD + leads export (CSV)
+│   │   └── webhooks.js         Meta webhook receiver for incoming DM replies
 │   ├── middleware/
 │   │   ├── auth.js             JWT validation → req.user = { id, email }
 │   │   ├── tenancy.js          User-scoped DB client → req.db (auto-filtered)
@@ -59,7 +61,8 @@ Target: 5,000 U.S. users. Every external dependency has an adapter layer — swa
 │   ├── agents/                 Business logic — called only by workers, never routes
 │   │   ├── publishingAgent.js  Core publish logic + retry. Uses process_status/processed_url.
 │   │   ├── mediaProcessAgent.js NEW. Copies media → Supabase Storage at attach time.
-│   │   ├── commentAgent.js     Comment ingestion + n8n trigger
+│   │   ├── commentAgent.js     Comment ingestion + DM automation trigger
+│   │   ├── dmAgent.js          DM conversation state machine (single + multi-step)
 │   │   ├── mediaAgent.js       Cloud storage scanning + file cataloging
 │   │   ├── researchAgent.js    LLM trend research, cached in Redis
 │   │   └── performanceAgent.js Platform metrics polling
@@ -70,10 +73,12 @@ Target: 5,000 U.S. users. Every external dependency has an adapter layer — swa
 │   │   ├── mediaWorker.js      'media-scan' queue. Every 30 min.
 │   │   ├── mediaAnalysisWorker.js 'media-analysis' queue. FFmpeg per video.
 │   │   ├── commentWorker.js    'comment' queue. Every 15 min.
+│   │   ├── dmWorker.js         'dm' queue. Sends DMs + expires stale conversations.
 │   │   ├── performanceWorker.js 'performance' queue. Every 2 hours.
 │   │   └── researchWorker.js   'research' queue. Weekly per user.
 │   ├── services/               External integrations + shared utilities
 │   │   ├── platformAPIs.js     publish/fetchMetrics/fetchComments for all 7 platforms
+│   │   ├── messagingService.js  DM sending via Meta Graph API (Facebook + Instagram)
 │   │   ├── llmService.js       OpenAI-compatible wrapper (swap provider via .env)
 │   │   ├── ffmpegService.js    Video probe/trim/download/cleanup + PLATFORM_LIMITS
 │   │   ├── imageGenerationService.js  Cloudflare Workers AI image generation
@@ -220,9 +225,12 @@ LLM_MODEL=llama-3.1-8b-instant
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
 
-# Facebook OAuth
+# Facebook / Meta OAuth
 FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
+
+# Meta Webhook (for DM reply handling — any random string)
+META_WEBHOOK_VERIFY_TOKEN=
 
 # Google Drive OAuth
 GOOGLE_CLIENT_ID=
@@ -271,7 +279,7 @@ NODE_ENV=production
 ### Facebook / Meta Graph API
 - App registered in Meta Developer Portal. `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` in `.env`.
 - Publishing to a **Page** (not personal profile). `platform_user_id` = Page ID. Access token = Page Access Token (not User Access Token).
-- Scopes needed: `pages_manage_posts`, `pages_read_engagement`.
+- Scopes needed: `pages_manage_posts`, `pages_read_engagement`, `pages_messaging`, `instagram_basic`, `instagram_content_publish`, `instagram_manage_messages`.
 - All API calls use `fbCall()` wrapper in `platformAPIs.js` which extracts real error codes from 400 responses.
 
 ### Groq (LLM)
@@ -288,10 +296,14 @@ NODE_ENV=production
 - BullMQ requires `maxRetriesPerRequest: null` in the ioredis connection config.
 - In Docker: service name `redis`, port 6379. Set `REDIS_HOST=redis`.
 
-### n8n
-- Self-hosted in Docker. UI at port 5678.
-- Used only for DM automation — `commentAgent` calls n8n webhooks when trigger phrases match.
-- n8n is a plugin: Social Buster owns the hot path (comment ingestion + trigger logic). n8n only executes the DM send.
+### DM Automation (Meta Graph API)
+- n8n was removed (2026-03-20). DM sending uses the Meta Graph API directly via `messagingService.js`.
+- Facebook Messenger: `POST /me/messages` with Page Access Token. Requires `pages_messaging` scope.
+- Instagram DMs: `POST /me/messages` with Page Access Token. Requires `instagram_manage_messages` scope.
+- Both enforce a 24-hour messaging window: you can only DM users who interacted with your content within 24 hours.
+- Rate limits: 100 DMs/day per Facebook Page, 80 DMs/day per Instagram account (enforced via Redis counters).
+- Multi-step conversations: Meta sends replies via webhook → `POST /webhooks/meta` → `dmAgent.processIncomingReply()`.
+- Webhook setup: register `https://yourdomain.com/webhooks/meta` in Meta Developer Portal with `META_WEBHOOK_VERIFY_TOKEN`.
 
 ---
 
@@ -366,7 +378,7 @@ Error 506 = "Duplicate content." Facebook rejects posts with identical text with
 
 ---
 
-## Current Status (as of 2026-03-17)
+## Current Status (as of 2026-03-20)
 
 **What works:**
 - Auth, briefs, AI generation, WYSIWYG previews
@@ -375,16 +387,26 @@ Error 506 = "Duplicate content." Facebook rejects posts with identical text with
 - Video analysis + clip picker UI (with live badge polling)
 - Publishing queue (scheduling, status tracking, retry logic)
 - Facebook OAuth + text publishing + **video publishing** ✅
-- BullMQ workers for all background jobs
+- Instagram publishing (image + video via Reels) ✅
+- **Comment-to-DM automation** (Facebook + Instagram) ✅
+  - Per-post trigger keywords + single-message or multi-step flows
+  - Conversation state machine with 24hr window enforcement
+  - Lead collection (email, phone, name, custom fields) + CSV export
+  - Rate-limited DM sending via Meta Graph API (no n8n dependency)
+  - Frontend: per-post automation panel + leads dashboard
+- BullMQ workers for all background jobs (7 queues + dm queue)
 - Health check system with auto-remediation
 - Intelligence dashboard
 
 **What's pending:**
-- Instagram publishing (stub exists, OAuth saves IG token — next platform)
 - All other platforms (Threads, TikTok, LinkedIn, X, YouTube) — stubs exist
-- All platforms except Facebook — stubs, need OAuth + implementation
 - Stripe billing — skeleton only
 - Threads OAuth — redirect URI needs real domain
+- Meta App Review — `pages_messaging` and `instagram_manage_messages` scopes need approval
+- Meta Webhook setup — register webhook URL in Meta Developer Portal for DM reply handling
 
 **Immediate next action:**
-Run the SQL migration in Supabase (see `.claude/docs/handoff.md` for the exact SQL), redeploy, and verify media publishes correctly.
+1. Run the DM automation SQL migration in Supabase (see `backend/data/migration_dm_automations.sql`)
+2. Reconnect Facebook in the app (to grant new messaging scopes)
+3. Register Meta webhook (for multi-step DM reply handling)
+4. Test with a published Facebook post: add trigger keyword, comment on it, verify DM arrives
