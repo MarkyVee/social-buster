@@ -701,10 +701,9 @@ router.post('/oauth/meta/start', standardLimiter, (req, res) => {
     'pages_show_list',
     'pages_read_engagement',
     'pages_manage_posts',
-    'pages_messaging',              // Facebook Messenger DM automation
+    'pages_messaging',              // Facebook + Instagram DM automation
     'instagram_basic',
-    'instagram_content_publish',
-    'instagram_manage_messages'     // Instagram DM automation
+    'instagram_content_publish'
   ].join(',');
 
   const authUrl = `https://www.facebook.com/v21.0/dialog/oauth` +
