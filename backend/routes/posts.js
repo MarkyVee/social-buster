@@ -126,7 +126,7 @@ router.put('/:id', standardLimiter, async (req, res) => {
       try {
         const { data: mediaItem } = await supabaseAdmin
           .from('media_items')
-          .select('process_status, file_type')
+          .select('process_status, file_type, analysis_status')
           .eq('id', updates.media_id)
           .single();
 
@@ -151,12 +151,14 @@ router.put('/:id', standardLimiter, async (req, res) => {
         }
 
         // ── Video analysis (extract chapter thumbnails + vision tags) ──
-        // Triggered for ALL videos regardless of process_status. This covers:
-        //   - New videos that haven't been analysed yet
-        //   - Videos with analysis_status = 'failed' (e.g. from a previous Drive
-        //     stream error) that the startup seeder hasn't retried yet
-        // Without this, the user sees "Analysis unavailable" until the next restart.
-        if (mediaItem && mediaItem.file_type === 'video') {
+        // Only queue analysis for videos that haven't been analyzed yet.
+        // 'ready' means analysis is done — skip it. 'analyzing' means it's
+        // currently running — skip it. Only 'pending' and 'failed' need work.
+        // Without this check, re-attaching an already-analyzed video to a new
+        // post would re-run the full FFmpeg analysis unnecessarily.
+        if (mediaItem && mediaItem.file_type === 'video'
+            && mediaItem.analysis_status !== 'ready'
+            && mediaItem.analysis_status !== 'analyzing') {
           try {
             const analysisJobId = `analyze-video-${updates.media_id}`;
             const existingAnalysis = await mediaAnalysisQueue.getJob(analysisJobId);

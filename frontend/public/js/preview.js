@@ -313,14 +313,14 @@ function renderWysiwygCard(post, platform) {
 
         <div class="post-card-status" style="margin-top:6px;">
           <span class="badge badge-${post.status}" id="status-badge-${post.id}">${post.status}</span>
-          ${(post.status === 'published' && ['facebook', 'instagram'].includes(post.platform))
+          ${['facebook', 'instagram'].includes(post.platform)
             ? `<button class="btn btn-xs btn-secondary" style="margin-left:8px;" onclick="toggleAutomationPanel('${post.id}')">
                  💬 DM Automation
                </button>`
             : ''}
         </div>
 
-        <!-- DM Automation panel — shown for published Facebook/Instagram posts -->
+        <!-- DM Automation panel — shown for Facebook/Instagram posts (any status) -->
         <div id="automation-panel-${post.id}" style="display:none;"></div>
 
       </div>
