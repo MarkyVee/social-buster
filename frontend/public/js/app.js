@@ -1836,6 +1836,16 @@ async function logout() {
 // BOOT — runs when the page loads
 // ============================================================
 async function boot() {
+  // Check if this is a password recovery redirect from Supabase.
+  // When the user clicks the reset link in their email, Supabase redirects to:
+  //   /reset-password#access_token=...&refresh_token=...&type=recovery
+  // We need to detect this and show the "set new password" form.
+  const recoveryToken = detectRecoveryToken();
+  if (recoveryToken) {
+    renderNewPasswordScreen(recoveryToken);
+    return;
+  }
+
   const token = loadToken();
 
   if (!token) {
@@ -1853,6 +1863,141 @@ async function boot() {
     clearToken();
     renderAuthScreen();
   }
+}
+
+// ============================================================
+// PASSWORD RECOVERY — detect Supabase recovery token in URL
+// ============================================================
+
+/**
+ * Checks the URL for a Supabase recovery token.
+ * Supabase redirects to: /reset-password#access_token=...&type=recovery
+ * Returns the access_token if this is a recovery redirect, null otherwise.
+ */
+function detectRecoveryToken() {
+  // The token can be in the hash fragment (most common) or query string
+  const hash = window.location.hash;
+  const params = new URLSearchParams(hash.replace(/^#/, ''));
+
+  if (params.get('type') === 'recovery' && params.get('access_token')) {
+    return params.get('access_token');
+  }
+
+  // Also check the pathname — Supabase sometimes redirects to /reset-password#...
+  // and our SPA fallback serves index.html, so the path might be /reset-password
+  if (window.location.pathname === '/reset-password') {
+    // Tokens might be in the hash
+    if (params.get('access_token')) {
+      return params.get('access_token');
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Renders a "Set New Password" screen for users coming from a password reset email.
+ * Shows two password fields (new + confirm) and submits to POST /auth/update-password.
+ */
+function renderNewPasswordScreen(recoveryToken) {
+  const app = document.getElementById('app');
+
+  app.innerHTML = `
+    <div class="auth-screen">
+      <div class="auth-card">
+        <div class="auth-logo">⚡ Social Buster</div>
+        <div class="auth-tagline">Set your new password</div>
+
+        <div id="auth-alerts"></div>
+
+        <form class="auth-form" id="new-password-form">
+          <div class="form-group">
+            <label for="new-password">New Password</label>
+            <input type="password" id="new-password" placeholder="At least 8 characters" required autocomplete="new-password" />
+            <div class="form-hint">Must be at least 8 characters</div>
+          </div>
+          <div class="form-group">
+            <label for="confirm-password">Confirm Password</label>
+            <input type="password" id="confirm-password" placeholder="Type it again" required autocomplete="new-password" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-full btn-lg" id="new-password-btn">
+            Update Password
+          </button>
+          <div class="text-center text-sm text-muted mt-4">
+            <a href="/" onclick="window.location.hash='';window.location.pathname='/';">← Back to Sign In</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('new-password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('new-password-btn');
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+      showAlert('auth-alerts', 'Passwords do not match.', 'error');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      showAlert('auth-alerts', 'Password must be at least 8 characters.', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Updating...';
+
+    try {
+      const res = await fetch('/auth/update-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          access_token: recoveryToken,
+          new_password: newPassword
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update password');
+      }
+
+      // If the server returned a session, log the user in automatically
+      if (data.session) {
+        saveToken(data.session.access_token, data.session.refresh_token);
+        App.user = data.user;
+
+        // Clean up the URL so the recovery token is gone
+        window.location.hash = '';
+        history.replaceState(null, '', '/');
+
+        showAlert('auth-alerts', 'Password updated! Logging you in...', 'success');
+        setTimeout(async () => {
+          try { await loadCurrentUser(); } catch { /* non-fatal */ }
+          renderAppShell();
+        }, 1000);
+      } else {
+        // Password updated but no auto-login — redirect to login
+        window.location.hash = '';
+        history.replaceState(null, '', '/');
+        renderAuthScreen();
+        // Small delay so the auth screen is rendered before we show the alert
+        setTimeout(() => {
+          showAlert('auth-alerts', 'Password updated! Please sign in with your new password.', 'success');
+        }, 100);
+      }
+
+    } catch (err) {
+      showAlert('auth-alerts', err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Update Password';
+    }
+  });
 }
 
 // ============================================================

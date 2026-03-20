@@ -1923,6 +1923,30 @@ async function saveAutomation(postId, existingId) {
       });
     }
 
+    // Auto-populate the CTA field with a trigger keyword prompt.
+    // Only adds it if the CTA doesn't already mention the keyword.
+    // The user can freely edit or remove this text before publishing.
+    const primaryKeyword = keywords[0].toUpperCase();
+    const ctaEl = document.querySelector(`.wysiwyg-card[data-post-id="${postId}"] .editable[data-field="cta"]`);
+    if (ctaEl) {
+      const currentCta = ctaEl.innerText.trim();
+      // Only auto-add if the CTA doesn't already contain the keyword
+      if (!currentCta.toLowerCase().includes(primaryKeyword.toLowerCase())) {
+        const ctaSuggestion = `Comment "${primaryKeyword}" below to get it!`;
+        const newCta = currentCta ? `${currentCta}\n${ctaSuggestion}` : ctaSuggestion;
+        ctaEl.innerText = newCta;
+        // Trigger live preview update and mark card dirty so Save picks it up
+        liveUpdatePreview(postId, 'cta', ctaEl);
+        // Auto-save the CTA to the backend so the user doesn't have to click Save
+        try {
+          await apiFetch(`/posts/${postId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ cta: newCta })
+          });
+        } catch (_) { /* non-fatal — user can save manually */ }
+      }
+    }
+
     // Reload the panel to show the saved state
     delete _automationCache[postId];
     await toggleAutomationPanel(postId); // close

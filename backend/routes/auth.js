@@ -216,6 +216,70 @@ router.post('/reset', async (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// POST /auth/update-password
+// Sets a new password after clicking a reset link from email.
+// The frontend sends the recovery access_token (from the URL fragment)
+// so we can authenticate the user and update their password.
+// ----------------------------------------------------------------
+router.post('/update-password', async (req, res) => {
+  const { access_token, new_password } = req.body;
+
+  if (!access_token || !new_password) {
+    return res.status(400).json({ error: 'access_token and new_password are required' });
+  }
+
+  if (new_password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    // Verify the recovery token by getting the user it belongs to
+    const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(access_token);
+
+    if (userError || !userData?.user) {
+      return res.status(401).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+    }
+
+    // Update the user's password using the admin API
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+      userData.user.id,
+      { password: new_password }
+    );
+
+    if (updateError) throw updateError;
+
+    // Sign the user in with their new password so they don't have to
+    // manually log in again after resetting
+    const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.signInWithPassword({
+      email: userData.user.email,
+      password: new_password
+    });
+
+    if (sessionError) {
+      // Password was updated but auto-login failed — still a success,
+      // just tell them to log in manually
+      return res.json({
+        message: 'Password updated successfully. Please log in with your new password.',
+        session: null
+      });
+    }
+
+    return res.json({
+      message: 'Password updated successfully.',
+      session: sessionData.session,
+      user: {
+        id: userData.user.id,
+        email: userData.user.email
+      }
+    });
+
+  } catch (err) {
+    console.error('[Auth] Update password error:', err.message);
+    return res.status(500).json({ error: 'Failed to update password. Please try again.' });
+  }
+});
+
+// ----------------------------------------------------------------
 // GET /auth/me
 // Returns the current user's profile. Requires authentication.
 // ----------------------------------------------------------------
