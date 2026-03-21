@@ -161,9 +161,11 @@ async function createPortalSession(userId) {
 async function cancelSubscription(userId) {
   const { data: sub, error } = await supabaseAdmin
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('stripe_subscription_id, plan, status')
     .eq('user_id', userId)
     .single();
+
+  console.log(`[Billing] cancelSubscription: userId=${userId}, sub=`, JSON.stringify(sub), 'error=', error?.message);
 
   if (error) {
     throw new Error('No subscription record found');
@@ -212,9 +214,11 @@ async function cancelSubscription(userId) {
 async function downgradeToFree(userId) {
   const { data: sub, error } = await supabaseAdmin
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('stripe_subscription_id, plan, status')
     .eq('user_id', userId)
     .single();
+
+  console.log(`[Billing] downgradeToFree: userId=${userId}, sub=`, JSON.stringify(sub), 'error=', error?.message);
 
   if (error) {
     throw new Error('No subscription record found');
@@ -250,9 +254,11 @@ async function changePlan(userId, newPlanTier) {
 
   const { data: sub, error } = await supabaseAdmin
     .from('subscriptions')
-    .select('stripe_subscription_id')
+    .select('stripe_subscription_id, stripe_customer_id, plan, status')
     .eq('user_id', userId)
     .single();
+
+  console.log(`[Billing] changePlan: userId=${userId}, sub=`, JSON.stringify(sub), 'error=', error?.message);
 
   if (error || !sub?.stripe_subscription_id) {
     throw new Error('No active Stripe subscription found');
