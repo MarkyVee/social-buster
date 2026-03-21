@@ -276,6 +276,8 @@ function constructWebhookEvent(rawBody, signature) {
 async function handleWebhookEvent(event) {
   const { type, data } = event;
 
+  console.log(`[Stripe Webhook] Received event: ${type}`);
+
   switch (type) {
 
     case 'customer.subscription.created':
@@ -283,21 +285,55 @@ async function handleWebhookEvent(event) {
       const subscription = data.object;
       const customerId = subscription.customer;
 
+      console.log(`[Stripe Webhook] ${type}: customerId=${customerId}, subscriptionId=${subscription.id}`);
+
       // Find which user this Stripe customer belongs to
-      const { data: sub } = await supabaseAdmin
+      let { data: sub, error: lookupErr } = await supabaseAdmin
         .from('subscriptions')
         .select('user_id')
         .eq('stripe_customer_id', customerId)
         .single();
 
+      // Fallback: if customer lookup fails, try to find the user via Stripe
+      // customer metadata (social_buster_user_id). This handles the case where
+      // the stripe_customer_id wasn't saved to our DB correctly.
       if (!sub) {
-        console.warn(`[Stripe] No user found for customer ${customerId}`);
-        return;
+        console.warn(`[Stripe Webhook] No DB row for customer ${customerId}, trying metadata fallback...`);
+        try {
+          const stripeCustomer = await stripe.customers.retrieve(customerId);
+          const metaUserId = stripeCustomer.metadata?.social_buster_user_id;
+          if (metaUserId) {
+            console.log(`[Stripe Webhook] Found userId=${metaUserId} from Stripe metadata`);
+
+            // Update the subscriptions table with the correct stripe_customer_id
+            const { error: upsertErr } = await supabaseAdmin
+              .from('subscriptions')
+              .upsert({
+                user_id: metaUserId,
+                stripe_customer_id: customerId,
+                plan: 'free_trial',
+                status: 'active'
+              }, { onConflict: 'user_id' });
+
+            if (upsertErr) {
+              console.error(`[Stripe Webhook] Upsert failed:`, upsertErr.message);
+            }
+
+            sub = { user_id: metaUserId };
+          }
+        } catch (metaErr) {
+          console.error(`[Stripe Webhook] Metadata fallback failed:`, metaErr.message);
+        }
+      }
+
+      if (!sub) {
+        console.error(`[Stripe Webhook] FAILED: No user found for customer ${customerId} — even after metadata fallback`);
+        throw new Error(`No user found for Stripe customer ${customerId}`);
       }
 
       // Determine the plan from the price ID
       const priceId = subscription.items?.data?.[0]?.price?.id;
-      console.log(`[Stripe] Webhook: customerId=${customerId}, priceId=${priceId}, userId=${sub.user_id}`);
+      console.log(`[Stripe Webhook] priceId=${priceId}, userId=${sub.user_id}`);
       const plan = await getTierByPriceId(priceId);
 
       // Map Stripe statuses to our internal statuses
@@ -310,78 +346,91 @@ async function handleWebhookEvent(event) {
       };
       const status = statusMap[subscription.status] || 'active';
 
-      await supabaseAdmin
+      const { error: updateErr } = await supabaseAdmin
         .from('subscriptions')
         .update({
           stripe_subscription_id: subscription.id,
+          stripe_customer_id: customerId,
           plan,
           status,
           current_period_end: new Date(subscription.current_period_end * 1000).toISOString()
         })
         .eq('user_id', sub.user_id);
 
-      console.log(`[Stripe] Updated subscription for user ${sub.user_id}: plan=${plan}, status=${status}`);
+      if (updateErr) {
+        console.error(`[Stripe Webhook] DB update FAILED for user ${sub.user_id}:`, updateErr.message);
+        throw new Error(`DB update failed: ${updateErr.message}`);
+      }
+
+      console.log(`[Stripe Webhook] SUCCESS: user=${sub.user_id}, plan=${plan}, status=${status}`);
       break;
     }
 
     case 'customer.subscription.deleted': {
       const subscription = data.object;
-      const { data: sub } = await supabaseAdmin
-        .from('subscriptions')
-        .select('user_id')
-        .eq('stripe_customer_id', subscription.customer)
-        .single();
+      const userId = await findUserByCustomerId(subscription.customer);
 
-      if (sub) {
-        await supabaseAdmin
+      if (userId) {
+        const { error } = await supabaseAdmin
           .from('subscriptions')
           .update({ plan: 'free_trial', status: 'cancelled', stripe_subscription_id: null })
-          .eq('user_id', sub.user_id);
+          .eq('user_id', userId);
 
-        console.log(`[Stripe] Subscription cancelled for user ${sub.user_id}`);
+        if (error) console.error(`[Stripe Webhook] Delete update failed:`, error.message);
+        else console.log(`[Stripe Webhook] Subscription cancelled for user ${userId}`);
       }
       break;
     }
 
     case 'invoice.payment_failed': {
       const invoice = data.object;
-      const { data: sub } = await supabaseAdmin
-        .from('subscriptions')
-        .select('user_id')
-        .eq('stripe_customer_id', invoice.customer)
-        .single();
+      const userId = await findUserByCustomerId(invoice.customer);
 
-      if (sub) {
+      if (userId) {
         await supabaseAdmin
           .from('subscriptions')
           .update({ status: 'past_due' })
-          .eq('user_id', sub.user_id);
-
-        console.log(`[Stripe] Payment failed for user ${sub.user_id}`);
+          .eq('user_id', userId);
+        console.log(`[Stripe Webhook] Payment failed for user ${userId}`);
       }
       break;
     }
 
     case 'invoice.payment_succeeded': {
       const invoice = data.object;
-      const { data: sub } = await supabaseAdmin
-        .from('subscriptions')
-        .select('user_id')
-        .eq('stripe_customer_id', invoice.customer)
-        .single();
+      const userId = await findUserByCustomerId(invoice.customer);
 
-      if (sub) {
+      if (userId) {
         await supabaseAdmin
           .from('subscriptions')
           .update({ status: 'active' })
-          .eq('user_id', sub.user_id);
+          .eq('user_id', userId);
+        console.log(`[Stripe Webhook] Payment succeeded for user ${userId}`);
       }
       break;
     }
 
     default:
-      // Ignore unhandled event types
-      console.log(`[Stripe] Unhandled event type: ${type}`);
+      console.log(`[Stripe Webhook] Unhandled event type: ${type}`);
+  }
+}
+
+// Helper: find user_id by Stripe customer ID, with metadata fallback
+async function findUserByCustomerId(customerId) {
+  const { data: sub } = await supabaseAdmin
+    .from('subscriptions')
+    .select('user_id')
+    .eq('stripe_customer_id', customerId)
+    .single();
+
+  if (sub) return sub.user_id;
+
+  // Fallback: check Stripe metadata
+  try {
+    const customer = await stripe.customers.retrieve(customerId);
+    return customer.metadata?.social_buster_user_id || null;
+  } catch (_) {
+    return null;
   }
 }
 

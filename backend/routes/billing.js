@@ -200,15 +200,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   try {
     // Process the event (updates subscription status in the database)
     await handleWebhookEvent(event);
-
-    // Always return 200 to Stripe immediately — even if processing fails,
-    // returning non-200 would cause Stripe to retry the webhook repeatedly
     return res.json({ received: true });
 
   } catch (err) {
-    console.error('[Stripe Webhook] Event handling failed:', err.message);
-    // Still return 200 — Stripe doesn't need to retry delivery
-    return res.json({ received: true });
+    console.error('[Stripe Webhook] Event handling FAILED:', err.message);
+    // Return 400 so Stripe retries delivery — we want to know about failures
+    return res.status(400).json({ error: err.message });
   }
 });
 
