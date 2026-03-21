@@ -2089,15 +2089,25 @@ async function loadAdminLimits() {
   }
 
   // --- Build lookup: feature → tier → row ---
-  const TIERS    = ['free', 'starter', 'professional', 'enterprise'];
+  const TIERS    = ['free_trial', 'starter', 'professional', 'enterprise'];
   const FEATURES = [...new Set(limits.map(l => l.feature))].sort();
 
-  // Human-readable labels for feature keys
+  // Human-readable labels
+  const TIER_LABELS = {
+    free_trial: 'Free Trial',
+    starter: 'Starter',
+    professional: 'Professional',
+    enterprise: 'Enterprise'
+  };
+
   const FEATURE_LABELS = {
-    briefs_per_month:    'Briefs / month',
-    ai_images_per_month: 'AI images / month',
-    platforms_connected: 'Platforms connected',
-    scheduled_queue_size:'Scheduled queue size'
+    briefs_per_month:       'Briefs / month',
+    ai_images_per_month:    'AI images / month',
+    platforms_connected:    'Platforms connected',
+    scheduled_queue_size:   'Scheduled queue size',
+    comment_monitoring:     'Comment monitoring',
+    dm_lead_capture:        'DM & lead capture',
+    intelligence_dashboard: 'Intelligence dashboard'
   };
 
   const byFeatureTier = {};
@@ -2108,7 +2118,7 @@ async function loadAdminLimits() {
 
   // --- Render table ---
   const headerCols = TIERS.map(t =>
-    `<th>${t.charAt(0).toUpperCase() + t.slice(1)}</th>`
+    `<th>${TIER_LABELS[t] || t}</th>`
   ).join('');
 
   const bodyRows = FEATURES.map(feature => {
