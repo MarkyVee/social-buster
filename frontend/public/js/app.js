@@ -1297,75 +1297,82 @@ function checkPaymentRedirectResult() {
 }
 
 // ----------------------------------------------------------------
-// renderSubscriptionSection — fetches current plan and renders either:
-//   a) Pricing cards (if on free trial) — lets the user choose + upgrade
-//   b) Manage Billing button (if on paid plan) — opens Stripe portal
+// renderSubscriptionSection — shows plan cards for all users.
+// Current plan is highlighted. Users can upgrade, downgrade, or cancel.
 // ----------------------------------------------------------------
 async function renderSubscriptionSection() {
   const el = document.getElementById('subscription-content');
   if (!el) return;
 
-  let sub;
+  // Fetch current subscription + available plans in parallel
+  let sub = { plan: 'free_trial', status: 'active' };
+  let plans = [];
+
   try {
-    const data = await apiFetch('/billing/status');
-    sub = data.subscription;
-  } catch (_) {
-    sub = { plan: 'free', status: 'active' };
-  }
+    const [statusRes, plansRes] = await Promise.all([
+      apiFetch('/billing/status').catch(() => ({ subscription: sub })),
+      apiFetch('/billing/plans').catch(() => ({ plans: [] }))
+    ]);
+    sub = statusRes.subscription || sub;
+    plans = plansRes.plans || [];
+  } catch (_) { /* use defaults */ }
 
-  const plan   = sub?.plan   || 'free_trial';
-  const status = sub?.status || 'active';
-
-  const periodEnd = sub?.current_period_end
+  const currentPlan = sub.plan || 'free_trial';
+  const isFreePlan = ['free', 'free_trial'].includes(currentPlan);
+  const periodEnd = sub.current_period_end
     ? new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : null;
 
-  // Paid users — just show a manage billing button
-  const isFreePlan = ['free', 'free_trial'].includes(plan);
-  if (!isFreePlan) {
-    el.innerHTML = `
-      <p class="text-sm text-muted" style="margin-bottom:4px;">
-        You're on the <strong>${plan.charAt(0).toUpperCase() + plan.slice(1)}</strong> plan.
-        ${periodEnd ? `Renews <strong>${periodEnd}</strong>.` : ''}
-        ${status === 'past_due' ? '<span style="color:#ef4444;"> ⚠ Payment past due — please update your card.</span>' : ''}
-      </p>
-      <p class="text-sm text-muted" style="margin-bottom:16px;">
-        Manage your payment method, download invoices, or cancel from the billing portal.
-      </p>
-      <button class="btn btn-secondary" onclick="openBillingPortal()">💳 Manage Billing</button>
-    `;
-    return;
-  }
-
-  // Free trial users — fetch plans from the database (admin-editable)
-  let plans = [];
-  try {
-    const res = await apiFetch('/billing/plans');
-    plans = res.plans || [];
-  } catch (_) {
-    // Fallback if plans table doesn't exist yet
-    plans = [];
-  }
-
   if (plans.length === 0) {
-    el.innerHTML = `
-      <p class="text-sm text-muted">
-        You're on the <strong>Free Trial</strong>. Subscription plans are being configured — check back soon.
-      </p>
-    `;
+    el.innerHTML = `<p class="text-sm text-muted">Subscription plans are being configured — check back soon.</p>`;
     return;
   }
+
+  // Build status message
+  let statusMsg = '';
+  if (isFreePlan) {
+    statusMsg = `You're on the <strong>Free Trial</strong>. Upgrade to unlock more features.`;
+  } else {
+    statusMsg = `You're on the <strong>${currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong> plan.`;
+    if (periodEnd) statusMsg += ` Renews <strong>${periodEnd}</strong>.`;
+    if (sub.status === 'past_due') statusMsg += ' <span style="color:#ef4444;">Payment past due — please update your card.</span>';
+  }
+
+  // Sort plans by sort_order and build the tier order for comparison
+  const tierOrder = plans.map(p => p.tier);
+  const currentIndex = tierOrder.indexOf(currentPlan);
 
   el.innerHTML = `
-    <p class="text-sm text-muted" style="margin-bottom:20px;">
-      You're on the <strong>Free Trial</strong>. Upgrade to unlock more generations, platforms, and features.
-    </p>
+    <p class="text-sm text-muted" style="margin-bottom:20px;">${statusMsg}</p>
     <div class="pricing-grid" id="pricing-grid">
       ${plans.map(p => {
         const features = Array.isArray(p.features) ? p.features : [];
+        const isCurrent = p.tier === currentPlan;
+        const planIndex = tierOrder.indexOf(p.tier);
+        const isFree = ['free', 'free_trial'].includes(p.tier);
+
+        // Determine button state
+        let btnHtml = '';
+        if (isCurrent) {
+          btnHtml = `<button class="btn pricing-upgrade-btn" disabled style="background:#e2e8f0;color:#64748b;cursor:default;">Current Plan</button>`;
+        } else if (isFree) {
+          // Don't show a button for the free plan
+          btnHtml = '';
+        } else if (isFreePlan) {
+          // Free user → show upgrade buttons for paid plans
+          btnHtml = `<button class="btn btn-primary pricing-upgrade-btn" id="upgrade-btn-${p.tier}" onclick="startUpgrade('${p.tier}')">Upgrade to ${p.name}</button>`;
+        } else if (planIndex > currentIndex) {
+          // Current plan is lower → upgrade
+          btnHtml = `<button class="btn btn-primary pricing-upgrade-btn" id="change-btn-${p.tier}" onclick="changePlan('${p.tier}')">Upgrade to ${p.name}</button>`;
+        } else {
+          // Current plan is higher → downgrade
+          btnHtml = `<button class="btn pricing-upgrade-btn" id="change-btn-${p.tier}" onclick="changePlan('${p.tier}')" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;">Downgrade to ${p.name}</button>`;
+        }
+
         return `
-          <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''}" style="border-top:3px solid ${p.color || '#6366f1'};">
-            ${p.badge ? `<div class="pricing-badge">${p.badge}</div>` : ''}
+          <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''} ${isCurrent ? 'pricing-card--current' : ''}" style="border-top:3px solid ${p.color || '#6366f1'};${isCurrent ? 'box-shadow:0 0 0 2px ' + (p.color || '#6366f1') + ';' : ''}">
+            ${isCurrent ? '<div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;margin-bottom:4px;">Your Plan</div>' : ''}
+            ${p.badge && !isCurrent ? `<div class="pricing-badge">${p.badge}</div>` : ''}
             <div class="pricing-name">${p.name}</div>
             <div class="pricing-price">
               <span class="pricing-amount">${p.price_display}</span>
@@ -1374,15 +1381,17 @@ async function renderSubscriptionSection() {
             <ul class="pricing-features">
               ${features.map(f => `<li>✓ ${f}</li>`).join('')}
             </ul>
-            <button
-              class="btn btn-primary pricing-upgrade-btn"
-              id="upgrade-btn-${p.tier}"
-              onclick="startUpgrade('${p.tier}')"
-            >Upgrade to ${p.name}</button>
+            ${btnHtml}
           </div>
         `;
       }).join('')}
     </div>
+    ${!isFreePlan ? `
+      <div style="margin-top:20px;display:flex;gap:16px;align-items:center;">
+        <a href="#" onclick="openBillingPortal(); return false;" style="font-size:13px;color:#6366f1;">Payment method & invoices</a>
+        <a href="#" onclick="confirmCancelSubscription(); return false;" style="font-size:13px;color:#dc2626;">Cancel subscription</a>
+      </div>
+    ` : ''}
   `;
 }
 
@@ -1775,6 +1784,7 @@ async function openBillingPortal() {
 // ----------------------------------------------------------------
 // startUpgrade — creates a Stripe Checkout session for the chosen
 // plan and redirects the user to complete payment.
+// Used when a FREE user picks a paid plan (no existing subscription).
 // ----------------------------------------------------------------
 async function startUpgrade(planKey) {
   const btn = document.getElementById(`upgrade-btn-${planKey}`);
@@ -1789,6 +1799,53 @@ async function startUpgrade(planKey) {
   } catch (err) {
     showAlert('settings-alerts', 'Could not start checkout: ' + err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = `Upgrade to ${planKey}`; }
+  }
+}
+
+// ----------------------------------------------------------------
+// changePlan — upgrade or downgrade an EXISTING paid subscription.
+// Stripe prorates automatically.
+// ----------------------------------------------------------------
+async function changePlan(planKey) {
+  const btn = document.getElementById(`change-btn-${planKey}`);
+  const originalText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Changing…'; }
+
+  if (!confirm(`Change your plan to ${planKey.charAt(0).toUpperCase() + planKey.slice(1)}? Stripe will prorate the difference.`)) {
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    return;
+  }
+
+  try {
+    await apiFetch('/billing/change', {
+      method: 'POST',
+      body: JSON.stringify({ plan: planKey })
+    });
+    showAlert('settings-alerts', 'Plan changed successfully!', 'success');
+    // Refresh to show updated plan
+    await loadCurrentUser();
+    renderSubscriptionSection();
+  } catch (err) {
+    showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  }
+}
+
+// ----------------------------------------------------------------
+// confirmCancelSubscription — cancel at end of current billing period.
+// ----------------------------------------------------------------
+async function confirmCancelSubscription() {
+  if (!confirm('Are you sure you want to cancel? You will keep access until the end of your current billing period.')) {
+    return;
+  }
+
+  try {
+    await apiFetch('/billing/cancel', { method: 'POST' });
+    showAlert('settings-alerts', 'Subscription cancelled. You will keep access until the end of your billing period.', 'success');
+    await loadCurrentUser();
+    renderSubscriptionSection();
+  } catch (err) {
+    showAlert('settings-alerts', 'Failed to cancel: ' + err.message, 'error');
   }
 }
 

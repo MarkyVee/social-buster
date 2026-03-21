@@ -137,6 +137,67 @@ async function createPortalSession(userId) {
 }
 
 // ----------------------------------------------------------------
+// Cancel a user's Stripe subscription at the end of the current period.
+// The user keeps access until the billing period ends, then reverts to free.
+// ----------------------------------------------------------------
+async function cancelSubscription(userId) {
+  const { data: sub, error } = await supabaseAdmin
+    .from('subscriptions')
+    .select('stripe_subscription_id')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !sub?.stripe_subscription_id) {
+    throw new Error('No active Stripe subscription found');
+  }
+
+  // Cancel at period end — user keeps access until their current cycle ends
+  const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+    cancel_at_period_end: true
+  });
+
+  return cancelled;
+}
+
+// ----------------------------------------------------------------
+// Change a user's subscription to a different plan (upgrade or downgrade).
+// Stripe prorates automatically — user pays/credits the difference.
+// ----------------------------------------------------------------
+async function changePlan(userId, newPlanTier) {
+  const plan = await getPlanByTier(newPlanTier);
+  if (!plan || !plan.stripe_price_id) {
+    throw new Error(`Invalid plan or missing Stripe price ID: ${newPlanTier}`);
+  }
+
+  const { data: sub, error } = await supabaseAdmin
+    .from('subscriptions')
+    .select('stripe_subscription_id')
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !sub?.stripe_subscription_id) {
+    throw new Error('No active Stripe subscription found');
+  }
+
+  // Get the current subscription to find the item ID
+  const current = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+  const itemId = current.items.data[0]?.id;
+
+  if (!itemId) {
+    throw new Error('No subscription item found');
+  }
+
+  // Update the subscription to the new price (Stripe prorates automatically)
+  const updated = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+    items: [{ id: itemId, price: plan.stripe_price_id }],
+    cancel_at_period_end: false, // Clear any pending cancellation
+    proration_behavior: 'create_prorations'
+  });
+
+  return updated;
+}
+
+// ----------------------------------------------------------------
 // Verify a Stripe webhook signature and return the parsed event.
 // IMPORTANT: rawBody must be the raw Buffer — NOT parsed JSON.
 // ----------------------------------------------------------------
@@ -269,6 +330,8 @@ module.exports = {
   createStripeCustomer,
   createCheckoutSession,
   createPortalSession,
+  cancelSubscription,
+  changePlan,
   constructWebhookEvent,
   handleWebhookEvent
 };

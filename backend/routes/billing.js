@@ -14,6 +14,8 @@ const router = express.Router();
 const {
   createCheckoutSession,
   createPortalSession,
+  cancelSubscription,
+  changePlan,
   constructWebhookEvent,
   handleWebhookEvent
 } = require('../services/stripeService');
@@ -108,6 +110,43 @@ router.post('/portal', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[Billing] Portal error:', err.message);
     return res.status(500).json({ error: 'Failed to open billing portal' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /billing/change
+// Change the user's plan (upgrade or downgrade).
+// Body: { plan: 'starter' | 'professional' | 'enterprise' }
+// ----------------------------------------------------------------
+router.post('/change', requireAuth, async (req, res) => {
+  const { plan } = req.body;
+
+  if (!plan) {
+    return res.status(400).json({ error: 'Plan is required' });
+  }
+
+  try {
+    await changePlan(req.user.id, plan);
+    return res.json({ success: true, message: `Plan changed to ${plan}` });
+
+  } catch (err) {
+    console.error('[Billing] Plan change error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to change plan' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /billing/cancel
+// Cancel the user's subscription at the end of the current period.
+// ----------------------------------------------------------------
+router.post('/cancel', requireAuth, async (req, res) => {
+  try {
+    await cancelSubscription(req.user.id);
+    return res.json({ success: true, message: 'Subscription will cancel at end of billing period' });
+
+  } catch (err) {
+    console.error('[Billing] Cancel error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to cancel subscription' });
   }
 });
 
