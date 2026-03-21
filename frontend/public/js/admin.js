@@ -1577,10 +1577,12 @@ function renderGroupForm(group) {
       <div id="eg-manual-fields" class="${type !== 'manual' ? 'hidden' : ''}">
         <div class="admin-section-title" style="margin-top:12px;font-size:13px;">Select Users</div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="text" id="eg-user-search" placeholder="Search by email…" style="flex:1;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;" oninput="searchUsersForGroup(this.value)" />
+          <select id="eg-user-dropdown" style="flex:1;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;">
+            <option value="">-- Choose a user to add --</option>
+          </select>
+          <button class="btn btn-sm btn-primary" onclick="addUserFromDropdown()">Add</button>
         </div>
-        <div id="eg-user-results" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
-        <div class="email-user-chips" id="eg-selected-users">
+        <div class="email-user-chips" id="eg-selected-users" style="margin-top:8px;">
           ${manualIds.map(id => `<span class="email-user-chip" data-uid="${id}">${id.slice(0,8)}… <span class="remove-chip" onclick="removeManualUser('${id}')">×</span></span>`).join('')}
         </div>
       </div>
@@ -1593,81 +1595,93 @@ function renderGroupForm(group) {
     </div>
   `;
 
-  // If editing manual group, load the user emails for chips
-  if (isEdit && type === 'manual' && manualIds.length > 0) {
-    loadManualUserChips(manualIds);
-  }
+  // Load the user dropdown and pre-select any existing manual users
+  loadUserDropdown(manualIds);
 }
 
 function toggleGroupTypeFields() {
   const type = document.getElementById('eg-type')?.value;
   document.getElementById('eg-filter-fields')?.classList.toggle('hidden', type !== 'filter');
   document.getElementById('eg-manual-fields')?.classList.toggle('hidden', type !== 'manual');
+  // Load users into dropdown when manual is selected
+  if (type === 'manual') loadUserDropdown(_manualSelectedUsers.slice());
 }
 
 // Track manually selected user IDs
 let _manualSelectedUsers = [];
+// Cache all users so we don't re-fetch every time
+let _allUsersCache = null;
 
-async function loadManualUserChips(userIds) {
-  _manualSelectedUsers = [...userIds];
+async function loadUserDropdown(preSelectedIds = []) {
+  _manualSelectedUsers = [...preSelectedIds];
+  const dropdown = document.getElementById('eg-user-dropdown');
+  if (!dropdown) return;
+
+  dropdown.innerHTML = '<option value="">Loading users…</option>';
+
   try {
-    // Use admin user search to get emails for the IDs
-    const data = await apiFetch('/admin/users?limit=500');
-    const users = data.users || [];
-    const matched = users.filter(u => userIds.includes(u.user_id));
-    const chipsEl = document.getElementById('eg-selected-users');
-    if (chipsEl) {
-      chipsEl.innerHTML = matched.map(u =>
-        `<span class="email-user-chip" data-uid="${u.user_id}">${escapeAdminHtml(u.email)} <span class="remove-chip" onclick="removeManualUser('${u.user_id}')">×</span></span>`
-      ).join('');
+    if (!_allUsersCache) {
+      const data = await apiFetch('/admin/users?limit=500');
+      _allUsersCache = data.users || [];
     }
-  } catch (_) { /* non-fatal */ }
+    refreshDropdownOptions();
+
+    // If editing, show chips for pre-selected users
+    if (preSelectedIds.length > 0) {
+      const chipsEl = document.getElementById('eg-selected-users');
+      if (chipsEl) {
+        chipsEl.innerHTML = preSelectedIds.map(id => {
+          const u = _allUsersCache.find(usr => usr.user_id === id);
+          const label = u ? escapeAdminHtml(u.email) : id.slice(0, 8) + '…';
+          return `<span class="email-user-chip" data-uid="${id}">${label} <span class="remove-chip" onclick="removeManualUser('${id}')">×</span></span>`;
+        }).join('');
+      }
+    }
+  } catch (_) {
+    dropdown.innerHTML = '<option value="">Failed to load users</option>';
+  }
 }
 
-let _userSearchTimer = null;
-async function searchUsersForGroup(query) {
-  clearTimeout(_userSearchTimer);
-  _userSearchTimer = setTimeout(async () => {
-    const resultsEl = document.getElementById('eg-user-results');
-    if (!resultsEl || !query.trim()) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+function refreshDropdownOptions() {
+  const dropdown = document.getElementById('eg-user-dropdown');
+  if (!dropdown || !_allUsersCache) return;
 
-    try {
-      const data = await apiFetch(`/admin/users?q=${encodeURIComponent(query)}&limit=10`);
-      const users = data.users || [];
-      resultsEl.innerHTML = users.map(u => {
-        const alreadyAdded = _manualSelectedUsers.includes(u.user_id);
-        return `<div style="padding:4px 8px;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;">
-          <span>${escapeAdminHtml(u.email)} <span class="admin-muted">(${escapeAdminHtml(u.brand_name || '—')})</span></span>
-          ${alreadyAdded
-            ? '<span class="admin-muted">added</span>'
-            : `<button class="btn btn-sm" onclick="addManualUser('${u.user_id}', '${escapeAdminHtml(u.email)}')">Add</button>`}
-        </div>`;
-      }).join('') || '<div class="admin-muted" style="padding:8px;">No users found</div>';
-    } catch (_) {
-      resultsEl.innerHTML = '<div class="admin-muted" style="padding:8px;">Search failed</div>';
-    }
-  }, 300);
+  // Filter out already-selected users
+  const available = _allUsersCache.filter(u => !_manualSelectedUsers.includes(u.user_id));
+
+  dropdown.innerHTML = `<option value="">-- Choose a user to add (${available.length} available) --</option>`
+    + available.map(u =>
+      `<option value="${u.user_id}">${escapeAdminHtml(u.email)}${u.brand_name ? ' (' + escapeAdminHtml(u.brand_name) + ')' : ''}</option>`
+    ).join('');
 }
 
-function addManualUser(userId, email) {
+function addUserFromDropdown() {
+  const dropdown = document.getElementById('eg-user-dropdown');
+  if (!dropdown || !dropdown.value) return;
+
+  const userId = dropdown.value;
+  const selectedOption = dropdown.options[dropdown.selectedIndex];
+  const label = selectedOption.textContent;
+
   if (_manualSelectedUsers.includes(userId)) return;
   _manualSelectedUsers.push(userId);
+
+  // Add chip
   const chipsEl = document.getElementById('eg-selected-users');
   if (chipsEl) {
-    chipsEl.innerHTML += `<span class="email-user-chip" data-uid="${userId}">${escapeAdminHtml(email)} <span class="remove-chip" onclick="removeManualUser('${userId}')">×</span></span>`;
+    chipsEl.innerHTML += `<span class="email-user-chip" data-uid="${userId}">${escapeAdminHtml(label)} <span class="remove-chip" onclick="removeManualUser('${userId}')">×</span></span>`;
   }
-  // Re-run search to update "added" labels
-  const searchInput = document.getElementById('eg-user-search');
-  if (searchInput?.value) searchUsersForGroup(searchInput.value);
+
+  // Refresh dropdown to remove the selected user from options
+  refreshDropdownOptions();
 }
 
 function removeManualUser(userId) {
   _manualSelectedUsers = _manualSelectedUsers.filter(id => id !== userId);
   const chip = document.querySelector(`.email-user-chip[data-uid="${userId}"]`);
   if (chip) chip.remove();
-  // Re-run search to update "added" labels
-  const searchInput = document.getElementById('eg-user-search');
-  if (searchInput?.value) searchUsersForGroup(searchInput.value);
+  // Put the user back in the dropdown
+  refreshDropdownOptions();
 }
 
 async function saveEmailGroup(groupId) {
