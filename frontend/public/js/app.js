@@ -1939,10 +1939,6 @@ async function changePlan(planKey) {
       method: 'POST',
       body: JSON.stringify({ plan: planKey })
     });
-    await renderSubscriptionSection();
-    showAlert('settings-alerts', 'Plan changed successfully!', 'success');
-    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    loadCurrentUser().catch(() => {});
   } catch (err) {
     // If no Stripe subscription exists, fall back to Checkout
     if (err.message.includes('No active Stripe subscription')) {
@@ -1962,7 +1958,14 @@ async function changePlan(planKey) {
       showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
     }
     if (btn) { btn.disabled = false; btn.textContent = originalText; }
+    return;
   }
+
+  // Plan change succeeded — show confirmation immediately, then refresh UI
+  showAlert('settings-alerts', 'Plan changed successfully!', 'success');
+  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  renderSubscriptionSection().catch(() => {});
+  loadCurrentUser().catch(() => {});
 }
 
 // ----------------------------------------------------------------
@@ -1978,15 +1981,18 @@ async function downgradeToFree() {
 
   try {
     await apiFetch('/billing/downgrade-free', { method: 'POST' });
-    await renderSubscriptionSection();
-    showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
-    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    loadCurrentUser().catch(() => {});
   } catch (err) {
     if (err.message.includes('session expired')) return;
     showAlert('settings-alerts', 'Failed to downgrade: ' + err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Downgrade to Free'; }
+    return;
   }
+
+  // Downgrade succeeded — show confirmation immediately, then refresh UI
+  showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
+  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  renderSubscriptionSection().catch(() => {});
+  loadCurrentUser().catch(() => {});
 }
 
 // ----------------------------------------------------------------
@@ -2005,18 +2011,19 @@ async function confirmCancelSubscription() {
 
   try {
     await apiFetch('/billing/cancel', { method: 'POST' });
-    // Refresh subscription UI first so it shows the updated state
-    await renderSubscriptionSection();
-    // Show alert AFTER re-render so it doesn't get scrolled out of view,
-    // and scroll to it so the user sees confirmation
-    showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
-    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    loadCurrentUser().catch(() => {});
   } catch (err) {
     if (cancelLink) { cancelLink.textContent = 'Cancel subscription'; cancelLink.style.pointerEvents = ''; }
-    if (err.message.includes('session expired')) return; // auth:expired handles logout
+    if (err.message.includes('session expired')) return;
     showAlert('settings-alerts', 'Failed to cancel: ' + err.message, 'error');
+    return;
   }
+
+  // Cancel succeeded — show confirmation immediately, then refresh UI
+  showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
+  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Refresh UI in background — don't let a failure here hide the success banner
+  renderSubscriptionSection().catch(() => {});
+  loadCurrentUser().catch(() => {});
 }
 
 // ============================================================
