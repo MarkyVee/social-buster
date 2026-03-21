@@ -197,6 +197,29 @@ function showAlert(containerId, message, type = 'error', allowHtml = false) {
 }
 
 // ============================================================
+// showToast — fixed-position notification immune to DOM re-renders.
+// Appended to #global-toasts which lives outside #app, so no
+// innerHTML rebuild can destroy it. Use for actions where the
+// page may re-render immediately after (billing, OAuth, etc.).
+// ============================================================
+function showToast(message, type = 'success', durationMs = 5000) {
+  const container = document.getElementById('global-toasts');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(40px)';
+    toast.style.transition = 'opacity 0.3s, transform 0.3s';
+    setTimeout(() => toast.remove(), 300);
+  }, durationMs);
+}
+
+// ============================================================
 // ROUTING — show/hide views based on hash
 // ============================================================
 
@@ -1892,7 +1915,7 @@ async function openBillingPortal() {
     const data = await apiFetch('/billing/portal', { method: 'POST' });
     window.location.href = data.portalUrl;
   } catch (err) {
-    showAlert('settings-alerts', 'Failed to open billing portal: ' + err.message, 'error');
+    showToast('Failed to open billing portal: ' + err.message, 'error', 8000);
   }
 }
 
@@ -1913,7 +1936,7 @@ async function startUpgrade(planKey) {
     window.location.href = data.checkoutUrl;
   } catch (err) {
     if (err.message.includes('session expired')) return;
-    showAlert('settings-alerts', 'Could not start checkout: ' + err.message, 'error');
+    showToast('Could not start checkout: ' + err.message, 'error', 8000);
     if (btn) { btn.disabled = false; btn.textContent = `Upgrade to ${planKey}`; }
   }
 }
@@ -1950,20 +1973,19 @@ async function changePlan(planKey) {
         window.location.href = data.checkoutUrl;
         return;
       } catch (checkoutErr) {
-        showAlert('settings-alerts', 'Could not start checkout: ' + checkoutErr.message, 'error');
+        showToast('Could not start checkout: ' + checkoutErr.message, 'error', 8000);
       }
     } else if (err.message.includes('session expired')) {
       return;
     } else {
-      showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
+      showToast('Failed to change plan: ' + err.message, 'error', 8000);
     }
     if (btn) { btn.disabled = false; btn.textContent = originalText; }
     return;
   }
 
-  // Plan change succeeded — show confirmation immediately, then refresh UI
-  showAlert('settings-alerts', 'Plan changed successfully!', 'success');
-  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Plan change succeeded — toast is immune to DOM re-renders
+  showToast('Plan changed successfully!', 'success');
   renderSubscriptionSection().catch(() => {});
   loadCurrentUser().catch(() => {});
 }
@@ -1983,14 +2005,14 @@ async function downgradeToFree() {
     await apiFetch('/billing/downgrade-free', { method: 'POST' });
   } catch (err) {
     if (err.message.includes('session expired')) return;
-    showAlert('settings-alerts', 'Failed to downgrade: ' + err.message, 'error');
+    showToast('Failed to downgrade: ' + err.message, 'error', 8000);
     if (btn) { btn.disabled = false; btn.textContent = 'Downgrade to Free'; }
     return;
   }
 
   // Downgrade succeeded — show confirmation immediately, then refresh UI
-  showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
-  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Downgrade succeeded — toast is immune to DOM re-renders
+  showToast('Downgraded to Free Trial.', 'success');
   renderSubscriptionSection().catch(() => {});
   loadCurrentUser().catch(() => {});
 }
@@ -2014,14 +2036,12 @@ async function confirmCancelSubscription() {
   } catch (err) {
     if (cancelLink) { cancelLink.textContent = 'Cancel subscription'; cancelLink.style.pointerEvents = ''; }
     if (err.message.includes('session expired')) return;
-    showAlert('settings-alerts', 'Failed to cancel: ' + err.message, 'error');
+    showToast('Failed to cancel: ' + err.message, 'error', 8000);
     return;
   }
 
-  // Cancel succeeded — show confirmation immediately, then refresh UI
-  showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
-  document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  // Refresh UI in background — don't let a failure here hide the success banner
+  // Cancel succeeded — toast is immune to DOM re-renders
+  showToast('Subscription will cancel at the end of your billing period.', 'success');
   renderSubscriptionSection().catch(() => {});
   loadCurrentUser().catch(() => {});
 }

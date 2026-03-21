@@ -15,6 +15,9 @@
       - Not logged in  → injects the auth screen (login / register)
       - Logged in      → injects the app shell (sidebar + main content)
   -->
+  <!-- Global toast container — lives outside #app so no view re-render can destroy it -->
+  <div id="global-toasts"></div>
+
   <div id="app">
     <!-- Initial loading state shown before app.js runs -->
     <div class="loading-overlay" style="min-height:100vh;">
