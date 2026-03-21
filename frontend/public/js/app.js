@@ -1940,8 +1940,8 @@ async function changePlan(planKey) {
       body: JSON.stringify({ plan: planKey })
     });
     showAlert('settings-alerts', 'Plan changed successfully!', 'success');
-    await loadCurrentUser();
-    renderSubscriptionSection();
+    await renderSubscriptionSection();
+    loadCurrentUser().catch(() => {});
   } catch (err) {
     // If no Stripe subscription exists, fall back to Checkout
     if (err.message.includes('No active Stripe subscription')) {
@@ -1978,8 +1978,8 @@ async function downgradeToFree() {
   try {
     await apiFetch('/billing/downgrade-free', { method: 'POST' });
     showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
-    await loadCurrentUser();
-    renderSubscriptionSection();
+    await renderSubscriptionSection();
+    loadCurrentUser().catch(() => {});
   } catch (err) {
     if (err.message.includes('session expired')) return;
     showAlert('settings-alerts', 'Failed to downgrade: ' + err.message, 'error');
@@ -1997,12 +1997,18 @@ async function confirmCancelSubscription() {
     return;
   }
 
+  // Show loading state — Stripe API calls can take several seconds
+  const cancelLink = document.querySelector('a[onclick*="confirmCancelSubscription"]');
+  if (cancelLink) { cancelLink.textContent = 'Cancelling...'; cancelLink.style.pointerEvents = 'none'; }
+
   try {
     await apiFetch('/billing/cancel', { method: 'POST' });
     showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
-    await loadCurrentUser();
-    renderSubscriptionSection();
+    // Refresh subscription UI immediately, then sync user data in background
+    await renderSubscriptionSection();
+    loadCurrentUser().catch(() => {});
   } catch (err) {
+    if (cancelLink) { cancelLink.textContent = 'Cancel subscription'; cancelLink.style.pointerEvents = ''; }
     if (err.message.includes('session expired')) return; // auth:expired handles logout
     showAlert('settings-alerts', 'Failed to cancel: ' + err.message, 'error');
   }
