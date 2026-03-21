@@ -40,6 +40,9 @@ function clearToken() {
   App.user = null;
   localStorage.removeItem('sb_token');
   localStorage.removeItem('sb_refresh_token');
+  // Stop background pollers so they don't fire 401s after logout
+  if (App._unreadPoller) { clearInterval(App._unreadPoller); App._unreadPoller = null; }
+  if (App._tokenRefresher) { clearInterval(App._tokenRefresher); App._tokenRefresher = null; }
 }
 
 // ============================================================
@@ -469,6 +472,10 @@ function renderAppShell() {
   // Start polling for unread messages — updates the sidebar badge every 60s.
   // Guard against messages.js not being loaded yet (graceful degradation).
   startUnreadBadgePoller();
+
+  // Keep the JWT alive — refreshes every 50 min so the user never hits
+  // a silent 401 after the 1-hour Supabase token expires.
+  startTokenRefresher();
 }
 
 // ----------------------------------------------------------------
@@ -478,10 +485,36 @@ function renderAppShell() {
 // ----------------------------------------------------------------
 function startUnreadBadgePoller() {
   const refresh = () => {
+    if (!App.token) return; // skip if logged out
     if (typeof refreshMsgUnreadBadge === 'function') refreshMsgUnreadBadge();
   };
   refresh(); // immediate check on login
-  setInterval(refresh, 60 * 1000);
+  App._unreadPoller = setInterval(refresh, 60 * 1000);
+}
+
+// ----------------------------------------------------------------
+// startTokenRefresher
+// Supabase JWTs expire after 1 hour. This refreshes the token every
+// 50 minutes so the user never hits a 401 mid-session. Without this,
+// any action after ~60 min of inactivity silently fails or logs out.
+// ----------------------------------------------------------------
+function startTokenRefresher() {
+  if (App._tokenRefresher) clearInterval(App._tokenRefresher);
+  App._tokenRefresher = setInterval(async () => {
+    const refreshToken = localStorage.getItem('sb_refresh_token');
+    if (!refreshToken || !App.token) return;
+    try {
+      const res = await fetch('/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      const data = await res.json();
+      if (res.ok && data.session) {
+        saveToken(data.session.access_token, data.session.refresh_token);
+      }
+    } catch (_) { /* non-fatal — next interval will retry */ }
+  }, 50 * 60 * 1000); // every 50 minutes
 }
 
 // ============================================================
