@@ -934,22 +934,23 @@ router.get('/tier-limits', async (req, res) => {
       const defaults = [];
       const tiers    = ['free_trial', 'starter', 'professional', 'enterprise'];
       const features = {
-        briefs_per_month:       [5, 30, 100, -1],
-        ai_images_per_month:    [3, 20, 60, -1],
-        platforms_connected:    [2, 4, 7, 7],
-        scheduled_queue_size:   [5, 25, 100, -1],
-        comment_monitoring:     [0, 1, 1, 1],
-        dm_lead_capture:        [0, 0, 1, 1],
-        intelligence_dashboard: [0, 0, 1, 1]
+        briefs_per_month:       { values: [5, 30, 100, -1], label: 'Briefs per month' },
+        ai_images_per_month:    { values: [3, 20, 60, -1],  label: 'AI images per month' },
+        platforms_connected:    { values: [2, 4, 7, 7],      label: 'Platforms connected' },
+        scheduled_queue_size:   { values: [5, 25, 100, -1],  label: 'Scheduled queue size' },
+        comment_monitoring:     { values: [0, 1, 1, 1],      label: 'Comment monitoring' },
+        dm_lead_capture:        { values: [0, 0, 1, 1],      label: 'DM lead capture' },
+        intelligence_dashboard: { values: [0, 0, 1, 1],      label: 'Intelligence dashboard' }
       };
 
-      for (const [feature, values] of Object.entries(features)) {
+      for (const [feature, config] of Object.entries(features)) {
         tiers.forEach((tier, i) => {
           defaults.push({
             tier,
             feature,
-            limit_value: values[i],
-            enabled: true
+            limit_value: config.values[i],
+            enabled: true,
+            label: config.label
           });
         });
       }
