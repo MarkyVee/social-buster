@@ -1251,7 +1251,7 @@ async function renderSettings(el) {
       <div class="card-header">
         <div class="card-title">Subscription</div>
         <span class="badge badge-${sub.status || 'active'}" style="text-transform:capitalize;">
-          ${sub.plan || 'Free Trial'}
+          ${['free', 'free_trial'].includes(sub.plan) ? 'Free Trial' : (sub.plan || 'Free Trial')}
         </span>
       </div>
       <div id="subscription-content">

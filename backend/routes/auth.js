@@ -292,11 +292,23 @@ router.get('/me', requireAuth, async (req, res) => {
       .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
     const isAdmin = adminEmails.includes((req.user.email || '').toLowerCase());
 
+    // Fetch subscription data so the frontend can show the correct plan badge
+    let subscription = { plan: 'free_trial', status: 'active' };
+    try {
+      const { data: sub } = await supabaseAdmin
+        .from('subscriptions')
+        .select('plan, status, current_period_end')
+        .eq('user_id', req.user.id)
+        .single();
+      if (sub) subscription = sub;
+    } catch (_) { /* non-fatal — default to free_trial */ }
+
     return res.json({
       user: {
         id:       req.user.id,
         email:    req.user.email,
         is_admin: isAdmin,
+        subscription,
         profile
       }
     });
