@@ -1336,78 +1336,51 @@ async function renderSubscriptionSection() {
     return;
   }
 
-  // Free trial users — show pricing cards
-  const plans = [
-    {
-      key: 'starter',
-      name: 'Starter',
-      price: '$29',
-      period: '/month',
-      color: '#6366f1',
-      features: [
-        '20 AI post generations/month',
-        '30 AI image generations/month',
-        '4 social platforms',
-        '25 posts in queue',
-        'Comment monitoring'
-      ]
-    },
-    {
-      key: 'professional',
-      name: 'Professional',
-      price: '$79',
-      period: '/month',
-      color: '#0d9488',
-      badge: 'Most Popular',
-      features: [
-        'Unlimited AI generations',
-        'Unlimited AI images',
-        'All 7 platforms',
-        'Unlimited post queue',
-        'Lead capture DMs',
-        'Full media library',
-        'Intelligence dashboard'
-      ]
-    },
-    {
-      key: 'enterprise',
-      name: 'Enterprise',
-      price: '$199',
-      period: '/month',
-      color: '#7c3aed',
-      features: [
-        'Everything in Professional',
-        'Priority support',
-        'Custom onboarding call',
-        'SLA guarantee',
-        'Unlimited platforms'
-      ]
-    }
-  ];
+  // Free trial users — fetch plans from the database (admin-editable)
+  let plans = [];
+  try {
+    const res = await apiFetch('/billing/plans');
+    plans = res.plans || [];
+  } catch (_) {
+    // Fallback if plans table doesn't exist yet
+    plans = [];
+  }
+
+  if (plans.length === 0) {
+    el.innerHTML = `
+      <p class="text-sm text-muted">
+        You're on the <strong>Free Trial</strong>. Subscription plans are being configured — check back soon.
+      </p>
+    `;
+    return;
+  }
 
   el.innerHTML = `
     <p class="text-sm text-muted" style="margin-bottom:20px;">
       You're on the <strong>Free Trial</strong>. Upgrade to unlock more generations, platforms, and features.
     </p>
     <div class="pricing-grid" id="pricing-grid">
-      ${plans.map(p => `
-        <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''}">
-          ${p.badge ? `<div class="pricing-badge">${p.badge}</div>` : ''}
-          <div class="pricing-name">${p.name}</div>
-          <div class="pricing-price">
-            <span class="pricing-amount">${p.price}</span>
-            <span class="pricing-period">${p.period}</span>
+      ${plans.map(p => {
+        const features = Array.isArray(p.features) ? p.features : [];
+        return `
+          <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''}" style="border-top:3px solid ${p.color || '#6366f1'};">
+            ${p.badge ? `<div class="pricing-badge">${p.badge}</div>` : ''}
+            <div class="pricing-name">${p.name}</div>
+            <div class="pricing-price">
+              <span class="pricing-amount">${p.price_display}</span>
+              <span class="pricing-period">${p.period_label}</span>
+            </div>
+            <ul class="pricing-features">
+              ${features.map(f => `<li>✓ ${f}</li>`).join('')}
+            </ul>
+            <button
+              class="btn btn-primary pricing-upgrade-btn"
+              id="upgrade-btn-${p.tier}"
+              onclick="startUpgrade('${p.tier}')"
+            >Upgrade to ${p.name}</button>
           </div>
-          <ul class="pricing-features">
-            ${p.features.map(f => `<li>✓ ${f}</li>`).join('')}
-          </ul>
-          <button
-            class="btn btn-primary pricing-upgrade-btn"
-            id="upgrade-btn-${p.key}"
-            onclick="startUpgrade('${p.key}')"
-          >Upgrade to ${p.name}</button>
-        </div>
-      `).join('')}
+        `;
+      }).join('')}
     </div>
   `;
 }

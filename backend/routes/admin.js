@@ -1077,5 +1077,71 @@ router.get('/revenue', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------
+// GET /admin/plans
+//
+// Returns all plans (active + inactive) for the admin editor.
+// ----------------------------------------------------------------
+router.get('/plans', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('plans')
+      .select('*')
+      .order('sort_order');
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ plans: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] Plans fetch error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch plans' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/plans/:id
+//
+// Update a plan's display info, features, Stripe price ID, etc.
+// Body: any subset of { name, price_display, period_label,
+//   stripe_price_id, features, color, badge, sort_order, is_active }
+// ----------------------------------------------------------------
+router.put('/plans/:id', async (req, res) => {
+  const { id } = req.params;
+  const allowed = [
+    'name', 'price_display', 'period_label', 'stripe_price_id',
+    'features', 'color', 'badge', 'sort_order', 'is_active'
+  ];
+
+  const updates = { updated_at: new Date().toISOString() };
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+
+  if (Object.keys(updates).length === 1) {
+    return res.status(400).json({ error: 'No valid fields to update' });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('plans')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    if (!data) return res.status(404).json({ error: 'Plan not found' });
+
+    console.log(`[Admin] Plan ${data.tier} updated by ${req.user.email}`);
+
+    return res.json({ plan: data });
+
+  } catch (err) {
+    console.error('[Admin] Plan update error:', err.message);
+    return res.status(500).json({ error: 'Failed to update plan' });
+  }
+});
+
 module.exports = router;
 

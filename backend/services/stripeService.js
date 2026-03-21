@@ -14,31 +14,36 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 });
 
 // ----------------------------------------------------------------
-// Subscription plan definitions.
-// Price IDs come from your Stripe dashboard and live in .env.
+// Plan lookup helper.
+// Fetches the Stripe price ID from the plans table in the database.
+// This replaces the old hardcoded PLANS object so admins can update
+// plans from the dashboard without a code change.
 // ----------------------------------------------------------------
-const PLANS = {
-  free: {
-    name: 'Free Trial',
-    priceId: null, // No Stripe price — free plan
-    features: ['5 AI posts per month', '2 platforms', '1 user']
-  },
-  starter: {
-    name: 'Starter',
-    priceId: process.env.STRIPE_PRICE_STARTER,
-    features: ['50 AI posts per month', '4 platforms', 'Comment monitoring']
-  },
-  professional: {
-    name: 'Professional',
-    priceId: process.env.STRIPE_PRICE_PROFESSIONAL,
-    features: ['Unlimited AI posts', 'All 7 platforms', 'Lead capture DMs', 'Media library']
-  },
-  enterprise: {
-    name: 'Enterprise',
-    priceId: process.env.STRIPE_PRICE_ENTERPRISE,
-    features: ['Everything in Pro', 'Priority support', 'Custom onboarding', 'SLA']
-  }
-};
+async function getPlanByTier(tier) {
+  const { data, error } = await supabaseAdmin
+    .from('plans')
+    .select('tier, name, stripe_price_id')
+    .eq('tier', tier)
+    .eq('is_active', true)
+    .single();
+
+  if (error || !data) return null;
+  return data;
+}
+
+// Reverse lookup: find which tier a Stripe price ID belongs to.
+// Used by the webhook handler when Stripe tells us a subscription changed.
+async function getTierByPriceId(priceId) {
+  if (!priceId) return 'free';
+
+  const { data } = await supabaseAdmin
+    .from('plans')
+    .select('tier')
+    .eq('stripe_price_id', priceId)
+    .single();
+
+  return data?.tier || 'free';
+}
 
 // ----------------------------------------------------------------
 // Create a Stripe customer for a new user.
@@ -75,9 +80,9 @@ async function createStripeCustomer(userId, email) {
 // Returns a URL that the frontend redirects the user to.
 // ----------------------------------------------------------------
 async function createCheckoutSession(userId, planKey) {
-  const plan = PLANS[planKey];
-  if (!plan || !plan.priceId) {
-    throw new Error(`Invalid plan: ${planKey}`);
+  const plan = await getPlanByTier(planKey);
+  if (!plan || !plan.stripe_price_id) {
+    throw new Error(`Invalid plan or missing Stripe price ID: ${planKey}`);
   }
 
   // Look up the user's Stripe customer ID
@@ -95,7 +100,7 @@ async function createCheckoutSession(userId, planKey) {
     customer: sub.stripe_customer_id,
     mode: 'subscription',
     payment_method_types: ['card'],
-    line_items: [{ price: plan.priceId, quantity: 1 }],
+    line_items: [{ price: plan.stripe_price_id, quantity: 1 }],
     // Where to redirect after payment
     success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/#settings?payment=success`,
     cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/#settings?payment=cancelled`,
@@ -171,7 +176,7 @@ async function handleWebhookEvent(event) {
 
       // Determine the plan from the price ID
       const priceId = subscription.items?.data?.[0]?.price?.id;
-      const plan = Object.keys(PLANS).find(k => PLANS[k].priceId === priceId) || 'free';
+      const plan = await getTierByPriceId(priceId);
 
       // Map Stripe statuses to our internal statuses
       const statusMap = {
@@ -259,7 +264,8 @@ async function handleWebhookEvent(event) {
 }
 
 module.exports = {
-  PLANS,
+  getPlanByTier,
+  getTierByPriceId,
   createStripeCustomer,
   createCheckoutSession,
   createPortalSession,

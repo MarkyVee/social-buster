@@ -12,7 +12,6 @@ const express = require('express');
 const router = express.Router();
 
 const {
-  PLANS,
   createCheckoutSession,
   createPortalSession,
   constructWebhookEvent,
@@ -27,18 +26,26 @@ router.use(standardLimiter);
 
 // ----------------------------------------------------------------
 // GET /billing/plans
-// Returns all available subscription plans.
+// Returns all active subscription plans from the database.
 // Public route — no auth required.
 // ----------------------------------------------------------------
-router.get('/plans', (req, res) => {
-  // Return plan details (strip out internal price IDs — users don't need those)
-  const publicPlans = Object.entries(PLANS).map(([key, plan]) => ({
-    key,
-    name: plan.name,
-    features: plan.features
-  }));
+router.get('/plans', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('plans')
+      .select('tier, name, price_display, period_label, features, color, badge, sort_order')
+      .eq('is_active', true)
+      .order('sort_order');
 
-  return res.json({ plans: publicPlans });
+    if (error) throw new Error(error.message);
+
+    return res.json({ plans: data || [] });
+
+  } catch (err) {
+    console.error('[Billing] Plans fetch error:', err.message);
+    // Fallback to empty array — don't crash the page
+    return res.json({ plans: [] });
+  }
 });
 
 // ----------------------------------------------------------------

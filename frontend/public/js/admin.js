@@ -35,6 +35,7 @@ function renderAdminDashboard(el) {
       <button class="admin-tab"        data-tab="limits"    onclick="switchAdminTab('limits')">Limits</button>
       <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
       <button class="admin-tab"        data-tab="email"     onclick="switchAdminTab('email')">Email</button>
+      <button class="admin-tab"        data-tab="plans"     onclick="switchAdminTab('plans')">Plans</button>
     </div>
 
     <!-- Tab panels -->
@@ -45,6 +46,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-limits"    class="admin-panel hidden"></div>
     <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
     <div id="admin-tab-email"     class="admin-panel hidden"></div>
+    <div id="admin-tab-plans"     class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -79,6 +81,7 @@ function switchAdminTab(tab) {
   if (tab === 'limits')    loadAdminLimits();
   if (tab === 'revenue')   loadAdminRevenue();
   if (tab === 'email')     loadAdminEmail();
+  if (tab === 'plans')     loadAdminPlans();
 }
 
 // ================================================================
@@ -2431,4 +2434,181 @@ async function loadAdminRevenue() {
       <div>${projTable}</div>
     </div>
   `;
+}
+
+// ================================================================
+// PLANS TAB — Visual plan card editor
+// ================================================================
+
+async function loadAdminPlans() {
+  const panel = document.getElementById('admin-tab-plans');
+  if (!panel) return;
+  panel.dataset.loaded = '1';
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading plans…</div>`;
+
+  let plans;
+  try {
+    const res = await apiFetch('/admin/plans');
+    plans = res.plans || [];
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load plans: ${escapeAdminHtml(err.message)}</div>`;
+    return;
+  }
+
+  if (plans.length === 0) {
+    panel.innerHTML = `<div class="admin-muted" style="padding:20px;">No plans found. Run the plans SQL migration in Supabase to seed the default plans.</div>`;
+    return;
+  }
+
+  // Render a two-column layout: live preview on the left, editor on the right
+  panel.innerHTML = `
+    <div class="admin-section-title" style="margin-bottom:4px;">Subscription Plans</div>
+    <p class="admin-muted" style="margin-bottom:16px;font-size:13px;">
+      Edit plan names, prices, features, and colors. Changes update instantly for all users.<br>
+      To change the actual dollar amount charged, create a new price in Stripe and paste the <code>price_</code> ID below.
+    </p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+      <!-- Live preview -->
+      <div>
+        <div class="admin-section-title" style="font-size:13px;margin-bottom:10px;">Live Preview</div>
+        <div id="plans-preview" style="display:flex;flex-direction:column;gap:16px;">
+          ${plans.map(p => renderPlanPreviewCard(p)).join('')}
+        </div>
+      </div>
+
+      <!-- Editor cards -->
+      <div>
+        <div class="admin-section-title" style="font-size:13px;margin-bottom:10px;">Edit Plans</div>
+        <div id="plans-editor" style="display:flex;flex-direction:column;gap:16px;">
+          ${plans.map(p => renderPlanEditorCard(p)).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPlanPreviewCard(plan) {
+  const features = Array.isArray(plan.features) ? plan.features : [];
+  return `
+    <div class="plan-preview-card" id="plan-preview-${plan.id}" style="border-left:4px solid ${plan.color};padding:16px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);${!plan.is_active ? 'opacity:0.5;' : ''}">
+      ${plan.badge ? `<div style="font-size:11px;font-weight:600;color:${plan.color};text-transform:uppercase;margin-bottom:4px;">${escapeAdminHtml(plan.badge)}</div>` : ''}
+      <div style="font-size:18px;font-weight:700;color:#1e293b;">${escapeAdminHtml(plan.name)}</div>
+      <div style="margin:6px 0 12px;">
+        <span style="font-size:28px;font-weight:800;color:#0f172a;">${escapeAdminHtml(plan.price_display)}</span>
+        <span style="font-size:14px;color:#64748b;">${escapeAdminHtml(plan.period_label)}</span>
+      </div>
+      <ul style="list-style:none;padding:0;margin:0;font-size:13px;color:#334155;">
+        ${features.map(f => `<li style="padding:3px 0;">✓ ${escapeAdminHtml(f)}</li>`).join('')}
+      </ul>
+      ${!plan.is_active ? '<div style="margin-top:8px;font-size:11px;color:#dc2626;font-weight:600;">HIDDEN FROM USERS</div>' : ''}
+      ${!plan.stripe_price_id ? '<div style="margin-top:8px;font-size:11px;color:#f59e0b;font-weight:600;">⚠ No Stripe Price ID — users cannot purchase</div>' : ''}
+    </div>
+  `;
+}
+
+function renderPlanEditorCard(plan) {
+  const features = Array.isArray(plan.features) ? plan.features : [];
+  return `
+    <div class="email-card" id="plan-editor-${plan.id}" style="border-left:4px solid ${plan.color};">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="font-weight:700;font-size:15px;color:#1e293b;">${escapeAdminHtml(plan.tier.toUpperCase())}</div>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="plan-active-${plan.id}" ${plan.is_active ? 'checked' : ''}
+            onchange="savePlanField('${plan.id}', 'is_active', this.checked)" />
+          Visible
+        </label>
+      </div>
+
+      <div class="email-form-group">
+        <label>Display Name</label>
+        <input type="text" id="plan-name-${plan.id}" value="${escapeAdminHtml(plan.name)}"
+          onblur="savePlanField('${plan.id}', 'name', this.value)" />
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div class="email-form-group">
+          <label>Price Display</label>
+          <input type="text" id="plan-price-${plan.id}" value="${escapeAdminHtml(plan.price_display)}"
+            onblur="savePlanField('${plan.id}', 'price_display', this.value)" placeholder="$29" />
+        </div>
+        <div class="email-form-group">
+          <label>Period</label>
+          <input type="text" id="plan-period-${plan.id}" value="${escapeAdminHtml(plan.period_label)}"
+            onblur="savePlanField('${plan.id}', 'period_label', this.value)" placeholder="/month" />
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div class="email-form-group">
+          <label>Card Color</label>
+          <input type="color" id="plan-color-${plan.id}" value="${plan.color}"
+            onchange="savePlanField('${plan.id}', 'color', this.value)" style="height:36px;padding:2px;cursor:pointer;" />
+        </div>
+        <div class="email-form-group">
+          <label>Badge (optional)</label>
+          <input type="text" id="plan-badge-${plan.id}" value="${escapeAdminHtml(plan.badge || '')}"
+            onblur="savePlanField('${plan.id}', 'badge', this.value || null)" placeholder="e.g. Most Popular" />
+        </div>
+      </div>
+
+      <div class="email-form-group">
+        <label>Stripe Price ID</label>
+        <input type="text" id="plan-stripe-${plan.id}" value="${escapeAdminHtml(plan.stripe_price_id || '')}"
+          onblur="savePlanField('${plan.id}', 'stripe_price_id', this.value || null)" placeholder="price_xxx (from Stripe dashboard)" style="font-family:monospace;font-size:12px;" />
+      </div>
+
+      <div class="email-form-group">
+        <label>Features (one per line)</label>
+        <textarea id="plan-features-${plan.id}" rows="6" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;resize:vertical;font-family:inherit;"
+          onblur="savePlanFeatures('${plan.id}')">${features.join('\n')}</textarea>
+      </div>
+
+      <div class="email-form-group">
+        <label>Sort Order</label>
+        <input type="number" id="plan-sort-${plan.id}" value="${plan.sort_order}" min="0" max="99"
+          onblur="savePlanField('${plan.id}', 'sort_order', parseInt(this.value) || 0)" style="width:80px;" />
+      </div>
+
+      <div id="plan-status-${plan.id}" class="admin-muted" style="font-size:12px;margin-top:4px;"></div>
+    </div>
+  `;
+}
+
+async function savePlanField(planId, field, value) {
+  const statusEl = document.getElementById(`plan-status-${planId}`);
+  if (statusEl) statusEl.textContent = 'Saving…';
+
+  try {
+    const body = {};
+    body[field] = value;
+    const res = await apiFetch(`/admin/plans/${planId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+
+    if (statusEl) {
+      statusEl.textContent = 'Saved ✓';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2000);
+    }
+
+    // Update the live preview
+    const previewEl = document.getElementById(`plan-preview-${planId}`);
+    if (previewEl && res.plan) {
+      previewEl.outerHTML = renderPlanPreviewCard(res.plan);
+    }
+
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Failed: ' + err.message;
+  }
+}
+
+async function savePlanFeatures(planId) {
+  const textarea = document.getElementById(`plan-features-${planId}`);
+  if (!textarea) return;
+
+  // Split by newline, trim each, remove empty lines
+  const features = textarea.value.split('\n').map(f => f.trim()).filter(Boolean);
+  await savePlanField(planId, 'features', features);
 }
