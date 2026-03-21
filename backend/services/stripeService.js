@@ -385,23 +385,45 @@ async function handleWebhookEvent(event) {
 
       console.log(`[Stripe Webhook] plan=${plan}, status=${status}, periodEnd=${periodEndISO}`);
 
-      const { error: updateErr } = await supabaseAdmin
+      const updatePayload = {
+        stripe_subscription_id: subscription.id,
+        stripe_customer_id: customerId,
+        plan,
+        status,
+        ...(periodEndISO && { current_period_end: periodEndISO })
+      };
+
+      // Use .select() so we can verify rows were actually updated
+      const { data: updatedRows, error: updateErr } = await supabaseAdmin
         .from('subscriptions')
-        .update({
-          stripe_subscription_id: subscription.id,
-          stripe_customer_id: customerId,
-          plan,
-          status,
-          ...(periodEndISO && { current_period_end: periodEndISO })
-        })
-        .eq('user_id', sub.user_id);
+        .update(updatePayload)
+        .eq('user_id', sub.user_id)
+        .select();
 
       if (updateErr) {
         console.error(`[Stripe Webhook] DB update FAILED for user ${sub.user_id}:`, updateErr.message);
         throw new Error(`DB update failed: ${updateErr.message}`);
       }
 
-      console.log(`[Stripe Webhook] SUCCESS: user=${sub.user_id}, plan=${plan}, status=${status}`);
+      if (!updatedRows || updatedRows.length === 0) {
+        // Update matched 0 rows — the subscription row doesn't exist for this user.
+        // Create it via upsert so the plan is saved.
+        console.warn(`[Stripe Webhook] Update matched 0 rows for user ${sub.user_id} — upserting instead`);
+        const { error: upsertErr } = await supabaseAdmin
+          .from('subscriptions')
+          .upsert({
+            user_id: sub.user_id,
+            ...updatePayload
+          }, { onConflict: 'user_id' });
+
+        if (upsertErr) {
+          console.error(`[Stripe Webhook] Upsert ALSO failed for user ${sub.user_id}:`, upsertErr.message);
+          throw new Error(`DB upsert failed: ${upsertErr.message}`);
+        }
+        console.log(`[Stripe Webhook] SUCCESS (via upsert): user=${sub.user_id}, plan=${plan}, status=${status}`);
+      } else {
+        console.log(`[Stripe Webhook] SUCCESS: user=${sub.user_id}, plan=${plan}, status=${status}, rows=${updatedRows.length}`);
+      }
       break;
     }
 

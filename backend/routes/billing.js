@@ -67,6 +67,7 @@ router.get('/status', requireAuth, async (req, res) => {
     // return a default free_trial status instead of 404.
     // This prevents the frontend from breaking for pre-billing users.
     if (error || !data) {
+      console.warn(`[Billing] No subscription found for user ${req.user.id} — error: ${error?.message || 'no row'}`);
       return res.json({
         subscription: { plan: 'free_trial', status: 'active', current_period_end: null }
       });
