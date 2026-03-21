@@ -346,6 +346,14 @@ async function handleWebhookEvent(event) {
       };
       const status = statusMap[subscription.status] || 'active';
 
+      // Get current_period_end — try subscription level first, then item level (newer API versions)
+      const periodEnd = subscription.current_period_end
+        || subscription.items?.data?.[0]?.current_period_end
+        || null;
+      const periodEndISO = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+
+      console.log(`[Stripe Webhook] plan=${plan}, status=${status}, periodEnd=${periodEndISO}`);
+
       const { error: updateErr } = await supabaseAdmin
         .from('subscriptions')
         .update({
@@ -353,7 +361,7 @@ async function handleWebhookEvent(event) {
           stripe_customer_id: customerId,
           plan,
           status,
-          current_period_end: new Date(subscription.current_period_end * 1000).toISOString()
+          ...(periodEndISO && { current_period_end: periodEndISO })
         })
         .eq('user_id', sub.user_id);
 
