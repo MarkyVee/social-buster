@@ -2121,12 +2121,37 @@ async function loadAdminLimits() {
     `<th>${TIER_LABELS[t] || t}</th>`
   ).join('');
 
+  // Features that are simple on/off flags (no number input needed)
+  const FLAG_FEATURES = ['comment_monitoring', 'dm_lead_capture', 'intelligence_dashboard'];
+
   const bodyRows = FEATURES.map(feature => {
+    const isFlag = FLAG_FEATURES.includes(feature);
+
     const cells = TIERS.map(tier => {
       const row = byFeatureTier[feature]?.[tier];
       if (!row) return `<td><span class="admin-muted">—</span></td>`;
 
-      // Display -1 as empty placeholder "∞" but store as -1
+      if (isFlag) {
+        // Simple on/off toggle — no number input
+        const isOn = row.limit_value > 0;
+        return `
+          <td>
+            <div class="limits-cell" style="justify-content:center;">
+              <label class="limit-toggle" title="${isOn ? 'On — click to turn off' : 'Off — click to turn on'}">
+                <input
+                  type="checkbox"
+                  id="limit-flag-${row.id}"
+                  data-id="${row.id}"
+                  ${isOn ? 'checked' : ''}
+                  onchange="saveLimitFlag(this)"
+                />
+                <span class="limit-toggle-slider"></span>
+              </label>
+            </div>
+          </td>`;
+      }
+
+      // Numeric limit — number input + enabled toggle
       const displayVal = row.limit_value === -1 ? '' : row.limit_value;
       const checked    = row.enabled ? 'checked' : '';
 
@@ -2264,6 +2289,26 @@ async function saveLimitToggle(checkbox) {
       setTimeout(() => { input.classList.remove('error'); input.disabled = false; }, 2000);
     }
     console.error('[Limits] Toggle save failed:', err.message);
+  }
+}
+
+// saveLimitFlag — for on/off feature flags (no number, just 1 or 0)
+async function saveLimitFlag(checkbox) {
+  const id = checkbox.dataset.id;
+  const newValue = checkbox.checked ? 1 : 0;
+
+  try {
+    await apiFetch(`/admin/tier-limits/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ limit_value: newValue })
+    });
+
+    const label = checkbox.closest('.limit-toggle');
+    if (label) label.title = newValue ? 'On — click to turn off' : 'Off — click to turn on';
+
+  } catch (err) {
+    checkbox.checked = !checkbox.checked;
+    console.error('[Limits] Flag save failed:', err.message);
   }
 }
 
