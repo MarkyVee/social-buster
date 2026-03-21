@@ -169,15 +169,24 @@ async function cancelSubscription(userId) {
     throw new Error('No subscription record found');
   }
 
-  // If there's a real Stripe subscription, cancel at period end
+  // If there's a real Stripe subscription, try to cancel at period end
   if (sub?.stripe_subscription_id) {
-    const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
-      cancel_at_period_end: true
-    });
-    return cancelled;
+    try {
+      const current = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+      if (['active', 'trialing'].includes(current.status)) {
+        const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+          cancel_at_period_end: true
+        });
+        return cancelled;
+      }
+      // Subscription exists but is not active — just revert in DB
+      console.warn(`[Billing] Subscription ${sub.stripe_subscription_id} status is "${current.status}" — reverting to free`);
+    } catch (stripeErr) {
+      console.error('[Billing] Could not retrieve subscription for cancel:', stripeErr.message);
+    }
   }
 
-  // No Stripe subscription (admin override or manual plan) — revert to free immediately
+  // No usable Stripe subscription — revert to free immediately
   await supabaseAdmin
     .from('subscriptions')
     .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null })
@@ -239,10 +248,32 @@ async function changePlan(userId, newPlanTier) {
     throw new Error('No active Stripe subscription found');
   }
 
-  // Get the current subscription to find the item ID
-  const current = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
-  const itemId = current.items.data[0]?.id;
+  // Retrieve the current subscription from Stripe
+  let current;
+  try {
+    current = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
+  } catch (retrieveErr) {
+    console.error(`[Billing] Could not retrieve subscription ${sub.stripe_subscription_id}:`, retrieveErr.message);
+    // Clear the stale subscription ID so the frontend falls back to Checkout
+    await supabaseAdmin
+      .from('subscriptions')
+      .update({ stripe_subscription_id: null })
+      .eq('user_id', userId);
+    throw new Error('No active Stripe subscription found');
+  }
 
+  // If the subscription is not active (incomplete, cancelled, etc.), clear it
+  // and tell the frontend to use Checkout instead
+  if (!['active', 'trialing'].includes(current.status)) {
+    console.warn(`[Billing] Subscription ${sub.stripe_subscription_id} has status "${current.status}" — cannot modify, clearing`);
+    await supabaseAdmin
+      .from('subscriptions')
+      .update({ stripe_subscription_id: null })
+      .eq('user_id', userId);
+    throw new Error('No active Stripe subscription found');
+  }
+
+  const itemId = current.items.data[0]?.id;
   if (!itemId) {
     throw new Error('No subscription item found');
   }
