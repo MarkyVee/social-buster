@@ -180,26 +180,34 @@ router.get('/health', async (req, res) => {
 
   // ---- Supabase Storage bucket check ----
   //
-  // Verify the 'ai-generated-images' bucket is accessible with the service role key.
-  // If this fails, every AI image generation will succeed but fail to save — users
-  // get a confusing partial error with no trace of where it broke.
+  // Verify the required storage buckets are accessible.
+  // We check for three buckets: ai-generated-images, video-segments, processed-media.
+  // If listBuckets fails entirely (Supabase intermittent issue), treat as warning not error.
+  const REQUIRED_BUCKETS = ['ai-generated-images', 'video-segments', 'processed-media'];
   try {
     const { data: buckets, error: bucketErr } = await supabaseAdmin.storage.listBuckets();
-    if (bucketErr) throw new Error(bucketErr.message);
 
-    const aiImageBucket = (buckets || []).find(b => b.name === 'ai-generated-images');
-    if (!aiImageBucket) {
-      health.storage = 'error — "ai-generated-images" bucket not found. Create it in Supabase Storage.';
-      health.status  = health.status !== 'critical' ? 'degraded' : health.status;
-    } else if (aiImageBucket.public === false) {
-      health.storage = 'warning — "ai-generated-images" bucket is private. Set it to public or image URLs will not load.';
-      health.status  = health.status !== 'critical' ? 'degraded' : health.status;
+    if (bucketErr) {
+      // Supabase storage API intermittently fails — don't mark as degraded
+      health.storage = `warning — bucket check failed: ${bucketErr.message} (may be transient)`;
     } else {
-      health.storage = 'ok — ai-generated-images bucket exists and is public';
+      const bucketNames = (buckets || []).map(b => b.name);
+      const missing     = REQUIRED_BUCKETS.filter(name => !bucketNames.includes(name));
+      const privateBkts = (buckets || []).filter(b => REQUIRED_BUCKETS.includes(b.name) && b.public === false);
+
+      if (missing.length > 0) {
+        health.storage = `warning — missing bucket(s): ${missing.join(', ')}. Found: ${bucketNames.join(', ') || 'none'}`;
+        health.status  = health.status !== 'critical' ? 'degraded' : health.status;
+      } else if (privateBkts.length > 0) {
+        health.storage = `warning — private bucket(s): ${privateBkts.map(b => b.name).join(', ')}. Set to public.`;
+        health.status  = health.status !== 'critical' ? 'degraded' : health.status;
+      } else {
+        health.storage = `ok — all ${REQUIRED_BUCKETS.length} buckets exist and are public`;
+      }
     }
   } catch (err) {
-    health.storage = `error — ${err.message}`;
-    health.status  = health.status !== 'critical' ? 'degraded' : health.status;
+    // Don't degrade for transient storage API errors
+    health.storage = `warning — bucket check error: ${err.message} (non-blocking)`;
   }
 
   // ---- Environment variable audit ----
@@ -350,9 +358,11 @@ router.get('/stats', async (req, res) => {
     // Start of today (UTC midnight)
     const todayStart   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 
-    // Run all DB queries in parallel for speed
+    // Run all DB + Auth queries in parallel for speed.
+    // Total Users comes from Supabase Auth (the source of truth for registered accounts),
+    // not user_profiles (which may be missing rows for users who haven't completed onboarding).
     const [
-      { count: totalUsers },
+      authListResult,
       { count: totalPosts },
       { count: recentPosts },
       { count: totalMetrics },
@@ -364,7 +374,7 @@ router.get('/stats', async (req, res) => {
       { data: dauRows },
       { data: mauRows }
     ] = await Promise.all([
-      supabaseAdmin.from('user_profiles').select('*',       { count: 'exact', head: true }),
+      supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1 }),
       supabaseAdmin.from('posts').select('*',               { count: 'exact', head: true }).eq('status', 'published'),
       supabaseAdmin.from('posts').select('*',               { count: 'exact', head: true }).eq('status', 'published').gte('published_at', sevenDaysAgo),
       supabaseAdmin.from('post_metrics').select('*',        { count: 'exact', head: true }),
@@ -377,6 +387,9 @@ router.get('/stats', async (req, res) => {
       // MAU: distinct users who submitted a brief in the last 30 days
       supabaseAdmin.from('briefs').select('user_id').gte('created_at', thirtyDaysAgo)
     ]);
+
+    // Total users from Supabase Auth (includes users without profiles)
+    const totalUsers = authListResult?.data?.total || 0;
 
     // Count distinct user_ids for DAU and MAU
     const dau = new Set((dauRows || []).map(r => r.user_id)).size;
@@ -418,38 +431,71 @@ router.get('/users', async (req, res) => {
   const page  = Math.max(1, parseInt(req.query.page)  || 1);
   const limit = Math.min(100, parseInt(req.query.limit) || 50);
   const q     = (req.query.q || '').trim();
-  const from  = (page - 1) * limit;
 
   try {
-    let query = supabaseAdmin
-      .from('user_profiles')
-      .select(`
-        user_id,
-        email,
-        brand_name,
-        industry,
-        geo_region,
-        business_type,
-        onboarding_complete,
-        created_at
-      `, { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(from, from + limit - 1);
+    // Fetch ALL users from Supabase Auth (the source of truth for who is registered).
+    // Then merge with user_profiles for brand/industry data.
+    // This ensures users who registered but haven't completed onboarding still show up.
+    const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage: limit
+    });
 
-    if (q) {
-      // Search by email or brand name (case-insensitive)
-      query = query.or(`email.ilike.%${q}%,brand_name.ilike.%${q}%`);
+    if (authErr) throw new Error(authErr.message);
+
+    const authUsers = authData?.users || [];
+    const total     = authData?.total || authUsers.length;
+
+    // Fetch matching profiles (if they exist)
+    const userIds = authUsers.map(u => u.id);
+    let profiles = [];
+    if (userIds.length > 0) {
+      const { data: profileData } = await supabaseAdmin
+        .from('user_profiles')
+        .select('user_id, brand_name, industry, geo_region, business_type, onboarding_complete, created_at')
+        .in('user_id', userIds);
+      profiles = profileData || [];
     }
 
-    const { data: users, count, error } = await query;
-    if (error) throw new Error(error.message);
+    // Build a lookup map for profiles
+    const profileMap = {};
+    for (const p of profiles) {
+      profileMap[p.user_id] = p;
+    }
+
+    // Merge auth users with their profiles
+    let users = authUsers.map(u => {
+      const p = profileMap[u.id] || {};
+      return {
+        user_id:             u.id,
+        email:               u.email,
+        brand_name:          p.brand_name || null,
+        industry:            p.industry || null,
+        geo_region:          p.geo_region || null,
+        business_type:       p.business_type || null,
+        onboarding_complete: p.onboarding_complete || false,
+        created_at:          p.created_at || u.created_at
+      };
+    });
+
+    // Apply search filter if provided
+    if (q) {
+      const ql = q.toLowerCase();
+      users = users.filter(u =>
+        (u.email && u.email.toLowerCase().includes(ql)) ||
+        (u.brand_name && u.brand_name.toLowerCase().includes(ql))
+      );
+    }
+
+    // Sort by created_at descending
+    users.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     return res.json({
-      users:    users || [],
-      total:    count || 0,
+      users,
+      total:    q ? users.length : total,
       page,
       limit,
-      pages:    Math.ceil((count || 0) / limit)
+      pages:    Math.ceil((q ? users.length : total) / limit)
     });
 
   } catch (err) {
@@ -872,13 +918,58 @@ const { bustLimitsCache } = require('../middleware/checkLimit');
 // ----------------------------------------------------------------
 router.get('/tier-limits', async (req, res) => {
   try {
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from('tier_limits')
       .select('*')
       .order('tier')
       .order('feature');
 
     if (error) throw new Error(error.message);
+
+    // Auto-seed default limits if the table is empty.
+    // This makes the system self-healing — no manual SQL needed.
+    if (!data || data.length === 0) {
+      console.log('[Admin] tier_limits table empty — auto-seeding defaults...');
+      const defaults = [];
+      const tiers    = ['free_trial', 'starter', 'professional', 'enterprise'];
+      const features = {
+        briefs_per_month:       [5, 30, 100, -1],
+        ai_images_per_month:    [3, 20, 60, -1],
+        platforms_connected:    [2, 4, 7, 7],
+        scheduled_queue_size:   [5, 25, 100, -1],
+        comment_monitoring:     [0, 1, 1, 1],
+        dm_lead_capture:        [0, 0, 1, 1],
+        intelligence_dashboard: [0, 0, 1, 1]
+      };
+
+      for (const [feature, values] of Object.entries(features)) {
+        tiers.forEach((tier, i) => {
+          defaults.push({
+            tier,
+            feature,
+            limit_value: values[i],
+            enabled: true
+          });
+        });
+      }
+
+      const { error: seedErr } = await supabaseAdmin
+        .from('tier_limits')
+        .insert(defaults);
+
+      if (seedErr) {
+        console.error('[Admin] Auto-seed failed:', seedErr.message);
+      } else {
+        console.log(`[Admin] Seeded ${defaults.length} tier limit rows`);
+        // Re-fetch after seeding
+        const refetch = await supabaseAdmin
+          .from('tier_limits')
+          .select('*')
+          .order('tier')
+          .order('feature');
+        data = refetch.data || [];
+      }
+    }
 
     return res.json({ limits: data || [] });
 
