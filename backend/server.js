@@ -62,6 +62,12 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
     return res.status(400).json({ error: 'Missing Stripe signature' });
   }
 
+  // Debug logging — remove after webhook is confirmed working
+  const secret = process.env.STRIPE_WEBHOOK_SECRET || '';
+  console.log(`[Stripe Webhook DEBUG] Body type: ${typeof req.body}, isBuffer: ${Buffer.isBuffer(req.body)}, length: ${req.body?.length}`);
+  console.log(`[Stripe Webhook DEBUG] Secret starts with: "${secret.substring(0, 8)}...", length: ${secret.length}`);
+  console.log(`[Stripe Webhook DEBUG] Signature header: "${signature.substring(0, 30)}..."`);
+
   let event;
   try {
     event = constructWebhookEvent(req.body, signature);
