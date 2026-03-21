@@ -1313,7 +1313,7 @@ async function renderSubscriptionSection() {
     sub = { plan: 'free', status: 'active' };
   }
 
-  const plan   = sub?.plan   || 'free';
+  const plan   = sub?.plan   || 'free_trial';
   const status = sub?.status || 'active';
 
   const periodEnd = sub?.current_period_end
@@ -1321,7 +1321,8 @@ async function renderSubscriptionSection() {
     : null;
 
   // Paid users — just show a manage billing button
-  if (plan !== 'free') {
+  const isFreePlan = ['free', 'free_trial'].includes(plan);
+  if (!isFreePlan) {
     el.innerHTML = `
       <p class="text-sm text-muted" style="margin-bottom:4px;">
         You're on the <strong>${plan.charAt(0).toUpperCase() + plan.slice(1)}</strong> plan.
