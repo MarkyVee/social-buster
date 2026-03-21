@@ -2074,16 +2074,21 @@ async function loadAdminLimits() {
   panel.innerHTML = `<div class="admin-loading"><span>⏳</span> Loading tier limits…</div>`;
 
   let limits;
+  let seedError;
   try {
     const res = await apiFetch('/admin/tier-limits');
     limits = res.limits || [];
+    seedError = res.seedError;
   } catch (err) {
     panel.innerHTML = `<div class="admin-error">Failed to load limits: ${escapeAdminHtml(err.message)}</div>`;
     return;
   }
 
   if (limits.length === 0) {
-    panel.innerHTML = `<div class="admin-muted">No tier limits configured. Run the SQL migration to seed the tier_limits table.</div>`;
+    const msg = seedError
+      ? `Auto-seed failed: ${escapeAdminHtml(seedError)}. The tier_limits table may need to be created first.`
+      : 'No tier limits configured. Run the SQL migration to seed the tier_limits table.';
+    panel.innerHTML = `<div class="admin-muted">${msg}</div>`;
     return;
   }
 
