@@ -60,15 +60,17 @@ async function createStripeCustomer(userId, email) {
     }
   });
 
-  // Store the Stripe customer ID + initial free trial plan in our database
+  // Store the Stripe customer ID + initial free trial plan in our database.
+  // Use upsert so this works for both new users (INSERT) and existing users
+  // who registered before Stripe was set up (UPDATE with the new customer ID).
   const { error } = await supabaseAdmin
     .from('subscriptions')
-    .insert({
+    .upsert({
       user_id: userId,
       stripe_customer_id: customer.id,
       plan: 'free_trial',
       status: 'active'
-    });
+    }, { onConflict: 'user_id' });
 
   if (error) throw new Error(`Failed to save subscription record: ${error.message}`);
 
@@ -86,14 +88,23 @@ async function createCheckoutSession(userId, planKey) {
   }
 
   // Look up the user's Stripe customer ID
-  const { data: sub, error } = await supabaseAdmin
+  let { data: sub } = await supabaseAdmin
     .from('subscriptions')
     .select('stripe_customer_id')
     .eq('user_id', userId)
     .single();
 
-  if (error || !sub?.stripe_customer_id) {
-    throw new Error('No Stripe customer found for this user');
+  // If no subscription row or no Stripe customer exists (user registered before
+  // Stripe was set up), create one on the fly so they can still upgrade.
+  if (!sub?.stripe_customer_id) {
+    // Get the user's email from Supabase Auth
+    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+    const email = authData?.user?.email;
+    if (!email) throw new Error('Could not find user email to create Stripe customer');
+
+    console.log(`[Billing] Creating Stripe customer on the fly for user ${userId} (${email})`);
+    const customer = await createStripeCustomer(userId, email);
+    sub = { stripe_customer_id: customer.id };
   }
 
   const session = await stripe.checkout.sessions.create({
