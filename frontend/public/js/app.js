@@ -42,8 +42,79 @@ function clearToken() {
   localStorage.removeItem('sb_refresh_token');
   // Stop background pollers so they don't fire 401s after logout
   if (App._unreadPoller) { clearInterval(App._unreadPoller); App._unreadPoller = null; }
-  if (App._tokenRefresher) { clearInterval(App._tokenRefresher); App._tokenRefresher = null; }
 }
+
+// ============================================================
+// JWT expiry helpers
+// Decode the JWT payload to read the `exp` claim. This avoids
+// relying on fixed-interval timers which browsers throttle when
+// the tab is backgrounded or the laptop sleeps.
+// ============================================================
+
+function getTokenExpiry(token) {
+  if (!token) return 0;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp * 1000; // convert to milliseconds
+  } catch { return 0; }
+}
+
+function isTokenExpiringSoon(token, bufferMs = 5 * 60 * 1000) {
+  return getTokenExpiry(token) < Date.now() + bufferMs;
+}
+
+// ============================================================
+// Global refresh lock + request queue
+// Only one refresh request fires at a time. All concurrent 401s
+// wait for the single refresh to complete, then retry together.
+// This prevents Supabase refresh token rotation from invalidating
+// tokens when multiple requests race.
+// ============================================================
+
+let _isRefreshing = false;
+let _refreshSubscribers = [];
+
+async function refreshTokenOnce() {
+  // If another refresh is already in flight, wait for it
+  if (_isRefreshing) {
+    return new Promise((resolve, reject) => {
+      _refreshSubscribers.push({ resolve, reject });
+    });
+  }
+
+  _isRefreshing = true;
+  const rt = localStorage.getItem('sb_refresh_token');
+
+  try {
+    if (!rt) throw new Error('No refresh token');
+    const res = await fetch('/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: rt })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.session) throw new Error('Refresh failed');
+
+    saveToken(data.session.access_token, data.session.refresh_token);
+    // Notify all queued requests that refresh succeeded
+    _refreshSubscribers.forEach(s => s.resolve());
+    return true;
+  } catch (err) {
+    _refreshSubscribers.forEach(s => s.reject(err));
+    clearToken();
+    window.dispatchEvent(new CustomEvent('auth:expired'));
+    throw err;
+  } finally {
+    _isRefreshing = false;
+    _refreshSubscribers = [];
+  }
+}
+
+// Listen for auth expiry — renders login screen safely AFTER
+// any in-progress catch blocks have finished showing alerts.
+window.addEventListener('auth:expired', () => {
+  setTimeout(() => renderAuthScreen(), 100);
+});
 
 // ============================================================
 // apiFetch — the global API request helper.
@@ -51,6 +122,17 @@ function clearToken() {
 // Throws on non-OK HTTP responses with a clean error message.
 // ============================================================
 async function apiFetch(path, options = {}, _retried = false) {
+  // Proactive refresh: if the JWT will expire within 5 minutes,
+  // refresh it NOW before making the request. This avoids the
+  // 401 → refresh → retry round trip entirely.
+  if (App.token && isTokenExpiringSoon(App.token)) {
+    try {
+      await refreshTokenOnce();
+    } catch {
+      throw new Error('Your session expired. Please log in again.');
+    }
+  }
+
   const headers = {
     'Content-Type': 'application/json',
     ...(App.token ? { Authorization: `Bearer ${App.token}` } : {}),
@@ -66,32 +148,15 @@ async function apiFetch(path, options = {}, _retried = false) {
     body = {};
   }
 
-  // On 401, attempt a silent token refresh (once) before giving up.
-  // This handles the common case where the 1-hour Supabase JWT expired
-  // while the user had the tab open.
+  // Reactive fallback: if we still get a 401 (clock skew, server-side
+  // revocation, etc.), try one refresh + retry.
   if (response.status === 401 && !_retried) {
-    const refreshToken = localStorage.getItem('sb_refresh_token');
-    if (refreshToken) {
-      try {
-        const refreshRes = await fetch('/auth/refresh', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ refresh_token: refreshToken })
-        });
-        const refreshBody = await refreshRes.json();
-
-        if (refreshRes.ok && refreshBody.session) {
-          // Save the new tokens and retry the original request exactly once
-          saveToken(refreshBody.session.access_token, refreshBody.session.refresh_token);
-          return apiFetch(path, options, true);
-        }
-      } catch (_) { /* fall through to logout */ }
+    try {
+      await refreshTokenOnce();
+      return apiFetch(path, options, true);
+    } catch {
+      throw new Error('Your session expired. Please log in again.');
     }
-
-    // Refresh failed or no refresh token — session is unrecoverable, force logout
-    clearToken();
-    renderAuthScreen();
-    throw new Error('Your session expired. Please log in again.');
   }
 
   if (!response.ok) {
@@ -472,10 +537,6 @@ function renderAppShell() {
   // Start polling for unread messages — updates the sidebar badge every 60s.
   // Guard against messages.js not being loaded yet (graceful degradation).
   startUnreadBadgePoller();
-
-  // Keep the JWT alive — refreshes every 50 min so the user never hits
-  // a silent 401 after the 1-hour Supabase token expires.
-  startTokenRefresher();
 }
 
 // ----------------------------------------------------------------
@@ -484,37 +545,15 @@ function renderAppShell() {
 // refreshMsgUnreadBadge and updateMsgSidebarBadge are defined in messages.js.
 // ----------------------------------------------------------------
 function startUnreadBadgePoller() {
-  const refresh = () => {
-    if (!App.token) return; // skip if logged out
-    if (typeof refreshMsgUnreadBadge === 'function') refreshMsgUnreadBadge();
+  const refresh = async () => {
+    // Skip if logged out or token is about to expire (let apiFetch handle refresh)
+    if (!App.token || isTokenExpiringSoon(App.token)) return;
+    if (typeof refreshMsgUnreadBadge === 'function') {
+      try { await refreshMsgUnreadBadge(); } catch (_) { /* non-fatal */ }
+    }
   };
   refresh(); // immediate check on login
   App._unreadPoller = setInterval(refresh, 60 * 1000);
-}
-
-// ----------------------------------------------------------------
-// startTokenRefresher
-// Supabase JWTs expire after 1 hour. This refreshes the token every
-// 50 minutes so the user never hits a 401 mid-session. Without this,
-// any action after ~60 min of inactivity silently fails or logs out.
-// ----------------------------------------------------------------
-function startTokenRefresher() {
-  if (App._tokenRefresher) clearInterval(App._tokenRefresher);
-  App._tokenRefresher = setInterval(async () => {
-    const refreshToken = localStorage.getItem('sb_refresh_token');
-    if (!refreshToken || !App.token) return;
-    try {
-      const res = await fetch('/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken })
-      });
-      const data = await res.json();
-      if (res.ok && data.session) {
-        saveToken(data.session.access_token, data.session.refresh_token);
-      }
-    } catch (_) { /* non-fatal — next interval will retry */ }
-  }, 50 * 60 * 1000); // every 50 minutes
 }
 
 // ============================================================
@@ -1842,6 +1881,7 @@ async function startUpgrade(planKey) {
     });
     window.location.href = data.checkoutUrl;
   } catch (err) {
+    if (err.message.includes('session expired')) return;
     showAlert('settings-alerts', 'Could not start checkout: ' + err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = `Upgrade to ${planKey}`; }
   }
@@ -1884,6 +1924,8 @@ async function changePlan(planKey) {
       } catch (checkoutErr) {
         showAlert('settings-alerts', 'Could not start checkout: ' + checkoutErr.message, 'error');
       }
+    } else if (err.message.includes('session expired')) {
+      return;
     } else {
       showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
     }
@@ -1908,6 +1950,7 @@ async function downgradeToFree() {
     await loadCurrentUser();
     renderSubscriptionSection();
   } catch (err) {
+    if (err.message.includes('session expired')) return;
     showAlert('settings-alerts', 'Failed to downgrade: ' + err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Downgrade to Free'; }
   }
@@ -1929,6 +1972,7 @@ async function confirmCancelSubscription() {
     await loadCurrentUser();
     renderSubscriptionSection();
   } catch (err) {
+    if (err.message.includes('session expired')) return; // auth:expired handles logout
     showAlert('settings-alerts', 'Failed to cancel: ' + err.message, 'error');
   }
 }
