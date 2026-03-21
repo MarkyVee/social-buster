@@ -177,6 +177,11 @@ async function cancelSubscription(userId) {
         const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
           cancel_at_period_end: true
         });
+        // Mark as cancelling in our DB so the UI can show "Cancels on [date]"
+        await supabaseAdmin
+          .from('subscriptions')
+          .update({ status: 'cancelling' })
+          .eq('user_id', userId);
         return cancelled;
       }
       // Subscription exists but is not active — just revert in DB

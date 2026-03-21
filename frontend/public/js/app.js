@@ -1334,7 +1334,11 @@ async function renderSubscriptionSection() {
     statusMsg = `You're on the <strong>Free Trial</strong>. Upgrade to unlock more features.`;
   } else {
     statusMsg = `You're on the <strong>${currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong> plan.`;
-    if (periodEnd) statusMsg += ` Renews <strong>${periodEnd}</strong>.`;
+    if (sub.status === 'cancelling' && periodEnd) {
+      statusMsg += ` <span style="color:#f59e0b;font-weight:600;">Cancels on ${periodEnd}</span> — you keep access until then.`;
+    } else if (periodEnd) {
+      statusMsg += ` Renews <strong>${periodEnd}</strong>.`;
+    }
     if (sub.status === 'past_due') statusMsg += ' <span style="color:#ef4444;">Payment past due — please update your card.</span>';
   }
 
@@ -1392,7 +1396,9 @@ async function renderSubscriptionSection() {
     ${!isFreePlan ? `
       <div style="margin-top:20px;display:flex;gap:16px;align-items:center;">
         <a href="#" onclick="openBillingPortal(); return false;" style="font-size:13px;color:#6366f1;">Payment method & invoices</a>
-        <a href="#" onclick="confirmCancelSubscription(); return false;" style="font-size:13px;color:#dc2626;">Cancel subscription</a>
+        ${sub.status === 'cancelling'
+          ? '<span style="font-size:13px;color:#f59e0b;">Cancellation pending</span>'
+          : '<a href="#" onclick="confirmCancelSubscription(); return false;" style="font-size:13px;color:#dc2626;">Cancel subscription</a>'}
       </div>
     ` : ''}
   `;
