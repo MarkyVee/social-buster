@@ -175,6 +175,21 @@ const dmQueue = new Queue('dm', {
   }
 });
 
+// Email queue — admin bulk email campaigns via Resend.
+// Concurrency 1 in the worker (one campaign at a time).
+// No auto-retry — admin can re-send manually if a campaign fails.
+const emailQueue = new Queue('email', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 1,
+    backoff: {
+      type:  'exponential',
+      delay: 5000
+    }
+  }
+});
+
 module.exports = {
   publishQueue,
   commentQueue,
@@ -184,5 +199,6 @@ module.exports = {
   mediaAnalysisQueue,
   mediaProcessQueue,
   dmQueue,
+  emailQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

@@ -34,6 +34,7 @@ function renderAdminDashboard(el) {
       </button>
       <button class="admin-tab"        data-tab="limits"    onclick="switchAdminTab('limits')">Limits</button>
       <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
+      <button class="admin-tab"        data-tab="email"     onclick="switchAdminTab('email')">Email</button>
     </div>
 
     <!-- Tab panels -->
@@ -43,6 +44,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-messages"  class="admin-panel hidden"></div>
     <div id="admin-tab-limits"    class="admin-panel hidden"></div>
     <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
+    <div id="admin-tab-email"     class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -76,6 +78,7 @@ function switchAdminTab(tab) {
   if (tab === 'messages')  loadAdminMessages();
   if (tab === 'limits')    loadAdminLimits();
   if (tab === 'revenue')   loadAdminRevenue();
+  if (tab === 'email')     loadAdminEmail();
 }
 
 // ================================================================
@@ -1258,8 +1261,764 @@ function injectAdminStyles() {
     }
     .limit-toggle input:checked + .limit-toggle-slider { background: #6366f1; }
     .limit-toggle input:checked + .limit-toggle-slider::before { transform: translateX(16px); }
+
+    /* Email tab */
+    .email-sub-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 0;
+    }
+    .email-sub-tab {
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      padding: 6px 16px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #64748b;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .email-sub-tab.active, .email-sub-tab:hover {
+      color: #6366f1;
+      border-bottom-color: #6366f1;
+    }
+    .email-form-group {
+      margin-bottom: 14px;
+    }
+    .email-form-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .email-form-group input,
+    .email-form-group select,
+    .email-form-group textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fff;
+      box-sizing: border-box;
+    }
+    .email-form-group input:focus,
+    .email-form-group select:focus,
+    .email-form-group textarea:focus {
+      outline: none;
+      border-color: #6366f1;
+    }
+    .email-textarea {
+      font-family: 'Courier New', monospace;
+      min-height: 140px;
+      resize: vertical;
+    }
+    .email-filter-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .email-filter-row .email-form-group {
+      flex: 1;
+      min-width: 160px;
+    }
+    .email-status-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .email-status-draft    { background: #f1f5f9; color: #475569; }
+    .email-status-sending  { background: #fef3c7; color: #92400e; }
+    .email-status-sent     { background: #dcfce7; color: #166534; }
+    .email-status-failed   { background: #fee2e2; color: #991b1b; }
+    .email-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .email-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .email-user-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .email-user-chip {
+      display: inline-block;
+      background: #eef2ff;
+      color: #4338ca;
+      padding: 3px 10px;
+      border-radius: 14px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .email-user-chip .remove-chip {
+      cursor: pointer;
+      margin-left: 4px;
+      color: #6366f1;
+      font-weight: 700;
+    }
   `;
   document.head.appendChild(style);
+}
+
+// ================================================================
+// EMAIL TAB
+// ================================================================
+
+let _emailSubTab = 'groups';
+let _emailCampaignPollTimer = null;
+
+// ----------------------------------------------------------------
+// loadAdminEmail — entry point for the Email tab
+// ----------------------------------------------------------------
+function loadAdminEmail() {
+  const panel = document.getElementById('admin-tab-email');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  panel.innerHTML = `
+    <div class="email-sub-tabs">
+      <button class="email-sub-tab active" data-subtab="groups"    onclick="switchEmailSubTab('groups')">Groups</button>
+      <button class="email-sub-tab"        data-subtab="campaigns" onclick="switchEmailSubTab('campaigns')">Campaigns</button>
+    </div>
+    <div id="email-sub-groups"></div>
+    <div id="email-sub-campaigns" class="hidden"></div>
+  `;
+
+  loadEmailGroups();
+}
+
+function switchEmailSubTab(sub) {
+  _emailSubTab = sub;
+  stopCampaignPoll();
+  document.querySelectorAll('.email-sub-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.subtab === sub);
+  });
+  document.getElementById('email-sub-groups').classList.toggle('hidden', sub !== 'groups');
+  document.getElementById('email-sub-campaigns').classList.toggle('hidden', sub !== 'campaigns');
+
+  if (sub === 'groups')    loadEmailGroups();
+  if (sub === 'campaigns') loadEmailCampaigns();
+}
+
+// ================================================================
+// EMAIL GROUPS
+// ================================================================
+
+async function loadEmailGroups() {
+  const el = document.getElementById('email-sub-groups');
+  if (!el) return;
+  el.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading groups…</div>`;
+
+  try {
+    const data = await apiFetch('/email/groups');
+    const groups = data.groups || [];
+
+    if (groups.length === 0) {
+      el.innerHTML = `
+        <div class="admin-muted" style="padding:20px 0;">No email groups yet.</div>
+        <button class="btn btn-primary btn-sm" onclick="showCreateGroupForm()">+ Create Group</button>
+      `;
+      return;
+    }
+
+    const rows = groups.map(g => {
+      const typeLabel = g.group_type === 'filter'
+        ? '<span class="admin-badge">Filter</span>'
+        : '<span class="admin-badge">Manual</span>';
+      return `<tr>
+        <td>${escapeAdminHtml(g.name)}</td>
+        <td>${typeLabel}</td>
+        <td class="admin-muted">${escapeAdminHtml(g.description || '—')}</td>
+        <td class="admin-muted">${new Date(g.created_at).toLocaleDateString()}</td>
+        <td>
+          <button class="btn btn-sm" onclick="previewGroupMembers('${g.id}')">Preview</button>
+          <button class="btn btn-sm" onclick="showEditGroupForm('${g.id}')">Edit</button>
+          <button class="btn btn-sm" style="color:#dc2626;" onclick="deleteEmailGroup('${g.id}', '${escapeAdminHtml(g.name)}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div class="admin-muted">${groups.length} group${groups.length !== 1 ? 's' : ''}</div>
+        <button class="btn btn-primary btn-sm" onclick="showCreateGroupForm()">+ Create Group</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div id="email-group-form-area"></div>
+      <div id="email-group-preview-area"></div>
+    `;
+  } catch (err) {
+    el.innerHTML = `<div class="admin-error">Failed to load groups: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ----------------------------------------------------------------
+// Create / Edit group form
+// ----------------------------------------------------------------
+function showCreateGroupForm() {
+  renderGroupForm(null);
+}
+
+async function showEditGroupForm(groupId) {
+  try {
+    const data = await apiFetch(`/email/groups/${groupId}`);
+    renderGroupForm(data.group);
+  } catch (err) {
+    alert('Failed to load group: ' + err.message);
+  }
+}
+
+function renderGroupForm(group) {
+  const area = document.getElementById('email-group-form-area')
+            || document.getElementById('email-sub-groups');
+  if (!area) return;
+
+  // If no form area exists yet (no groups), use the sub panel
+  let formArea = document.getElementById('email-group-form-area');
+  if (!formArea) {
+    const el = document.getElementById('email-sub-groups');
+    el.innerHTML += '<div id="email-group-form-area"></div>';
+    formArea = document.getElementById('email-group-form-area');
+  }
+
+  const isEdit = !!group;
+  const name = group?.name || '';
+  const desc = group?.description || '';
+  const type = group?.group_type || 'filter';
+  const criteria = group?.filter_criteria || {};
+  const manualIds = group?.manual_user_ids || [];
+
+  formArea.innerHTML = `
+    <div class="email-card" style="margin-top:16px;">
+      <div class="admin-section-title">${isEdit ? 'Edit Group' : 'Create Group'}</div>
+
+      <div class="email-form-group">
+        <label>Group Name</label>
+        <input type="text" id="eg-name" value="${escapeAdminHtml(name)}" placeholder="e.g. All Starter Users" />
+      </div>
+      <div class="email-form-group">
+        <label>Description (optional)</label>
+        <input type="text" id="eg-desc" value="${escapeAdminHtml(desc)}" placeholder="What this group is for" />
+      </div>
+      <div class="email-form-group">
+        <label>Group Type</label>
+        <select id="eg-type" onchange="toggleGroupTypeFields()">
+          <option value="filter" ${type === 'filter' ? 'selected' : ''}>Filter-based (dynamic)</option>
+          <option value="manual" ${type === 'manual' ? 'selected' : ''}>Manual (hand-picked users)</option>
+        </select>
+      </div>
+
+      <!-- Filter fields -->
+      <div id="eg-filter-fields" class="${type !== 'filter' ? 'hidden' : ''}">
+        <div class="admin-section-title" style="margin-top:12px;font-size:13px;">Filter Criteria</div>
+        <div class="email-filter-row">
+          <div class="email-form-group">
+            <label>Subscription Tier</label>
+            <select id="eg-tier">
+              <option value="">Any</option>
+              <option value="free_trial" ${criteria.subscription_tier === 'free_trial' ? 'selected' : ''}>Free Trial</option>
+              <option value="starter" ${criteria.subscription_tier === 'starter' ? 'selected' : ''}>Starter</option>
+              <option value="professional" ${criteria.subscription_tier === 'professional' ? 'selected' : ''}>Professional</option>
+              <option value="enterprise" ${criteria.subscription_tier === 'enterprise' ? 'selected' : ''}>Enterprise</option>
+            </select>
+          </div>
+          <div class="email-form-group">
+            <label>Industry</label>
+            <input type="text" id="eg-industry" value="${escapeAdminHtml(criteria.industry || '')}" placeholder="e.g. fitness" />
+          </div>
+          <div class="email-form-group">
+            <label>Region</label>
+            <input type="text" id="eg-region" value="${escapeAdminHtml(criteria.geo_region || '')}" placeholder="e.g. US-CA" />
+          </div>
+          <div class="email-form-group">
+            <label>Business Type</label>
+            <input type="text" id="eg-biz" value="${escapeAdminHtml(criteria.business_type || '')}" placeholder="e.g. saas" />
+          </div>
+        </div>
+        <div class="email-filter-row" style="margin-top:8px;">
+          <div class="email-form-group">
+            <label>Signed Up After</label>
+            <input type="date" id="eg-after" value="${criteria.signup_after || ''}" />
+          </div>
+          <div class="email-form-group">
+            <label>Signed Up Before</label>
+            <input type="date" id="eg-before" value="${criteria.signup_before || ''}" />
+          </div>
+          <div class="email-form-group">
+            <label>Platforms Connected</label>
+            <input type="text" id="eg-platforms" value="${(criteria.platforms_connected || []).join(', ')}" placeholder="facebook, instagram" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual fields -->
+      <div id="eg-manual-fields" class="${type !== 'manual' ? 'hidden' : ''}">
+        <div class="admin-section-title" style="margin-top:12px;font-size:13px;">Select Users</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="eg-user-search" placeholder="Search by email…" style="flex:1;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;" oninput="searchUsersForGroup(this.value)" />
+        </div>
+        <div id="eg-user-results" style="margin-top:8px;max-height:200px;overflow-y:auto;"></div>
+        <div class="email-user-chips" id="eg-selected-users">
+          ${manualIds.map(id => `<span class="email-user-chip" data-uid="${id}">${id.slice(0,8)}… <span class="remove-chip" onclick="removeManualUser('${id}')">×</span></span>`).join('')}
+        </div>
+      </div>
+
+      <div class="email-actions">
+        <button class="btn btn-primary btn-sm" onclick="saveEmailGroup('${isEdit ? group.id : ''}')">${isEdit ? 'Update Group' : 'Create Group'}</button>
+        <button class="btn btn-sm btn-ghost" onclick="loadEmailGroups()">Cancel</button>
+        <span id="eg-save-status" class="admin-muted"></span>
+      </div>
+    </div>
+  `;
+
+  // If editing manual group, load the user emails for chips
+  if (isEdit && type === 'manual' && manualIds.length > 0) {
+    loadManualUserChips(manualIds);
+  }
+}
+
+function toggleGroupTypeFields() {
+  const type = document.getElementById('eg-type')?.value;
+  document.getElementById('eg-filter-fields')?.classList.toggle('hidden', type !== 'filter');
+  document.getElementById('eg-manual-fields')?.classList.toggle('hidden', type !== 'manual');
+}
+
+// Track manually selected user IDs
+let _manualSelectedUsers = [];
+
+async function loadManualUserChips(userIds) {
+  _manualSelectedUsers = [...userIds];
+  try {
+    // Use admin user search to get emails for the IDs
+    const data = await apiFetch('/admin/users?limit=500');
+    const users = data.users || [];
+    const matched = users.filter(u => userIds.includes(u.user_id));
+    const chipsEl = document.getElementById('eg-selected-users');
+    if (chipsEl) {
+      chipsEl.innerHTML = matched.map(u =>
+        `<span class="email-user-chip" data-uid="${u.user_id}">${escapeAdminHtml(u.email)} <span class="remove-chip" onclick="removeManualUser('${u.user_id}')">×</span></span>`
+      ).join('');
+    }
+  } catch (_) { /* non-fatal */ }
+}
+
+let _userSearchTimer = null;
+async function searchUsersForGroup(query) {
+  clearTimeout(_userSearchTimer);
+  _userSearchTimer = setTimeout(async () => {
+    const resultsEl = document.getElementById('eg-user-results');
+    if (!resultsEl || !query.trim()) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+
+    try {
+      const data = await apiFetch(`/admin/users?q=${encodeURIComponent(query)}&limit=10`);
+      const users = data.users || [];
+      resultsEl.innerHTML = users.map(u => {
+        const alreadyAdded = _manualSelectedUsers.includes(u.user_id);
+        return `<div style="padding:4px 8px;font-size:13px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;">
+          <span>${escapeAdminHtml(u.email)} <span class="admin-muted">(${escapeAdminHtml(u.brand_name || '—')})</span></span>
+          ${alreadyAdded
+            ? '<span class="admin-muted">added</span>'
+            : `<button class="btn btn-sm" onclick="addManualUser('${u.user_id}', '${escapeAdminHtml(u.email)}')">Add</button>`}
+        </div>`;
+      }).join('') || '<div class="admin-muted" style="padding:8px;">No users found</div>';
+    } catch (_) {
+      resultsEl.innerHTML = '<div class="admin-muted" style="padding:8px;">Search failed</div>';
+    }
+  }, 300);
+}
+
+function addManualUser(userId, email) {
+  if (_manualSelectedUsers.includes(userId)) return;
+  _manualSelectedUsers.push(userId);
+  const chipsEl = document.getElementById('eg-selected-users');
+  if (chipsEl) {
+    chipsEl.innerHTML += `<span class="email-user-chip" data-uid="${userId}">${escapeAdminHtml(email)} <span class="remove-chip" onclick="removeManualUser('${userId}')">×</span></span>`;
+  }
+  // Re-run search to update "added" labels
+  const searchInput = document.getElementById('eg-user-search');
+  if (searchInput?.value) searchUsersForGroup(searchInput.value);
+}
+
+function removeManualUser(userId) {
+  _manualSelectedUsers = _manualSelectedUsers.filter(id => id !== userId);
+  const chip = document.querySelector(`.email-user-chip[data-uid="${userId}"]`);
+  if (chip) chip.remove();
+  // Re-run search to update "added" labels
+  const searchInput = document.getElementById('eg-user-search');
+  if (searchInput?.value) searchUsersForGroup(searchInput.value);
+}
+
+async function saveEmailGroup(groupId) {
+  const statusEl = document.getElementById('eg-save-status');
+  const name      = document.getElementById('eg-name')?.value?.trim();
+  const desc      = document.getElementById('eg-desc')?.value?.trim();
+  const groupType = document.getElementById('eg-type')?.value;
+
+  if (!name) { if (statusEl) statusEl.textContent = 'Name is required'; return; }
+
+  // Build the request body based on type
+  const body = { name, description: desc, group_type: groupType };
+
+  if (groupType === 'filter') {
+    const criteria = {};
+    const tier = document.getElementById('eg-tier')?.value;
+    const ind  = document.getElementById('eg-industry')?.value?.trim();
+    const reg  = document.getElementById('eg-region')?.value?.trim();
+    const biz  = document.getElementById('eg-biz')?.value?.trim();
+    const after  = document.getElementById('eg-after')?.value;
+    const before = document.getElementById('eg-before')?.value;
+    const plats  = document.getElementById('eg-platforms')?.value?.trim();
+
+    if (tier)   criteria.subscription_tier = tier;
+    if (ind)    criteria.industry = ind;
+    if (reg)    criteria.geo_region = reg;
+    if (biz)    criteria.business_type = biz;
+    if (after)  criteria.signup_after = after;
+    if (before) criteria.signup_before = before;
+    if (plats)  criteria.platforms_connected = plats.split(',').map(s => s.trim()).filter(Boolean);
+
+    body.filter_criteria = criteria;
+  } else {
+    body.manual_user_ids = _manualSelectedUsers;
+  }
+
+  try {
+    if (statusEl) statusEl.textContent = 'Saving…';
+    if (groupId) {
+      await apiFetch(`/email/groups/${groupId}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await apiFetch('/email/groups', { method: 'POST', body: JSON.stringify(body) });
+    }
+    loadEmailGroups();
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Failed: ' + err.message;
+  }
+}
+
+async function deleteEmailGroup(groupId, name) {
+  if (!confirm(`Delete group "${name}"? Any campaigns using this group will lose their target.`)) return;
+  try {
+    await apiFetch(`/email/groups/${groupId}`, { method: 'DELETE' });
+    loadEmailGroups();
+  } catch (err) {
+    alert('Failed to delete group: ' + err.message);
+  }
+}
+
+async function previewGroupMembers(groupId) {
+  let previewArea = document.getElementById('email-group-preview-area');
+  if (!previewArea) {
+    const el = document.getElementById('email-sub-groups');
+    if (el) el.innerHTML += '<div id="email-group-preview-area"></div>';
+    previewArea = document.getElementById('email-group-preview-area');
+  }
+  if (!previewArea) return;
+
+  previewArea.innerHTML = `<div class="email-card" style="margin-top:12px;"><div class="admin-loading"><div class="spinner spinner-sm"></div> Resolving members…</div></div>`;
+  previewArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    const data = await apiFetch(`/email/groups/${groupId}/preview`);
+    const users = data.users || [];
+    if (users.length === 0) {
+      previewArea.innerHTML = `<div class="email-card" style="margin-top:12px;">
+        <div class="admin-section-title">Group Preview</div>
+        <div class="admin-muted">No users match this group's criteria.</div>
+        <button class="btn btn-sm btn-ghost" style="margin-top:8px;" onclick="document.getElementById('email-group-preview-area').innerHTML=''">Close</button>
+      </div>`;
+      return;
+    }
+
+    const rows = users.slice(0, 50).map(u => `<tr>
+      <td>${escapeAdminHtml(u.email)}</td>
+      <td>${escapeAdminHtml(u.brand_name || '—')}</td>
+    </tr>`).join('');
+
+    previewArea.innerHTML = `<div class="email-card" style="margin-top:12px;">
+      <div class="admin-section-title">Group Preview — ${data.count} user${data.count !== 1 ? 's' : ''}</div>
+      ${data.count > 50 ? '<div class="admin-muted" style="margin-bottom:8px;">Showing first 50</div>' : ''}
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Email</th><th>Brand</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <button class="btn btn-sm btn-ghost" style="margin-top:10px;" onclick="document.getElementById('email-group-preview-area').innerHTML=''">Close Preview</button>
+    </div>`;
+  } catch (err) {
+    previewArea.innerHTML = `<div class="admin-error" style="margin-top:12px;">Failed to preview: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ================================================================
+// EMAIL CAMPAIGNS
+// ================================================================
+
+async function loadEmailCampaigns() {
+  const el = document.getElementById('email-sub-campaigns');
+  if (!el) return;
+  el.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading campaigns…</div>`;
+
+  try {
+    const data = await apiFetch('/email/campaigns');
+    const campaigns = data.campaigns || [];
+
+    if (campaigns.length === 0) {
+      el.innerHTML = `
+        <div class="admin-muted" style="padding:20px 0;">No campaigns yet.</div>
+        <button class="btn btn-primary btn-sm" onclick="showCreateCampaignForm()">+ Create Campaign</button>
+      `;
+      return;
+    }
+
+    const rows = campaigns.map(c => {
+      const statusCls = `email-status-${c.status}`;
+      const progress = c.status === 'sending'
+        ? `${c.sent_count + c.failed_count}/${c.total_count}`
+        : c.status === 'sent' || c.status === 'failed'
+          ? `${c.sent_count} sent, ${c.failed_count} failed`
+          : '—';
+
+      return `<tr style="cursor:pointer;" onclick="loadCampaignDetail('${c.id}')">
+        <td>${escapeAdminHtml(c.subject)}</td>
+        <td>${escapeAdminHtml(c.group_name)}</td>
+        <td><span class="email-status-badge ${statusCls}">${c.status}</span></td>
+        <td class="admin-muted">${progress}</td>
+        <td class="admin-muted">${c.sent_at ? new Date(c.sent_at).toLocaleDateString() : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div class="admin-muted">${campaigns.length} campaign${campaigns.length !== 1 ? 's' : ''}</div>
+        <button class="btn btn-primary btn-sm" onclick="showCreateCampaignForm()">+ Create Campaign</button>
+      </div>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>Subject</th><th>Group</th><th>Status</th><th>Progress</th><th>Sent</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div id="email-campaign-detail-area"></div>
+    `;
+  } catch (err) {
+    el.innerHTML = `<div class="admin-error">Failed to load campaigns: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+async function showCreateCampaignForm() {
+  const el = document.getElementById('email-sub-campaigns');
+  if (!el) return;
+
+  // Fetch groups for the dropdown
+  let groups = [];
+  try {
+    const data = await apiFetch('/email/groups');
+    groups = data.groups || [];
+  } catch (_) {}
+
+  if (groups.length === 0) {
+    alert('Create at least one email group before creating a campaign.');
+    return;
+  }
+
+  const options = groups.map(g =>
+    `<option value="${g.id}">${escapeAdminHtml(g.name)} (${g.group_type})</option>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="email-card">
+      <div class="admin-section-title">New Campaign</div>
+
+      <div class="email-form-group">
+        <label>Target Group</label>
+        <select id="ec-group">${options}</select>
+      </div>
+      <div class="email-form-group">
+        <label>Subject</label>
+        <input type="text" id="ec-subject" placeholder="Email subject line" />
+      </div>
+      <div class="email-form-group">
+        <label>Body (plain text)</label>
+        <textarea id="ec-body" class="email-textarea" placeholder="Write your email here…"></textarea>
+      </div>
+
+      <div class="email-actions">
+        <button class="btn btn-primary btn-sm" onclick="saveCampaignDraft()">Save as Draft</button>
+        <button class="btn btn-sm btn-ghost" onclick="loadEmailCampaigns()">Cancel</button>
+        <span id="ec-save-status" class="admin-muted"></span>
+      </div>
+    </div>
+  `;
+}
+
+async function saveCampaignDraft() {
+  const statusEl = document.getElementById('ec-save-status');
+  const group_id = document.getElementById('ec-group')?.value;
+  const subject  = document.getElementById('ec-subject')?.value?.trim();
+  const body     = document.getElementById('ec-body')?.value?.trim();
+
+  if (!subject || !body) {
+    if (statusEl) statusEl.textContent = 'Subject and body are required';
+    return;
+  }
+
+  try {
+    if (statusEl) statusEl.textContent = 'Saving…';
+    await apiFetch('/email/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({ group_id, subject, body })
+    });
+    loadEmailCampaigns();
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Failed: ' + err.message;
+  }
+}
+
+async function loadCampaignDetail(campaignId) {
+  stopCampaignPoll();
+
+  let detailArea = document.getElementById('email-campaign-detail-area');
+  if (!detailArea) {
+    const el = document.getElementById('email-sub-campaigns');
+    if (el) el.innerHTML += '<div id="email-campaign-detail-area"></div>';
+    detailArea = document.getElementById('email-campaign-detail-area');
+  }
+  if (!detailArea) return;
+
+  detailArea.innerHTML = `<div class="email-card" style="margin-top:16px;"><div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div></div>`;
+  detailArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  try {
+    const data = await apiFetch(`/email/campaigns/${campaignId}`);
+    renderCampaignDetail(data, detailArea);
+
+    // Auto-refresh while sending
+    if (data.campaign.status === 'sending') {
+      _emailCampaignPollTimer = setInterval(async () => {
+        try {
+          const refreshed = await apiFetch(`/email/campaigns/${campaignId}`);
+          renderCampaignDetail(refreshed, detailArea);
+          if (refreshed.campaign.status !== 'sending') stopCampaignPoll();
+        } catch (_) { stopCampaignPoll(); }
+      }, 5000);
+    }
+  } catch (err) {
+    detailArea.innerHTML = `<div class="admin-error" style="margin-top:16px;">Failed: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function stopCampaignPoll() {
+  if (_emailCampaignPollTimer) { clearInterval(_emailCampaignPollTimer); _emailCampaignPollTimer = null; }
+}
+
+function renderCampaignDetail(data, container) {
+  const c = data.campaign;
+  const logs = data.logs || [];
+  const statusCls = `email-status-${c.status}`;
+
+  const canSend = ['draft', 'failed'].includes(c.status);
+  const sendBtn = canSend
+    ? `<button class="btn btn-primary btn-sm" onclick="sendCampaign('${c.id}')">Send Now</button>`
+    : '';
+
+  const progressBar = c.total_count > 0
+    ? `<div style="margin:12px 0;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-bottom:4px;">
+          <span>${c.sent_count + c.failed_count} / ${c.total_count}</span>
+          <span>${Math.round((c.sent_count + c.failed_count) / c.total_count * 100)}%</span>
+        </div>
+        <div style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:${Math.round(c.sent_count / c.total_count * 100)}%;background:#22c55e;float:left;"></div>
+          <div style="height:100%;width:${Math.round(c.failed_count / c.total_count * 100)}%;background:#ef4444;float:left;"></div>
+        </div>
+      </div>`
+    : '';
+
+  const logRows = logs.slice(0, 100).map(l => {
+    const lStatus = l.status === 'sent'
+      ? '<span style="color:#16a34a;">sent</span>'
+      : `<span style="color:#dc2626;">${escapeAdminHtml(l.status)}</span>`;
+    return `<tr>
+      <td>${escapeAdminHtml(l.email)}</td>
+      <td>${lStatus}</td>
+      <td class="admin-muted" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeAdminHtml(l.error_message || '—')}</td>
+      <td class="admin-muted">${l.sent_at ? new Date(l.sent_at).toLocaleString() : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="email-card" style="margin-top:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:16px;font-weight:700;">${escapeAdminHtml(c.subject)}</div>
+          <div class="admin-muted">Group: ${escapeAdminHtml(c.group_name)} · Created: ${new Date(c.created_at).toLocaleDateString()}</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span class="email-status-badge ${statusCls}">${c.status}</span>
+          ${sendBtn}
+          <button class="btn btn-sm btn-ghost" onclick="document.getElementById('email-campaign-detail-area').innerHTML='';stopCampaignPoll();">Close</button>
+        </div>
+      </div>
+
+      ${progressBar}
+
+      <div style="margin:14px 0;">
+        <div class="admin-section-title" style="font-size:12px;">Email Body</div>
+        <pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${escapeAdminHtml(c.body)}</pre>
+      </div>
+
+      <div class="admin-kpi-grid" style="margin-top:14px;grid-template-columns:repeat(3,1fr);">
+        <div class="admin-kpi"><div class="admin-kpi-value">${c.total_count}</div><div class="admin-kpi-label">Total</div></div>
+        <div class="admin-kpi"><div class="admin-kpi-value" style="color:#16a34a;">${c.sent_count}</div><div class="admin-kpi-label">Sent</div></div>
+        <div class="admin-kpi ${c.failed_count > 0 ? 'kpi-alert' : ''}"><div class="admin-kpi-value">${c.failed_count}</div><div class="admin-kpi-label">Failed</div></div>
+      </div>
+
+      ${logs.length > 0 ? `
+        <div class="admin-section-title" style="margin-top:20px;">Delivery Log${logs.length > 100 ? ' (first 100)' : ''}</div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Email</th><th>Status</th><th>Error</th><th>Sent At</th></tr></thead>
+            <tbody>${logRows}</tbody>
+          </table>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+async function sendCampaign(campaignId) {
+  if (!confirm('Send this campaign now? Emails will be sent to all group members.')) return;
+
+  try {
+    await apiFetch(`/email/campaigns/${campaignId}/send`, { method: 'POST' });
+    // Reload the detail with polling
+    loadCampaignDetail(campaignId);
+  } catch (err) {
+    alert('Failed to send: ' + err.message);
+  }
 }
 
 // ----------------------------------------------------------------

@@ -27,7 +27,8 @@ const {
   researchQueue,
   mediaAnalysisQueue,
   mediaProcessQueue,
-  dmQueue
+  dmQueue,
+  emailQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -39,6 +40,7 @@ require('./researchWorker');
 require('./mediaAnalysisWorker');   // Video segment analysis (FFmpeg scene detection)
 require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
 require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
+require('./emailWorker');           // Admin bulk email campaigns via Resend
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
