@@ -399,15 +399,24 @@ async function handleWebhookEvent(event) {
       console.log(`[Stripe Webhook] priceId=${priceId}, userId=${sub.user_id}`);
       const plan = await getTierByPriceId(priceId);
 
-      // Map Stripe statuses to our internal statuses
-      const statusMap = {
-        trialing: 'trialing',
-        active: 'active',
-        past_due: 'past_due',
-        canceled: 'cancelled',
-        unpaid: 'past_due'
-      };
-      const status = statusMap[subscription.status] || 'active';
+      // Map Stripe statuses to our internal statuses.
+      // IMPORTANT: When cancel_at_period_end is true, Stripe keeps status as
+      // 'active' but the user has scheduled cancellation. We must map this to
+      // 'cancelling' so our UI shows the pending cancellation state instead of
+      // overwriting it back to 'active'.
+      let status;
+      if (subscription.cancel_at_period_end && subscription.status === 'active') {
+        status = 'cancelling';
+      } else {
+        const statusMap = {
+          trialing: 'trialing',
+          active: 'active',
+          past_due: 'past_due',
+          canceled: 'cancelled',
+          unpaid: 'past_due'
+        };
+        status = statusMap[subscription.status] || 'active';
+      }
 
       // Get current_period_end — try subscription level first, then item level (newer API versions)
       const periodEnd = subscription.current_period_end
