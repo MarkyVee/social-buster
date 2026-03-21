@@ -15,6 +15,7 @@ const {
   createCheckoutSession,
   createPortalSession,
   cancelSubscription,
+  downgradeToFree,
   changePlan,
   constructWebhookEvent,
   handleWebhookEvent
@@ -147,6 +148,22 @@ router.post('/cancel', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[Billing] Cancel error:', err.message);
     return res.status(500).json({ error: err.message || 'Failed to cancel subscription' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /billing/downgrade-free
+// Immediately cancels the Stripe subscription and reverts to free_trial.
+// Used when a paid user clicks "Downgrade to Free".
+// ----------------------------------------------------------------
+router.post('/downgrade-free', requireAuth, async (req, res) => {
+  try {
+    await downgradeToFree(req.user.id);
+    return res.json({ success: true, message: 'Downgraded to Free Trial' });
+
+  } catch (err) {
+    console.error('[Billing] Downgrade error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to downgrade' });
   }
 });
 

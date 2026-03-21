@@ -1355,11 +1355,14 @@ async function renderSubscriptionSection() {
         let btnHtml = '';
         if (isCurrent) {
           btnHtml = `<button class="btn pricing-upgrade-btn" disabled style="background:#e2e8f0;color:#64748b;cursor:default;">Current Plan</button>`;
+        } else if (isFree && !isFreePlan) {
+          // Paid user looking at the free card → show downgrade to free
+          btnHtml = `<button class="btn pricing-upgrade-btn" id="downgrade-free-btn" onclick="downgradeToFree()" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;">Downgrade to Free</button>`;
         } else if (isFree) {
-          // Don't show a button for the free plan
+          // Free user looking at the free card — no button needed
           btnHtml = '';
         } else if (isFreePlan) {
-          // Free user → show upgrade buttons for paid plans
+          // Free user → show upgrade buttons for paid plans (goes through Stripe Checkout)
           btnHtml = `<button class="btn btn-primary pricing-upgrade-btn" id="upgrade-btn-${p.tier}" onclick="startUpgrade('${p.tier}')">Upgrade to ${p.name}</button>`;
         } else if (planIndex > currentIndex) {
           // Current plan is lower → upgrade
@@ -1805,6 +1808,8 @@ async function startUpgrade(planKey) {
 // ----------------------------------------------------------------
 // changePlan — upgrade or downgrade an EXISTING paid subscription.
 // Stripe prorates automatically.
+// If the user has no Stripe subscription (admin override), falls back
+// to Stripe Checkout so they can enter payment details.
 // ----------------------------------------------------------------
 async function changePlan(planKey) {
   const btn = document.getElementById(`change-btn-${planKey}`);
@@ -1822,26 +1827,63 @@ async function changePlan(planKey) {
       body: JSON.stringify({ plan: planKey })
     });
     showAlert('settings-alerts', 'Plan changed successfully!', 'success');
-    // Refresh to show updated plan
     await loadCurrentUser();
     renderSubscriptionSection();
   } catch (err) {
-    showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
+    // If no Stripe subscription exists, fall back to Checkout
+    if (err.message.includes('No active Stripe subscription')) {
+      try {
+        const data = await apiFetch('/billing/subscribe', {
+          method: 'POST',
+          body: JSON.stringify({ plan: planKey })
+        });
+        window.location.href = data.checkoutUrl;
+        return;
+      } catch (checkoutErr) {
+        showAlert('settings-alerts', 'Could not start checkout: ' + checkoutErr.message, 'error');
+      }
+    } else {
+      showAlert('settings-alerts', 'Failed to change plan: ' + err.message, 'error');
+    }
     if (btn) { btn.disabled = false; btn.textContent = originalText; }
   }
 }
 
 // ----------------------------------------------------------------
-// confirmCancelSubscription — cancel at end of current billing period.
+// downgradeToFree — immediately cancels subscription and reverts to free.
+// ----------------------------------------------------------------
+async function downgradeToFree() {
+  if (!confirm('Downgrade to Free? Your paid subscription will be cancelled immediately and you will lose access to paid features.')) {
+    return;
+  }
+
+  const btn = document.getElementById('downgrade-free-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Downgrading…'; }
+
+  try {
+    await apiFetch('/billing/downgrade-free', { method: 'POST' });
+    showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
+    await loadCurrentUser();
+    renderSubscriptionSection();
+  } catch (err) {
+    showAlert('settings-alerts', 'Failed to downgrade: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Downgrade to Free'; }
+  }
+}
+
+// ----------------------------------------------------------------
+// confirmCancelSubscription — cancel subscription and revert to free.
+// If the user has a Stripe subscription, it cancels at period end.
+// If no Stripe subscription (admin override), reverts immediately.
 // ----------------------------------------------------------------
 async function confirmCancelSubscription() {
-  if (!confirm('Are you sure you want to cancel? You will keep access until the end of your current billing period.')) {
+  if (!confirm('Are you sure you want to cancel? Your plan will revert to Free.')) {
     return;
   }
 
   try {
     await apiFetch('/billing/cancel', { method: 'POST' });
-    showAlert('settings-alerts', 'Subscription cancelled. You will keep access until the end of your billing period.', 'success');
+    showAlert('settings-alerts', 'Subscription cancelled.', 'success');
     await loadCurrentUser();
     renderSubscriptionSection();
   } catch (err) {

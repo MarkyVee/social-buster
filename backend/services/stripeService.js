@@ -139,6 +139,9 @@ async function createPortalSession(userId) {
 // ----------------------------------------------------------------
 // Cancel a user's Stripe subscription at the end of the current period.
 // The user keeps access until the billing period ends, then reverts to free.
+//
+// If the user has no Stripe subscription (e.g. admin-overridden plan),
+// we simply revert them to free_trial immediately in the database.
 // ----------------------------------------------------------------
 async function cancelSubscription(userId) {
   const { data: sub, error } = await supabaseAdmin
@@ -147,16 +150,58 @@ async function cancelSubscription(userId) {
     .eq('user_id', userId)
     .single();
 
-  if (error || !sub?.stripe_subscription_id) {
-    throw new Error('No active Stripe subscription found');
+  if (error) {
+    throw new Error('No subscription record found');
   }
 
-  // Cancel at period end — user keeps access until their current cycle ends
-  const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
-    cancel_at_period_end: true
-  });
+  // If there's a real Stripe subscription, cancel at period end
+  if (sub?.stripe_subscription_id) {
+    const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+      cancel_at_period_end: true
+    });
+    return cancelled;
+  }
 
-  return cancelled;
+  // No Stripe subscription (admin override or manual plan) — revert to free immediately
+  await supabaseAdmin
+    .from('subscriptions')
+    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null })
+    .eq('user_id', userId);
+
+  return { reverted_to_free: true };
+}
+
+// ----------------------------------------------------------------
+// Immediately cancel a Stripe subscription and revert to free_trial.
+// Used when a user clicks "Downgrade to Free" — no grace period.
+// ----------------------------------------------------------------
+async function downgradeToFree(userId) {
+  const { data: sub, error } = await supabaseAdmin
+    .from('subscriptions')
+    .select('stripe_subscription_id')
+    .eq('user_id', userId)
+    .single();
+
+  if (error) {
+    throw new Error('No subscription record found');
+  }
+
+  // If there's a real Stripe subscription, cancel it immediately (not at period end)
+  if (sub?.stripe_subscription_id) {
+    try {
+      await stripe.subscriptions.cancel(sub.stripe_subscription_id);
+    } catch (stripeErr) {
+      console.error('[Stripe] Cancel error (may already be cancelled):', stripeErr.message);
+    }
+  }
+
+  // Revert to free_trial in our database
+  await supabaseAdmin
+    .from('subscriptions')
+    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null })
+    .eq('user_id', userId);
+
+  return { success: true };
 }
 
 // ----------------------------------------------------------------
@@ -331,6 +376,7 @@ module.exports = {
   createCheckoutSession,
   createPortalSession,
   cancelSubscription,
+  downgradeToFree,
   changePlan,
   constructWebhookEvent,
   handleWebhookEvent
