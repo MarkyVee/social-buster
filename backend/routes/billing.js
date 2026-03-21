@@ -98,8 +98,8 @@ router.post('/subscribe', requireAuth, async (req, res) => {
     return res.json({ checkoutUrl: session.url });
 
   } catch (err) {
-    console.error('[Billing] Subscribe error:', err.message);
-    return res.status(500).json({ error: 'Failed to create checkout session' });
+    console.error('[Billing] Subscribe error:', err.message, err.stack);
+    return res.status(500).json({ error: err.message || 'Failed to create checkout session' });
   }
 });
 
