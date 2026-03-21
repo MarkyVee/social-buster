@@ -955,13 +955,32 @@ router.put('/tier-limits/:id', async (req, res) => {
 // ----------------------------------------------------------------
 router.get('/revenue', async (req, res) => {
   try {
-    // Plan prices — env-var driven with sensible defaults
-    const PRICES = {
-      free_trial:   0,
-      starter:      parseFloat(process.env.PLAN_PRICE_STARTER)      || 29,
-      professional: parseFloat(process.env.PLAN_PRICE_PROFESSIONAL)  || 79,
-      enterprise:   parseFloat(process.env.PLAN_PRICE_ENTERPRISE)    || 199
-    };
+    // Pull plan prices from the plans table (admin-editable)
+    // Falls back to env vars if the plans table doesn't exist yet
+    const PRICES = { free_trial: 0, free: 0 };
+    try {
+      const { data: dbPlans } = await supabaseAdmin
+        .from('plans')
+        .select('tier, price_display')
+        .eq('is_active', true);
+
+      if (dbPlans && dbPlans.length > 0) {
+        for (const p of dbPlans) {
+          // Parse "$29" or "$199" → number
+          const num = parseFloat((p.price_display || '0').replace(/[^0-9.]/g, ''));
+          PRICES[p.tier] = isNaN(num) ? 0 : num;
+        }
+      } else {
+        // Fallback to env vars
+        PRICES.starter      = parseFloat(process.env.PLAN_PRICE_STARTER)      || 29;
+        PRICES.professional = parseFloat(process.env.PLAN_PRICE_PROFESSIONAL)  || 79;
+        PRICES.enterprise   = parseFloat(process.env.PLAN_PRICE_ENTERPRISE)    || 199;
+      }
+    } catch (_) {
+      PRICES.starter      = parseFloat(process.env.PLAN_PRICE_STARTER)      || 29;
+      PRICES.professional = parseFloat(process.env.PLAN_PRICE_PROFESSIONAL)  || 79;
+      PRICES.enterprise   = parseFloat(process.env.PLAN_PRICE_ENTERPRISE)    || 199;
+    }
 
     const now          = new Date();
     const thirtyAgo    = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -975,13 +994,14 @@ router.get('/revenue', async (req, res) => {
 
     const allSubs = subs || [];
 
-    // 2. Active paid subscribers per tier (status = 'active', plan != free_trial)
-    const activePaid = allSubs.filter(s => s.status === 'active' && s.plan !== 'free_trial');
+    // 2. Active paid subscribers per tier (status = 'active', plan is not free/free_trial)
+    const FREE_PLANS = ['free', 'free_trial'];
+    const activePaid = allSubs.filter(s => s.status === 'active' && !FREE_PLANS.includes(s.plan));
 
     // 3. Tier breakdown — count and MRR contribution per tier
     const tierBreakdown = {};
     for (const [tier, price] of Object.entries(PRICES)) {
-      if (tier === 'free_trial') continue;
+      if (FREE_PLANS.includes(tier)) continue;
       const count = activePaid.filter(s => s.plan === tier).length;
       tierBreakdown[tier] = { count, price, mrr: count * price };
     }
@@ -992,7 +1012,7 @@ router.get('/revenue', async (req, res) => {
     const arpu = activePaid.length > 0 ? mrr / activePaid.length : 0;
 
     // 5. Free trial funnel
-    const freeTrial = allSubs.filter(s => s.plan === 'free_trial' || s.plan === 'free').length;
+    const freeTrial = allSubs.filter(s => FREE_PLANS.includes(s.plan)).length;
 
     // 6. Churn rate — subscribers who cancelled in the last 30 days
     //    as a % of those who were active 30 days ago.
@@ -1010,7 +1030,7 @@ router.get('/revenue', async (req, res) => {
 
     // 8. Free trial → paid conversion rate
     const totalSignups = allSubs.length;
-    const everPaid     = allSubs.filter(s => s.plan !== 'free_trial' && s.plan !== 'free').length;
+    const everPaid     = allSubs.filter(s => !FREE_PLANS.includes(s.plan)).length;
     const conversionRate = totalSignups > 0 ? everPaid / totalSignups : 0;
 
     // 9. MRR projection for the next 6 months using simple churn decay:
@@ -1018,7 +1038,7 @@ router.get('/revenue', async (req, res) => {
     //    We also add a rough new-customer estimate based on recent signup rate
     //    (new paid subs in last 30 days × avg plan price).
     const newPaidLast30 = allSubs.filter(
-      s => s.plan !== 'free_trial' && s.plan !== 'free' && s.created_at >= thirtyAgo
+      s => !FREE_PLANS.includes(s.plan) && s.created_at >= thirtyAgo
     ).length;
     const estimatedNewMrrPerMonth = newPaidLast30 * arpu;
 

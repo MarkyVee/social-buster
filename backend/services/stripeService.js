@@ -60,13 +60,13 @@ async function createStripeCustomer(userId, email) {
     }
   });
 
-  // Store the Stripe customer ID + initial free plan in our database
+  // Store the Stripe customer ID + initial free trial plan in our database
   const { error } = await supabaseAdmin
     .from('subscriptions')
     .insert({
       user_id: userId,
       stripe_customer_id: customer.id,
-      plan: 'free',
+      plan: 'free_trial',
       status: 'active'
     });
 
@@ -213,7 +213,7 @@ async function handleWebhookEvent(event) {
       if (sub) {
         await supabaseAdmin
           .from('subscriptions')
-          .update({ plan: 'free', status: 'cancelled', stripe_subscription_id: null })
+          .update({ plan: 'free_trial', status: 'cancelled', stripe_subscription_id: null })
           .eq('user_id', sub.user_id);
 
         console.log(`[Stripe] Subscription cancelled for user ${sub.user_id}`);
