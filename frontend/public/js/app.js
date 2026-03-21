@@ -1939,8 +1939,9 @@ async function changePlan(planKey) {
       method: 'POST',
       body: JSON.stringify({ plan: planKey })
     });
-    showAlert('settings-alerts', 'Plan changed successfully!', 'success');
     await renderSubscriptionSection();
+    showAlert('settings-alerts', 'Plan changed successfully!', 'success');
+    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     loadCurrentUser().catch(() => {});
   } catch (err) {
     // If no Stripe subscription exists, fall back to Checkout
@@ -1968,7 +1969,7 @@ async function changePlan(planKey) {
 // downgradeToFree — immediately cancels subscription and reverts to free.
 // ----------------------------------------------------------------
 async function downgradeToFree() {
-  if (!confirm('Downgrade to Free? Your paid subscription will be cancelled immediately and you will lose access to paid features.')) {
+  if (!confirm('Downgrade to Free?\n\n• Your paid subscription will be cancelled immediately\n• Any remaining credit or time on your current plan will be lost\n• Upgrading again — even today — will require a new payment\n\nAre you sure?')) {
     return;
   }
 
@@ -1977,8 +1978,9 @@ async function downgradeToFree() {
 
   try {
     await apiFetch('/billing/downgrade-free', { method: 'POST' });
-    showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
     await renderSubscriptionSection();
+    showAlert('settings-alerts', 'Downgraded to Free Trial.', 'success');
+    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     loadCurrentUser().catch(() => {});
   } catch (err) {
     if (err.message.includes('session expired')) return;
@@ -2003,9 +2005,12 @@ async function confirmCancelSubscription() {
 
   try {
     await apiFetch('/billing/cancel', { method: 'POST' });
-    showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
-    // Refresh subscription UI immediately, then sync user data in background
+    // Refresh subscription UI first so it shows the updated state
     await renderSubscriptionSection();
+    // Show alert AFTER re-render so it doesn't get scrolled out of view,
+    // and scroll to it so the user sees confirmation
+    showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
+    document.getElementById('settings-alerts')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     loadCurrentUser().catch(() => {});
   } catch (err) {
     if (cancelLink) { cancelLink.textContent = 'Cancel subscription'; cancelLink.style.pointerEvents = ''; }
