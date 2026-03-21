@@ -177,10 +177,15 @@ async function cancelSubscription(userId) {
         const cancelled = await stripe.subscriptions.update(sub.stripe_subscription_id, {
           cancel_at_period_end: true
         });
-        // Mark as cancelling in our DB so the UI can show "Cancels on [date]"
+        // Get the period end date so the UI can show "Cancels on [date]"
+        const periodEnd = cancelled.current_period_end
+          || cancelled.items?.data?.[0]?.current_period_end
+          || null;
+        const periodEndISO = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+        // Mark as cancelling in our DB
         await supabaseAdmin
           .from('subscriptions')
-          .update({ status: 'cancelling' })
+          .update({ status: 'cancelling', current_period_end: periodEndISO })
           .eq('user_id', userId);
         return cancelled;
       }

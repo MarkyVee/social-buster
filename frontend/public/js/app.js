@@ -1886,7 +1886,7 @@ async function downgradeToFree() {
 // If no Stripe subscription (admin override), reverts immediately.
 // ----------------------------------------------------------------
 async function confirmCancelSubscription() {
-  if (!confirm('Are you sure you want to cancel? Your plan will revert to Free.')) {
+  if (!confirm('Are you sure you want to cancel? You\'ll keep access until the end of your billing period, then revert to Free.')) {
     return;
   }
 
