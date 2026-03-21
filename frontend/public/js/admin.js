@@ -2070,7 +2070,6 @@ function escapeAdminHtml(str) {
 async function loadAdminLimits() {
   const panel = document.getElementById('admin-tab-limits');
   if (!panel) return;
-  panel.dataset.loaded = '1';
 
   panel.innerHTML = `<div class="admin-loading"><span>⏳</span> Loading tier limits…</div>`;
 
@@ -2087,6 +2086,11 @@ async function loadAdminLimits() {
     panel.innerHTML = `<div class="admin-muted">No tier limits configured. Run the SQL migration to seed the tier_limits table.</div>`;
     return;
   }
+
+  // Mark as loaded only after data is successfully fetched and non-empty.
+  // This way, if the fetch returns empty (transient issue), clicking the
+  // tab again will retry instead of showing stale empty state.
+  panel.dataset.loaded = '1';
 
   // --- Build lookup: feature → tier → row ---
   const TIERS    = ['free_trial', 'starter', 'professional', 'enterprise'];
