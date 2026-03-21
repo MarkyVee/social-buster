@@ -45,11 +45,39 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------
-// IMPORTANT: Mount the Stripe webhook route BEFORE express.json().
+// IMPORTANT: Mount the Stripe webhook BEFORE express.json().
 // Stripe requires the raw request body Buffer for signature verification.
-// If express.json() runs first, the raw body is lost and verification fails.
+// If express.json() runs first, the raw body is consumed and verification fails.
+//
+// We use app.post() directly (not app.use() with the billing router) because
+// app.use('/billing/webhook', billingRoutes) would strip the prefix and the
+// router would see path '/' instead of '/webhook', causing a mismatch.
+// The route's own express.raw() middleware ensures the body stays as a Buffer.
 // ----------------------------------------------------------------
-app.use('/billing/webhook', billingRoutes);
+app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const { constructWebhookEvent, handleWebhookEvent } = require('./services/stripeService');
+  const signature = req.headers['stripe-signature'];
+
+  if (!signature) {
+    return res.status(400).json({ error: 'Missing Stripe signature' });
+  }
+
+  let event;
+  try {
+    event = constructWebhookEvent(req.body, signature);
+  } catch (err) {
+    console.error('[Stripe Webhook] Signature verification failed:', err.message);
+    return res.status(400).json({ error: `Webhook signature invalid: ${err.message}` });
+  }
+
+  try {
+    await handleWebhookEvent(event);
+    return res.json({ received: true });
+  } catch (err) {
+    console.error('[Stripe Webhook] Event handling FAILED:', err.message);
+    return res.status(400).json({ error: err.message });
+  }
+});
 
 // IMPORTANT: Mount Meta webhook route BEFORE express.json().
 // Meta webhook signature verification needs the raw request body.
