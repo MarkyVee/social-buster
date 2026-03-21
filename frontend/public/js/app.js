@@ -1335,7 +1335,10 @@ async function renderSubscriptionSection() {
   } else {
     statusMsg = `You're on the <strong>${currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</strong> plan.`;
     if (sub.status === 'cancelling' && periodEnd) {
-      statusMsg += ` <span style="color:#f59e0b;font-weight:600;">Cancels on ${periodEnd}</span> — you keep access until then.`;
+      statusMsg += `</p><div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin:12px 0;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px;">&#9888;</span>
+        <div><strong style="color:#92400e;">Cancellation scheduled</strong><br><span style="color:#78350f;font-size:13px;">Your subscription will end on <strong>${periodEnd}</strong>. You keep full access until then.</span></div>
+      </div><p class="text-sm text-muted" style="margin-bottom:0;">`;
     } else if (periodEnd) {
       statusMsg += ` Renews <strong>${periodEnd}</strong>.`;
     }
