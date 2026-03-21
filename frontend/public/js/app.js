@@ -1361,8 +1361,29 @@ function checkPaymentRedirectResult() {
 
   if (result === 'success') {
     showAlert('settings-alerts',
-      '🎉 Payment successful! Your plan has been upgraded. It may take a moment to activate.',
+      'Payment successful! Your plan is being activated...',
       'success');
+    // Poll for the webhook to update the DB — it can take a few seconds
+    // after Stripe redirects back before the subscription is created.
+    let attempts = 0;
+    const poller = setInterval(async () => {
+      attempts++;
+      try {
+        await loadCurrentUser();
+        const statusRes = await apiFetch('/billing/status').catch(() => null);
+        const plan = statusRes?.subscription?.plan;
+        if (plan && !['free', 'free_trial'].includes(plan)) {
+          clearInterval(poller);
+          renderSubscriptionSection();
+          showAlert('settings-alerts', 'Your plan has been upgraded!', 'success');
+        } else if (attempts >= 10) {
+          clearInterval(poller);
+          renderSubscriptionSection();
+        }
+      } catch (_) {
+        if (attempts >= 10) clearInterval(poller);
+      }
+    }, 2000); // check every 2 seconds, up to 20 seconds
   } else if (result === 'cancelled') {
     showAlert('settings-alerts', 'Payment cancelled — no charge was made.', 'info');
   }
@@ -1394,6 +1415,16 @@ async function renderSubscriptionSection() {
   const periodEnd = sub.current_period_end
     ? new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : null;
+
+  // Update the card header badge to reflect the fresh subscription data
+  const card = document.getElementById('subscription-card');
+  if (card) {
+    const badge = card.querySelector('.badge');
+    if (badge) {
+      badge.className = `badge badge-${sub.status || 'active'}`;
+      badge.textContent = isFreePlan ? 'Free Trial' : (currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1));
+    }
+  }
 
   if (plans.length === 0) {
     el.innerHTML = `<p class="text-sm text-muted">Subscription plans are being configured — check back soon.</p>`;
@@ -1968,7 +1999,7 @@ async function confirmCancelSubscription() {
 
   try {
     await apiFetch('/billing/cancel', { method: 'POST' });
-    showAlert('settings-alerts', 'Subscription cancelled.', 'success');
+    showAlert('settings-alerts', 'Subscription will cancel at the end of your billing period.', 'success');
     await loadCurrentUser();
     renderSubscriptionSection();
   } catch (err) {

@@ -201,7 +201,7 @@ async function cancelSubscription(userId) {
   // No usable Stripe subscription — revert to free immediately
   await supabaseAdmin
     .from('subscriptions')
-    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null })
+    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null, current_period_end: null })
     .eq('user_id', userId);
 
   return { reverted_to_free: true };
@@ -236,7 +236,7 @@ async function downgradeToFree(userId) {
   // Revert to free_trial in our database
   await supabaseAdmin
     .from('subscriptions')
-    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null })
+    .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null, current_period_end: null })
     .eq('user_id', userId);
 
   return { success: true };
@@ -300,6 +300,22 @@ async function changePlan(userId, newPlanTier) {
     cancel_at_period_end: false, // Clear any pending cancellation
     proration_behavior: 'create_prorations'
   });
+
+  // Update our DB immediately so the frontend shows the new plan right away.
+  // The webhook will also fire, but we don't want the user to see stale data.
+  const periodEnd = updated.current_period_end
+    || updated.items?.data?.[0]?.current_period_end
+    || null;
+  const periodEndISO = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+
+  await supabaseAdmin
+    .from('subscriptions')
+    .update({
+      plan: newPlanTier,
+      status: 'active',
+      current_period_end: periodEndISO
+    })
+    .eq('user_id', userId);
 
   return updated;
 }
@@ -450,7 +466,7 @@ async function handleWebhookEvent(event) {
       if (userId) {
         const { error } = await supabaseAdmin
           .from('subscriptions')
-          .update({ plan: 'free_trial', status: 'cancelled', stripe_subscription_id: null })
+          .update({ plan: 'free_trial', status: 'active', stripe_subscription_id: null, current_period_end: null })
           .eq('user_id', userId);
 
         if (error) console.error(`[Stripe Webhook] Delete update failed:`, error.message);

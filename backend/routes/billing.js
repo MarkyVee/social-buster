@@ -16,9 +16,7 @@ const {
   createPortalSession,
   cancelSubscription,
   downgradeToFree,
-  changePlan,
-  constructWebhookEvent,
-  handleWebhookEvent
+  changePlan
 } = require('../services/stripeService');
 const { supabaseAdmin } = require('../services/supabaseService');
 const { requireAuth } = require('../middleware/auth');
@@ -173,41 +171,9 @@ router.post('/downgrade-free', requireAuth, async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------
-// POST /billing/webhook
-// Receives webhook events from Stripe.
-//
-// CRITICAL: This route uses express.raw() (not express.json()).
-// The raw body buffer is needed to verify Stripe's signature.
-// This route is mounted BEFORE express.json() in server.js.
-// ----------------------------------------------------------------
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const signature = req.headers['stripe-signature'];
-
-  if (!signature) {
-    return res.status(400).json({ error: 'Missing Stripe signature' });
-  }
-
-  let event;
-
-  try {
-    // Verify the webhook signature — this proves the event is from Stripe
-    event = constructWebhookEvent(req.body, signature);
-  } catch (err) {
-    console.error('[Stripe Webhook] Signature verification failed:', err.message);
-    return res.status(400).json({ error: `Webhook signature invalid: ${err.message}` });
-  }
-
-  try {
-    // Process the event (updates subscription status in the database)
-    await handleWebhookEvent(event);
-    return res.json({ received: true });
-
-  } catch (err) {
-    console.error('[Stripe Webhook] Event handling FAILED:', err.message);
-    // Return 400 so Stripe retries delivery — we want to know about failures
-    return res.status(400).json({ error: err.message });
-  }
-});
+// NOTE: The webhook handler is mounted directly in server.js as
+// app.post('/billing/webhook', ...) BEFORE express.json() runs,
+// so Stripe gets the raw Buffer it needs for signature verification.
+// Do NOT add a duplicate webhook handler here.
 
 module.exports = router;
