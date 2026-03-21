@@ -34,7 +34,7 @@ async function getPlanByTier(tier) {
 // Reverse lookup: find which tier a Stripe price ID belongs to.
 // Used by the webhook handler when Stripe tells us a subscription changed.
 async function getTierByPriceId(priceId) {
-  if (!priceId) return 'free';
+  if (!priceId) return 'free_trial';
 
   const { data } = await supabaseAdmin
     .from('plans')
@@ -42,7 +42,11 @@ async function getTierByPriceId(priceId) {
     .eq('stripe_price_id', priceId)
     .single();
 
-  return data?.tier || 'free';
+  if (!data?.tier) {
+    console.warn(`[Stripe] No plan found for price ID: ${priceId} — defaulting to free_trial`);
+  }
+
+  return data?.tier || 'free_trial';
 }
 
 // ----------------------------------------------------------------
@@ -293,6 +297,7 @@ async function handleWebhookEvent(event) {
 
       // Determine the plan from the price ID
       const priceId = subscription.items?.data?.[0]?.price?.id;
+      console.log(`[Stripe] Webhook: customerId=${customerId}, priceId=${priceId}, userId=${sub.user_id}`);
       const plan = await getTierByPriceId(priceId);
 
       // Map Stripe statuses to our internal statuses
