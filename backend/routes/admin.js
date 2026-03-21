@@ -539,8 +539,27 @@ router.get('/users/:id', async (req, res) => {
         .eq('user_id', userId)
     ]);
 
-    if (!profile) {
-      return res.status(404).json({ error: 'User not found' });
+    // If no user_profiles row exists (user hasn't completed onboarding),
+    // fall back to basic info from Supabase Auth so the admin can still view them.
+    let userProfile = profile;
+    if (!userProfile) {
+      try {
+        const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (!authData?.user) {
+          return res.status(404).json({ error: 'User not found' });
+        }
+        userProfile = {
+          user_id: userId,
+          email: authData.user.email,
+          created_at: authData.user.created_at,
+          brand_name: null,
+          industry: null,
+          geo_region: null,
+          onboarding_completed: false
+        };
+      } catch (_) {
+        return res.status(404).json({ error: 'User not found' });
+      }
     }
 
     // Summarise post counts by status
@@ -555,7 +574,7 @@ router.get('/users/:id', async (req, res) => {
     });
 
     return res.json({
-      profile,
+      profile:         userProfile,
       recent_posts:    recentPosts  || [],
       post_summary:    statusSummary,
       total_metrics:   metricCount  || 0
