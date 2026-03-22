@@ -1899,7 +1899,8 @@ async function connectPlatform(platformId) {
       const data = await apiFetch('/publish/oauth/meta/start', { method: 'POST' });
       window.location.href = data.authUrl;
     } catch (err) {
-      showAlert('settings-alerts', err.message, 'error');
+      if (err.limitReached) showUpgradePrompt(err.feature, err.message);
+      else showAlert('settings-alerts', err.message, 'error');
     }
     return;
   }
@@ -1910,7 +1911,8 @@ async function connectPlatform(platformId) {
       const data = await apiFetch('/publish/oauth/threads/start', { method: 'POST' });
       window.location.href = data.authUrl;
     } catch (err) {
-      showAlert('settings-alerts', err.message, 'error');
+      if (err.limitReached) showUpgradePrompt(err.feature, err.message);
+      else showAlert('settings-alerts', err.message, 'error');
     }
     return;
   }

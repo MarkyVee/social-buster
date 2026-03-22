@@ -164,8 +164,21 @@ function checkLimit(feature) {
       // 2. Look up this tier's limit for the feature
       const limit = await getLimitForFeature(tier, feature);
 
-      // No limit configured or limit is toggled off → allow through
-      if (!limit || !limit.enabled) return next();
+      // No row in the tier_limits table for this tier+feature → no restriction
+      if (!limit) return next();
+
+      // Toggle OFF in admin = feature NOT available for this tier → block
+      if (!limit.enabled) {
+        console.log(`[CheckLimit] User ${userId} (${tier}) blocked from ${feature} — disabled for tier`);
+        return res.status(429).json({
+          error:         `${limit.label || feature} is not included in your plan. Upgrade to unlock this feature.`,
+          limit_reached: true,
+          feature,
+          limit:         0,
+          usage:         0,
+          tier
+        });
+      }
 
       // -1 = unlimited → always allow
       if (limit.limit_value === -1) return next();

@@ -680,7 +680,7 @@ router.post('/:postId', standardLimiter, async (req, res) => {
 // Required .env: META_APP_ID, META_APP_SECRET
 // Required Meta App setup: Facebook Login product added, redirect URI registered
 // ----------------------------------------------------------------
-router.post('/oauth/meta/start', standardLimiter, (req, res) => {
+router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
   if (!process.env.META_APP_ID || process.env.META_APP_ID === 'your_meta_app_id') {
     return res.status(501).json({
       error: 'Meta/Facebook is not set up yet. Add META_APP_ID and META_APP_SECRET to your .env file, then rebuild the Docker container.'
@@ -729,7 +729,7 @@ router.post('/oauth/meta/start', standardLimiter, (req, res) => {
 // Required .env: META_APP_ID, META_APP_SECRET
 // Required Meta App setup: Threads API product added, redirect URI registered
 // ----------------------------------------------------------------
-router.post('/oauth/threads/start', standardLimiter, (req, res) => {
+router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
   if (!process.env.META_APP_ID || process.env.META_APP_ID === 'your_meta_app_id') {
     return res.status(501).json({
       error: 'Threads is not set up yet. Add META_APP_ID and META_APP_SECRET to your .env file, then rebuild the Docker container.'
