@@ -338,7 +338,7 @@ router.use(requireAuth, enforceTenancy);
 // Valid values for validation
 const VALID_PROVIDERS  = ['google_drive', 'dropbox', 'box', 'manual'];
 const VALID_FILE_TYPES = ['video', 'image'];
-const VALID_PLATFORMS  = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+const VALID_PLATFORMS  = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
 
 // ----------------------------------------------------------------
 // GET /media

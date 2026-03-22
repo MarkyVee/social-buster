@@ -24,7 +24,7 @@ router.use(requireAuth, enforceTenancy);
 const VALID_POST_TYPES = ['educational', 'product_launch', 'behind_the_scenes', 'lead_generation', 'community_engagement', 'promotional', 'story_personal', 'news_update'];
 const VALID_OBJECTIVES = ['engagement', 'comments', 'sharing', 'clicks', 'conversions', 'awareness', 'community_conversation'];
 const VALID_TONES      = ['professional', 'friendly', 'bold', 'emotional', 'humorous', 'authoritative', 'inspirational'];
-const VALID_PLATFORMS  = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+const VALID_PLATFORMS  = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
 
 // ----------------------------------------------------------------
 // POST /briefs

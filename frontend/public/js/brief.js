@@ -491,12 +491,12 @@ function renderGeneratedPosts(brief, posts) {
     byPlatform[post.platform].push(post);
   });
 
-  const platformOrder = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+  const platformOrder = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
   const sortedPlatforms = Object.keys(byPlatform).sort(
     (a, b) => platformOrder.indexOf(a) - platformOrder.indexOf(b)
   );
 
-  const platformIcons = { instagram:'📸', facebook:'👥', tiktok:'🎵', linkedin:'💼', x:'𝕏', threads:'🧵', youtube:'▶️' };
+  const platformIcons = { instagram:'📸', facebook:'👥', tiktok:'🎵', linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️' };
 
   const postTypeLabel = POST_TYPES.find(t => t.value === brief.post_type)?.label || brief.post_type;
   const objectiveLabel = OBJECTIVES.find(o => o.value === brief.objective)?.label || brief.objective;

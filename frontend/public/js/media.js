@@ -362,7 +362,7 @@ function renderMediaGrid(grid) {
 
   const platformIcons = {
     instagram:'📸', facebook:'👥', tiktok:'🎵',
-    linkedin:'💼', x:'𝕏', threads:'🧵', youtube:'▶️'
+    linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️'
   };
 
   const providerLabels = { google_drive:'Drive', dropbox:'Dropbox', box:'Box', manual:'Manual' };
@@ -560,7 +560,7 @@ function openAddMediaModal() {
         <div class="form-group">
           <label>Platform Fit</label>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
-            ${['instagram','facebook','tiktok','linkedin','x','threads','youtube'].map(p => `
+            ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => `
               <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="checkbox" name="am-platforms" value="${p}" /> ${p}
               </label>`).join('')}

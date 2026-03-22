@@ -818,7 +818,7 @@ async function renderPostsPlaceholder(el) {
       byBrief[key].push(post);
     });
 
-    const platformIcons = { instagram:'📸', facebook:'👥', tiktok:'🎵', linkedin:'💼', x:'𝕏', threads:'🧵', youtube:'▶️' };
+    const platformIcons = { instagram:'📸', facebook:'👥', tiktok:'🎵', linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️' };
 
     // Sort brief sessions newest first by the latest post creation date in each group
     const sortedBriefs = Object.entries(byBrief).sort(([, a], [, b]) => {
@@ -912,7 +912,7 @@ function renderMediaPlaceholder(el) {
 async function renderQueuePlaceholder(el) {
   const platformIcons = {
     instagram:'📸', facebook:'👥', tiktok:'🎵',
-    linkedin:'💼', x:'𝕏', threads:'🧵', youtube:'▶️'
+    linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️'
   };
 
   el.innerHTML = `
@@ -1450,7 +1450,7 @@ async function renderProfile(el) {
         <div class="form-group">
           <label>Preferred Platforms <span class="required-marker">*</span> <span class="text-muted text-sm">(select at least one)</span></label>
           <div id="platform-checkboxes" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
-            ${['instagram','facebook','tiktok','linkedin','x','threads','youtube'].map(p => `
+            ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => `
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:normal;">
                 <input type="checkbox" name="preferred_platforms" value="${p}"
                   ${(profile.preferred_platforms || []).includes(p) ? 'checked' : ''} />
@@ -1910,10 +1910,11 @@ async function loadConnectedPlatforms() {
     { id: 'instagram', label: 'Instagram',   icon: '📸', group: 'meta',    note: 'Requires an Instagram Professional account linked to a Facebook Page' },
     { id: 'facebook',  label: 'Facebook',    icon: '👥', group: 'meta',    note: 'Requires a Facebook Page (not a personal profile)' },
     { id: 'threads',   label: 'Threads',     icon: '🧵', group: 'threads', note: 'Requires a Threads account' },
-    { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'tiktok',  note: 'Requires TikTok for Business — credentials needed in .env' },
-    { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'linkedin',note: 'Requires a LinkedIn App — credentials needed in .env' },
-    { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'x',      note: 'Requires a Twitter Developer App — credentials needed in .env' },
-    { id: 'youtube',   label: 'YouTube',     icon: '▶️', group: 'youtube', note: 'Requires a YouTube API app — credentials needed in .env' }
+    { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'tiktok',   note: 'Requires TikTok for Business — credentials needed in .env' },
+    { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'linkedin', note: 'Requires a LinkedIn App — credentials needed in .env' },
+    { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'x',       note: 'Requires a Twitter Developer App — credentials needed in .env' },
+    { id: 'whatsapp',  label: 'WhatsApp',    icon: '💬', group: 'token',   note: 'Requires WhatsApp Business API — enter token + phone number ID' },
+    { id: 'telegram',  label: 'Telegram',    icon: '✈️', group: 'token',   note: 'Requires a Telegram Bot — enter bot token + channel username' }
   ];
 
   container.innerHTML = platforms.map(p => {
@@ -1991,12 +1992,17 @@ async function connectPlatform(platformId) {
     return;
   }
 
-  // TikTok, LinkedIn, X, YouTube — each has its own OAuth flow
+  // WhatsApp + Telegram — token-based, show a form modal instead of OAuth redirect
+  if (platformId === 'whatsapp' || platformId === 'telegram') {
+    showTokenConnectModal(platformId);
+    return;
+  }
+
+  // TikTok, LinkedIn, X — each has its own OAuth flow
   const oauthEndpoints = {
     tiktok:   '/publish/oauth/tiktok/start',
     linkedin: '/publish/oauth/linkedin/start',
-    x:        '/publish/oauth/x/start',
-    youtube:  '/publish/oauth/youtube/start'
+    x:        '/publish/oauth/x/start'
   };
 
   const endpoint = oauthEndpoints[platformId];
@@ -2012,6 +2018,92 @@ async function connectPlatform(platformId) {
     if (err.limitReached) showUpgradePrompt(err.feature, err.message);
     else showAlert('settings-alerts', err.message, 'error');
   }
+}
+
+// ----------------------------------------------------------------
+// showTokenConnectModal — shows a form for WhatsApp/Telegram token-based connection.
+// These platforms don't use OAuth — the user enters credentials manually.
+// ----------------------------------------------------------------
+function showTokenConnectModal(platformId) {
+  const isWA = platformId === 'whatsapp';
+  const title = isWA ? 'Connect WhatsApp' : 'Connect Telegram';
+  const tokenLabel = isWA
+    ? 'Access Token <span class="text-muted text-sm">(from Meta Business Manager)</span>'
+    : 'Bot Token <span class="text-muted text-sm">(from @BotFather)</span>';
+  const idLabel = isWA
+    ? 'Phone Number ID <span class="text-muted text-sm">(from WhatsApp Business API)</span>'
+    : 'Channel Username or Chat ID <span class="text-muted text-sm">(e.g. @mychannel)</span>';
+  const nameLabel = isWA ? 'Display Name' : 'Channel Name';
+
+  // Create a simple modal overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'token-connect-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.innerHTML = `
+    <div style="background:var(--card-bg, #fff);border-radius:12px;padding:28px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+      <h3 style="margin:0 0 16px 0;">${title}</h3>
+      <div id="token-connect-alerts"></div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <label style="font-weight:600;font-size:13px;">${tokenLabel}
+          <input type="text" id="tc-token" placeholder="${isWA ? 'EAAxxxxxxx...' : '123456:ABCdef...'}"
+            style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--border-color, #ddd);border-radius:6px;font-size:13px;" />
+        </label>
+        <label style="font-weight:600;font-size:13px;">${idLabel}
+          <input type="text" id="tc-id" placeholder="${isWA ? '1234567890' : '@mychannel'}"
+            style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--border-color, #ddd);border-radius:6px;font-size:13px;" />
+        </label>
+        <label style="font-weight:600;font-size:13px;">${nameLabel}
+          <input type="text" id="tc-name" placeholder="${isWA ? 'My Business' : 'My Channel'}"
+            style="width:100%;margin-top:4px;padding:8px;border:1px solid var(--border-color, #ddd);border-radius:6px;font-size:13px;" />
+        </label>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('token-connect-overlay').remove()">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="tc-submit-btn">Connect</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Close on backdrop click
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  // Submit handler
+  document.getElementById('tc-submit-btn').addEventListener('click', async () => {
+    const token = document.getElementById('tc-token').value.trim();
+    const id    = document.getElementById('tc-id').value.trim();
+    const name  = document.getElementById('tc-name').value.trim();
+
+    if (!token || !id) {
+      showAlert('token-connect-alerts', 'Token and ID are required.', 'error');
+      return;
+    }
+
+    try {
+      document.getElementById('tc-submit-btn').disabled = true;
+      document.getElementById('tc-submit-btn').textContent = 'Connecting...';
+
+      await apiFetch('/publish/platforms/connect-token', {
+        method: 'POST',
+        body: JSON.stringify({
+          platform:          platformId,
+          access_token:      token,
+          platform_user_id:  id,
+          platform_username: name || (isWA ? 'WhatsApp' : 'Telegram Channel')
+        })
+      });
+
+      overlay.remove();
+      showAlert('settings-alerts', `${title.replace('Connect ', '')} connected successfully!`, 'success');
+      await loadConnectedPlatforms();
+
+    } catch (err) {
+      document.getElementById('tc-submit-btn').disabled = false;
+      document.getElementById('tc-submit-btn').textContent = 'Connect';
+      if (err.limitReached) { overlay.remove(); showUpgradePrompt(err.feature, err.message); }
+      else showAlert('token-connect-alerts', err.message, 'error');
+    }
+  });
 }
 
 // ----------------------------------------------------------------

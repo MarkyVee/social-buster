@@ -50,7 +50,8 @@ async function publish(post, connection) {
     case 'linkedin':  return publishToLinkedIn(post, accessToken, connection);
     case 'x':         return publishToX(post, accessToken, connection);
     case 'threads':   return publishToThreads(post, accessToken, connection);
-    case 'youtube':   return publishToYoutube(post, accessToken, connection);
+    case 'whatsapp':  return publishToWhatsApp(post, accessToken, connection);
+    case 'telegram':  return publishToTelegram(post, accessToken, connection);
     default:
       throw new Error(`Unsupported platform: "${connection.platform}"`);
   }
@@ -68,7 +69,8 @@ async function fetchMetrics(platformPostId, platform, accessToken) {
     case 'linkedin':  return fetchLinkedInMetrics(platformPostId, accessToken);
     case 'x':         return fetchXMetrics(platformPostId, accessToken);
     case 'threads':   return fetchThreadsMetrics(platformPostId, accessToken);
-    case 'youtube':   return fetchYouTubeMetrics(platformPostId, accessToken);
+    case 'whatsapp':  return fetchWhatsAppMetrics(platformPostId, accessToken);
+    case 'telegram':  return fetchTelegramMetrics(platformPostId, accessToken);
     default:
       return emptyMetrics();
   }
@@ -86,7 +88,8 @@ async function fetchComments(platformPostId, platform, accessToken, sinceTimesta
     case 'linkedin':  return fetchLinkedInComments(platformPostId, accessToken, sinceTimestamp);
     case 'x':         return fetchXComments(platformPostId, accessToken, sinceTimestamp);
     case 'threads':   return fetchThreadsComments(platformPostId, accessToken, sinceTimestamp);
-    case 'youtube':   return fetchYouTubeComments(platformPostId, accessToken, sinceTimestamp);
+    case 'whatsapp':  return fetchWhatsAppComments(platformPostId, accessToken, sinceTimestamp);
+    case 'telegram':  return fetchTelegramComments(platformPostId, accessToken, sinceTimestamp);
     default:
       return [];
   }
@@ -873,100 +876,196 @@ async function publishToThreads(post, accessToken, connection) {
 }
 
 // ----------------------------------------------------------------
-// YOUTUBE — YouTube Data API v3 (video upload)
-// Required .env: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET (Google OAuth — same project as Drive)
-// Scopes needed: https://www.googleapis.com/auth/youtube.upload
+// WHATSAPP — WhatsApp Business API (Cloud API via Meta)
+// Required .env: WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN
+//   (or use the same META_APP_ID token with whatsapp_business_messaging scope)
 //
-// YouTube is video-only — no image or text posts.
-// Uses the googleapis SDK (already installed for Google Drive).
-// post.media_url must be a publicly accessible video URL.
+// WhatsApp Business API sends messages to opted-in contacts via templates
+// or within a 24-hour customer service window. For "publishing" a post,
+// we broadcast it as a message to the user's WhatsApp Channel (Channels API)
+// or as a status update.
 //
-// Quota: 10,000 units/day free. Video upload = 1,600 units (~6 uploads/day free).
+// WhatsApp Channels: POST /{phone-number-id}/messages with type=text/image/video
+// Status updates: POST /{phone-number-id}/messages to status broadcast list
+//
+// Note: WhatsApp is messaging-first, not feed-based. "Publishing" here means
+// sending a broadcast message to the user's WhatsApp Channel or status.
 // ----------------------------------------------------------------
-async function publishToYoutube(post, accessToken, connection) {
-  if (!post.media_url || post.media_file_type !== 'video') {
-    throw new Error('YouTube only supports video posts. Attach a video before publishing.');
-  }
+async function publishToWhatsApp(post, accessToken, connection) {
+  const TIMEOUT = 30_000;
+  const phoneNumberId = connection.platform_user_id;
 
-  const { google } = require('googleapis');
-  const https = require('https');
-  const http  = require('http');
-
-  // Set up authenticated YouTube client
-  const auth = new google.auth.OAuth2(
-    process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
-    process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET
-  );
-  auth.setCredentials({ access_token: accessToken });
-  const youtube = google.youtube({ version: 'v3', auth });
-
-  // Build video metadata
-  const title = post.hook ? String(post.hook).slice(0, 100) : 'Video';
+  // Build message text
   const hashtags = Array.isArray(post.hashtags)
     ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
     : '';
-  const description = [post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
-  const tags = Array.isArray(post.hashtags)
-    ? post.hashtags.map(h => h.replace(/^#/, '')).slice(0, 30)
-    : [];
+  const text = [post.hook, post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
 
-  console.log(`[PlatformAPIs] YouTube publish — title="${title}" mediaUrl=${post.media_url}`);
-
-  // Download the video as a stream — googleapis SDK accepts a readable stream
-  const videoStream = await new Promise((resolve, reject) => {
-    const get = post.media_url.startsWith('https') ? https.get : http.get;
-    get(post.media_url, (res) => {
-      // Follow redirects (Supabase Storage may redirect)
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectGet = res.headers.location.startsWith('https') ? https.get : http.get;
-        redirectGet(res.headers.location, resolve).on('error', reject);
-      } else if (res.statusCode >= 200 && res.statusCode < 300) {
-        resolve(res);
-      } else {
-        reject(new Error(`Failed to download video for YouTube upload: HTTP ${res.statusCode}`));
-      }
-    }).on('error', reject);
-  });
-
-  try {
-    const res = await youtube.videos.insert({
-      part: ['snippet', 'status'],
-      requestBody: {
-        snippet: {
-          title,
-          description,
-          tags,
-          categoryId: '22'  // "People & Blogs" — safe default
-        },
-        status: {
-          privacyStatus: 'public',
-          selfDeclaredMadeForKids: false
-        }
-      },
-      media: { body: videoStream }
-    });
-
-    const videoId = res.data.id;
-    if (!videoId) {
-      throw new Error(`YouTube returned no video ID: ${JSON.stringify(res.data)}`);
-    }
-
-    console.log(`[PlatformAPIs] YouTube publish OK — videoId=${videoId}`);
-    return { platformPostId: videoId };
-
-  } catch (err) {
-    // Extract Google API error details
-    if (err.response?.data?.error) {
-      const gErr = err.response.data.error;
-      console.log('[PlatformAPIs] YouTube raw error:', JSON.stringify(gErr));
-      throw new Error(`YouTube error ${gErr.code}: ${gErr.message}`);
-    }
-    if (err.errors?.[0]) {
-      console.log('[PlatformAPIs] YouTube API error:', JSON.stringify(err.errors));
-      throw new Error(`YouTube error: ${err.errors[0].message} (reason: ${err.errors[0].reason})`);
-    }
-    throw err;
+  if (!text && !post.media_url) {
+    throw new Error('WhatsApp requires either text or media content.');
   }
+
+  // WhatsApp error extractor (Meta Graph API format)
+  const waCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] WhatsApp raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] WhatsApp network error (no response):', err.message);
+      }
+      const waErr = err.response?.data?.error;
+      if (waErr) {
+        throw new Error(`WhatsApp error ${waErr.code}: ${waErr.message} (type: ${waErr.type})`);
+      }
+      throw err;
+    }
+  };
+
+  console.log(`[PlatformAPIs] WhatsApp publish — phoneNumberId=${phoneNumberId} mediaType=${post.media_file_type || 'text'}`);
+
+  let messageBody;
+
+  if (post.media_url && post.media_file_type === 'image') {
+    // Image message
+    messageBody = {
+      messaging_product: 'whatsapp',
+      recipient_type:    'broadcast',
+      type:              'image',
+      image: {
+        link:    post.media_url,
+        caption: text.slice(0, 1024)  // WhatsApp caption limit
+      }
+    };
+  } else if (post.media_url && post.media_file_type === 'video') {
+    // Video message
+    messageBody = {
+      messaging_product: 'whatsapp',
+      recipient_type:    'broadcast',
+      type:              'video',
+      video: {
+        link:    post.media_url,
+        caption: text.slice(0, 1024)
+      }
+    };
+  } else {
+    // Text-only message
+    messageBody = {
+      messaging_product: 'whatsapp',
+      recipient_type:    'broadcast',
+      type:              'text',
+      text: { body: text.slice(0, 4096) }  // WhatsApp text limit
+    };
+  }
+
+  const res = await waCall(() => axios.post(
+    `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`,
+    messageBody,
+    {
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: TIMEOUT
+    }
+  ));
+
+  const messageId = res.data?.messages?.[0]?.id || res.data?.id;
+  if (!messageId) {
+    throw new Error(`WhatsApp returned no message ID: ${JSON.stringify(res.data)}`);
+  }
+
+  console.log(`[PlatformAPIs] WhatsApp publish OK — messageId=${messageId}`);
+  return { platformPostId: messageId };
+}
+
+// ----------------------------------------------------------------
+// TELEGRAM — Telegram Bot API
+// Required .env: TELEGRAM_BOT_TOKEN
+//
+// Telegram uses a Bot Token (not OAuth). The "access_token" stored in
+// platform_connections is the bot token. connection.platform_user_id is
+// the channel username (e.g. @mychannel) or chat_id.
+//
+// Text posts:  POST /sendMessage with chat_id + text (Markdown supported)
+// Image posts: POST /sendPhoto with chat_id + photo URL + caption
+// Video posts: POST /sendVideo with chat_id + video URL + caption
+//
+// No OAuth flow needed — user enters bot token + channel ID in settings.
+// ----------------------------------------------------------------
+async function publishToTelegram(post, accessToken, connection) {
+  const TIMEOUT = 30_000;
+  const botToken = accessToken;
+  const chatId   = connection.platform_user_id;  // @channelname or numeric chat_id
+
+  // Build message text
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const text = [post.hook, post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
+
+  if (!text && !post.media_url) {
+    throw new Error('Telegram requires either text or media content.');
+  }
+
+  // Telegram error extractor
+  const tgCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] Telegram raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] Telegram network error (no response):', err.message);
+      }
+      const tgErr = err.response?.data;
+      if (tgErr?.description) {
+        throw new Error(`Telegram error ${tgErr.error_code}: ${tgErr.description}`);
+      }
+      throw err;
+    }
+  };
+
+  console.log(`[PlatformAPIs] Telegram publish — chatId=${chatId} mediaType=${post.media_file_type || 'text'}`);
+
+  const API_BASE = `https://api.telegram.org/bot${botToken}`;
+  let res;
+
+  if (post.media_url && post.media_file_type === 'image') {
+    // Send photo with caption
+    res = await tgCall(() => axios.post(`${API_BASE}/sendPhoto`, {
+      chat_id:    chatId,
+      photo:      post.media_url,
+      caption:    text.slice(0, 1024),  // Telegram caption limit
+      parse_mode: 'Markdown'
+    }, { timeout: TIMEOUT }));
+
+  } else if (post.media_url && post.media_file_type === 'video') {
+    // Send video with caption
+    res = await tgCall(() => axios.post(`${API_BASE}/sendVideo`, {
+      chat_id:    chatId,
+      video:      post.media_url,
+      caption:    text.slice(0, 1024),
+      parse_mode: 'Markdown'
+    }, { timeout: TIMEOUT }));
+
+  } else {
+    // Text-only message
+    res = await tgCall(() => axios.post(`${API_BASE}/sendMessage`, {
+      chat_id:    chatId,
+      text:       text.slice(0, 4096),  // Telegram message limit
+      parse_mode: 'Markdown'
+    }, { timeout: TIMEOUT }));
+  }
+
+  const messageId = res.data?.result?.message_id;
+  if (!messageId) {
+    throw new Error(`Telegram returned no message_id: ${JSON.stringify(res.data)}`);
+  }
+
+  console.log(`[PlatformAPIs] Telegram publish OK — messageId=${messageId}`);
+  return { platformPostId: String(messageId) };
 }
 
 // ================================================================
@@ -979,7 +1078,8 @@ async function publishToYoutube(post, accessToken, connection) {
 //   LinkedIn:  GET /socialActions/{ugcPostUrn} for reactions/comments
 //   X:         GET /tweets/{id}?tweet.fields=public_metrics
 //   Threads:   GET /{media_id}/insights?metric=likes,replies,reposts,views
-//   YouTube:   GET /videos?part=statistics&id={videoId}
+//   WhatsApp:  No public metrics API — message status only (sent/delivered/read)
+//   Telegram:  No public metrics API for channels yet
 // ================================================================
 
 function emptyMetrics() {
@@ -992,7 +1092,8 @@ async function fetchTikTokMetrics(postId, accessToken)    { return emptyMetrics(
 async function fetchLinkedInMetrics(postId, accessToken)  { return emptyMetrics(); }
 async function fetchXMetrics(postId, accessToken)         { return emptyMetrics(); }
 async function fetchThreadsMetrics(postId, accessToken)   { return emptyMetrics(); }
-async function fetchYouTubeMetrics(postId, accessToken)   { return emptyMetrics(); }
+async function fetchWhatsAppMetrics(postId, accessToken)  { return emptyMetrics(); }
+async function fetchTelegramMetrics(postId, accessToken)  { return emptyMetrics(); }
 
 // ================================================================
 // COMMENT FETCHERS — return empty arrays until credentials are wired up.
@@ -1004,7 +1105,8 @@ async function fetchYouTubeMetrics(postId, accessToken)   { return emptyMetrics(
 //   LinkedIn:  GET /socialActions/{ugcPostUrn}/comments
 //   X:         GET /tweets/search/recent?query=conversation_id:{id}
 //   Threads:   GET /{media_id}/replies?fields=id,text,username,timestamp
-//   YouTube:   GET /commentThreads?videoId={id}&part=snippet
+//   WhatsApp:  No comment concept — messaging platform
+//   Telegram:  No comment API for channel posts yet
 // ================================================================
 
 // ----------------------------------------------------------------
@@ -1107,7 +1209,8 @@ async function fetchTikTokComments(postId, accessToken, since)    { return []; }
 async function fetchLinkedInComments(postId, accessToken, since)  { return []; }
 async function fetchXComments(postId, accessToken, since)         { return []; }
 async function fetchThreadsComments(postId, accessToken, since)   { return []; }
-async function fetchYouTubeComments(postId, accessToken, since)   { return []; }
+async function fetchWhatsAppComments(postId, accessToken, since)  { return []; }
+async function fetchTelegramComments(postId, accessToken, since)  { return []; }
 
 // ================================================================
 // TOKEN REFRESH

@@ -41,7 +41,7 @@ function renderGeneratedPosts(brief, posts) {
   const byPlatform = groupByPlatform(posts);
 
   // Sort platforms into a consistent left-to-right display order
-  const PLATFORM_ORDER = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+  const PLATFORM_ORDER = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
   const sortedPlatforms = Object.keys(byPlatform).sort(
     (a, b) => PLATFORM_ORDER.indexOf(a) - PLATFORM_ORDER.indexOf(b)
   );
@@ -55,7 +55,7 @@ function renderGeneratedPosts(brief, posts) {
 
   const PLATFORM_ICONS = {
     instagram: '📸', facebook: '👥', tiktok: '🎵',
-    linkedin: '💼', x: '𝕏', threads: '🧵', youtube: '▶️'
+    linkedin: '💼', x: '𝕏', threads: '🧵', whatsapp: '💬', telegram: '✈️'
   };
 
   contentEl.innerHTML = `

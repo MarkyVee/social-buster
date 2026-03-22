@@ -41,7 +41,6 @@ const THREADS_REDIRECT_URI  = process.env.THREADS_REDIRECT_URI  || 'http://local
 const TIKTOK_REDIRECT_URI   = process.env.TIKTOK_REDIRECT_URI   || 'http://localhost:3001/publish/oauth/tiktok/callback';
 const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/publish/oauth/linkedin/callback';
 const X_REDIRECT_URI        = process.env.X_REDIRECT_URI        || 'http://localhost:3001/publish/oauth/x/callback';
-const YOUTUBE_REDIRECT_URI  = process.env.YOUTUBE_REDIRECT_URI  || 'http://localhost:3001/publish/oauth/youtube/callback';
 const FRONTEND_URL          = process.env.FRONTEND_URL          || 'http://localhost:3001';
 
 // ================================================================
@@ -553,89 +552,6 @@ router.get('/oauth/x/callback', async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------------
-// GET /publish/oauth/youtube/callback
-//
-// Called by Google after the user grants YouTube permission.
-// Uses the same Google OAuth as Drive but with youtube.upload scope.
-// ----------------------------------------------------------------
-router.get('/oauth/youtube/callback', async (req, res) => {
-  const { code, state, error: oauthError } = req.query;
-
-  const finish = (result) => {
-    res.cookie('sb_platform_oauth', JSON.stringify(result), {
-      maxAge: 30000, httpOnly: false, sameSite: 'lax'
-    });
-    return res.redirect(`${FRONTEND_URL}/#settings`);
-  };
-
-  if (oauthError || !code || !state) {
-    return finish({ status: 'cancelled' });
-  }
-
-  try {
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
-
-    // Exchange code for tokens (Google returns both access + refresh on first auth)
-    const tokenRes = await axios.post(
-      'https://oauth2.googleapis.com/token',
-      new URLSearchParams({
-        code,
-        client_id:     process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
-        redirect_uri:  YOUTUBE_REDIRECT_URI,
-        grant_type:    'authorization_code'
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30_000 }
-    );
-
-    const accessToken  = tokenRes.data.access_token;
-    const refreshToken = tokenRes.data.refresh_token;
-    const expiresIn    = tokenRes.data.expires_in || 3600;
-    const expiresAt    = new Date(Date.now() + expiresIn * 1000).toISOString();
-    if (!accessToken) throw new Error('Google returned no access_token');
-
-    // Fetch YouTube channel info
-    let channelName = 'YouTube Channel';
-    let channelId   = null;
-    try {
-      const channelRes = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
-        params: { part: 'snippet', mine: true },
-        headers: { Authorization: `Bearer ${accessToken}` },
-        timeout: 30_000
-      });
-      const channel = channelRes.data?.items?.[0];
-      if (channel) {
-        channelId   = channel.id;
-        channelName = channel.snippet?.title || channelName;
-      }
-    } catch (e) {
-      console.warn('[Publish] YouTube channel info fetch failed (non-fatal):', e.message);
-    }
-
-    await supabaseAdmin
-      .from('platform_connections')
-      .upsert({
-        user_id:           userId,
-        platform:          'youtube',
-        access_token:      encryptToken(accessToken),
-        refresh_token:     refreshToken ? encryptToken(refreshToken) : null,
-        token_expires_at:  expiresAt,
-        platform_user_id:  channelId,
-        platform_username: channelName,
-        connected_at:      new Date().toISOString()
-      }, { onConflict: 'user_id,platform' });
-
-    console.log(`[Publish] YouTube "${channelName}" connected for user ${userId}`);
-    return finish({ status: 'connected', platforms: ['youtube'] });
-
-  } catch (err) {
-    console.error('[Publish] YouTube OAuth callback error:', err.response?.data || err.message);
-    return finish({ status: 'error', message: 'YouTube connection failed. Please try again.' });
-  }
-});
-
 // ================================================================
 // AUTH MIDDLEWARE — all routes below this line require a logged-in user
 // ================================================================
@@ -822,7 +738,7 @@ router.get('/platforms', standardLimiter, async (req, res) => {
 // OAuth callback flow, not directly from the frontend.
 // ----------------------------------------------------------------
 router.post('/platforms/connect', standardLimiter, checkLimit('platforms_connected'), async (req, res) => {
-  const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+  const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
   const { platform, access_token, refresh_token, token_expires_at, platform_user_id, platform_username } = req.body;
 
   if (!platform || !VALID_PLATFORMS.includes(platform)) {
@@ -871,7 +787,7 @@ router.post('/platforms/connect', standardLimiter, checkLimit('platforms_connect
 // are not affected — only future publishing is disabled.
 // ----------------------------------------------------------------
 router.delete('/platforms/:platform', standardLimiter, async (req, res) => {
-  const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+  const VALID_PLATFORMS = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
 
   if (!VALID_PLATFORMS.includes(req.params.platform)) {
     return res.status(400).json({ error: 'Unknown platform' });
@@ -1165,35 +1081,69 @@ router.post('/oauth/x/start', standardLimiter, checkLimit('platforms_connected')
 });
 
 // ----------------------------------------------------------------
-// POST /publish/oauth/youtube/start
+// POST /publish/platforms/connect-token
 //
-// Generates the Google/YouTube OAuth URL.
-// Uses Google OAuth 2.0 — same provider as Google Drive but with
-// youtube.upload scope. Can use the same Google Cloud project.
+// For platforms that don't use OAuth (WhatsApp, Telegram) — the user
+// enters a bot token + channel ID directly in the UI, and the frontend
+// sends them here. This is separate from the OAuth /platforms/connect
+// endpoint because it's user-initiated with manual credentials.
 //
-// Required .env: YOUTUBE_CLIENT_ID (or GOOGLE_CLIENT_ID),
-//                YOUTUBE_CLIENT_SECRET (or GOOGLE_CLIENT_SECRET)
+// Body:
+//   platform          — 'whatsapp' or 'telegram'
+//   access_token      — WhatsApp phone number ID access token or Telegram bot token
+//   platform_user_id  — WhatsApp phone number ID or Telegram channel @username / chat_id
+//   platform_username — display name for the settings UI
 // ----------------------------------------------------------------
-router.post('/oauth/youtube/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
-  const clientId = process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    return res.status(501).json({
-      error: 'YouTube is not set up yet. Add YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET (or use your existing GOOGLE_CLIENT_ID) to your .env file.'
+router.post('/platforms/connect-token', standardLimiter, checkLimit('platforms_connected'), async (req, res) => {
+  const VALID = ['whatsapp', 'telegram'];
+  const { platform, access_token, platform_user_id, platform_username } = req.body;
+
+  if (!platform || !VALID.includes(platform)) {
+    return res.status(400).json({ error: `platform must be one of: ${VALID.join(', ')}` });
+  }
+  if (!access_token) {
+    return res.status(400).json({ error: 'access_token is required' });
+  }
+  if (!platform_user_id) {
+    return res.status(400).json({
+      error: platform === 'telegram'
+        ? 'Channel username or chat ID is required (e.g. @mychannel)'
+        : 'WhatsApp Phone Number ID is required'
     });
   }
 
-  const state = Buffer.from(req.user.id).toString('base64');
+  try {
+    // Verify the token works before saving
+    if (platform === 'telegram') {
+      const verifyRes = await axios.get(
+        `https://api.telegram.org/bot${access_token}/getMe`,
+        { timeout: 10_000 }
+      );
+      if (!verifyRes.data?.ok) {
+        return res.status(400).json({ error: 'Invalid Telegram bot token. Check your token and try again.' });
+      }
+    }
 
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth` +
-    `?client_id=${encodeURIComponent(clientId)}` +
-    `&redirect_uri=${encodeURIComponent(YOUTUBE_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly')}` +
-    `&response_type=code` +
-    `&access_type=offline` +       // Request refresh_token
-    `&prompt=consent` +             // Force consent screen to always get refresh_token
-    `&state=${state}`;
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           req.user.id,
+        platform,
+        access_token:      encryptToken(access_token),
+        refresh_token:     null,
+        token_expires_at:  null,  // Bot tokens don't expire
+        platform_user_id:  platform_user_id,
+        platform_username: platform_username || (platform === 'telegram' ? 'Telegram Channel' : 'WhatsApp'),
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform' });
 
-  return res.json({ authUrl });
+    console.log(`[Publish] ${platform} connected for user ${req.user.id}`);
+    return res.json({ status: 'connected', platforms: [platform] });
+
+  } catch (err) {
+    console.error(`[Publish] ${platform} connect-token error:`, err.response?.data || err.message);
+    return res.status(500).json({ error: `Failed to connect ${platform}. Check your credentials and try again.` });
+  }
 });
 
 module.exports = router;
