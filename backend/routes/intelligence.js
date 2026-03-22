@@ -302,7 +302,7 @@ router.get('/preflight', standardLimiter, async (req, res) => {
 //
 // Body: { platform, post_type, tone, hook, caption }
 // ----------------------------------------------------------------
-router.post('/predict', standardLimiter, async (req, res) => {
+router.post('/predict', standardLimiter, checkLimit('performance_predictor'), async (req, res) => {
   const { platform, post_type, tone, hook, caption } = req.body;
 
   if (!platform) {
@@ -335,7 +335,7 @@ router.post('/predict', standardLimiter, async (req, res) => {
 //
 // Optional: ?platform=instagram  ?limit=5
 // ----------------------------------------------------------------
-router.get('/pain-points', standardLimiter, async (req, res) => {
+router.get('/pain-points', standardLimiter, checkLimit('pain_point_miner'), async (req, res) => {
   try {
     const painPoints = await minePainPoints(req.user.id, {
       platform: req.query.platform || null,
@@ -357,7 +357,7 @@ router.get('/pain-points', standardLimiter, async (req, res) => {
 // analyzing their published posts over time. Includes writing
 // patterns, vocabulary preferences, sentence structure, and tone.
 // ----------------------------------------------------------------
-router.get('/voice-profile', standardLimiter, async (req, res) => {
+router.get('/voice-profile', standardLimiter, checkLimit('brand_voice_tracker'), async (req, res) => {
   try {
     const profile = await getVoiceProfile(req.user.id);
 

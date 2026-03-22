@@ -959,7 +959,10 @@ router.get('/tier-limits', async (req, res) => {
         scheduled_queue_size:   { values: [5, 25, 100, -1],  label: 'Scheduled queue size' },
         comment_monitoring:     { values: [0, 1, 1, 1],      label: 'Comment monitoring' },
         dm_lead_capture:        { values: [0, 0, 1, 1],      label: 'DM lead capture' },
-        intelligence_dashboard: { values: [0, 0, 1, 1],      label: 'Intelligence dashboard' }
+        intelligence_dashboard: { values: [0, 0, 1, 1],      label: 'Intelligence dashboard' },
+        performance_predictor:  { values: [0, 0, 1, 1],      label: 'Performance predictor' },
+        pain_point_miner:       { values: [0, 0, 1, 1],      label: 'Pain-point miner' },
+        brand_voice_tracker:    { values: [0, 0, 1, 1],      label: 'Brand voice tracker' }
       };
 
       for (const [feature, config] of Object.entries(features)) {

@@ -269,6 +269,21 @@ const FEATURE_INFO = {
     name:  'Intelligence Dashboard',
     desc:  'See what\'s working and what isn\'t with AI-powered performance analytics. Get trend research, sentiment analysis on comments, and data-driven recommendations to improve every post.',
     icon:  '🧠'
+  },
+  performance_predictor: {
+    name:  'Performance Predictor',
+    desc:  'See predicted likes, comments, and reach before you publish. Uses your history and peer benchmarks to forecast engagement and suggest tweaks.',
+    icon:  '📈'
+  },
+  pain_point_miner: {
+    name:  'Audience Pain-Point Miner',
+    desc:  'Discover what your audience is struggling with and asking about. AI clusters your comments into actionable themes with post ideas that address real needs.',
+    icon:  '🎯'
+  },
+  brand_voice_tracker: {
+    name:  'Brand Voice Tracker',
+    desc:  'The AI learns your unique writing style from your published posts. After a few posts, every generated hook and caption sounds like you — not a generic template.',
+    icon:  '🎙️'
   }
 };
 
