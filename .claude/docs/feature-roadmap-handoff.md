@@ -20,6 +20,7 @@
 10. [Database Tables Reference](#10-database-tables-reference)
 11. [Platform Publishing Status](#11-platform-publishing-status)
 12. [Environment & Deployment](#12-environment--deployment)
+13. [Shared Context Pipeline (Agent Intelligence Layer)](#13-shared-context-pipeline-agent-intelligence-layer)
 
 ---
 
@@ -473,7 +474,8 @@ Instead of one-off posts, let users plan multi-post campaigns: "Product launch w
 | `tokenEncryption.js` | AES-256-GCM for OAuth token storage |
 | `redisService.js` | Cache get/set/del wrappers |
 | `videoAnalysisService.js` | FFmpeg scene detection → video_segments |
-| `visionTaggingService.js` | LLM visual tagging of segments |
+| `visionTaggingService.js` | LLM visual tagging of segments (enriched: 8 fields + synonym normalization) |
+| `contextBuilder.js` | Shared context pipeline — pulls cross-agent data for any agent to use |
 | `alertService.js` | SMTP email alerts for health checks |
 
 ### Frontend JS Files
@@ -491,8 +493,11 @@ Instead of one-off posts, let users plan multi-post campaigns: "Product launch w
 | File | Purpose |
 |------|---------|
 | `briefSemantics.js` | Energy/pacing/mood profiles per post type, objective, tone. Clip matching scores. |
-| `prompts/research-agent.md` | System + user prompt for research generation |
-| `prompts/post-generation-*.md` | Platform-specific and general post generation prompts |
+| `prompts/vision-tagging.md` | Vision tagger prompt — what to look for in video frames. Uses `{{context_shared}}`. |
+| `prompts/research-agent.md` | Research agent prompt — uses `{{context_shared}}` for cross-agent grounding. |
+| `prompts/post-generation.md` | Post generation prompt — rules, output format, `why_this_works` field. |
+| `prompts/clip-selection.md` | Clip selection prompt — uses `{{context_shared}}` for smarter matching. |
+| `prompts/post-generation-platforms.md` | Platform-specific writing rules (Instagram, Facebook, TikTok, etc.) |
 
 ### Files You Must Never Modify
 | File | Why |
@@ -539,6 +544,11 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 29. **Admin tier override must be checked in ALL tier-reading endpoints** — `user_profiles.subscription_tier` takes priority over `subscriptions.plan`. Three places read the tier: `checkLimit.js`, `GET /billing/status`, `GET /auth/me`. All three must check `user_profiles.subscription_tier` first. The `GET /billing/my-limits` endpoint also follows this pattern. If you add a new endpoint that reads the user's plan, check the admin override first.
 30. **`platforms_connected` limit must be on OAuth start, not just connect** — Without this, users go through the full Facebook OAuth flow (redirect to Facebook, authorize, come back) only to be told they can't connect. Always check the limit at the start route (`/oauth/meta/start`, `/oauth/threads/start`) so they see the upgrade prompt immediately.
 31. **Feature-flag limits (comment_monitoring, dm_lead_capture, intelligence_dashboard) use `countUsage` default case** — These features don't have a numeric counter. `countUsage()` returns 0 for unknown features (default case). When `limit_value = 0` and `enabled = true`, `0 < 0 = false` → blocked. When `limit_value = 1`, `0 < 1 = true` → allowed. This is by design — don't add counter cases for feature flags.
+32. **Research agent must NOT receive its own output as context** — `buildContext()` in the research agent excludes the `research` section to prevent circular dependency. If you add a new agent that produces context, make sure it doesn't consume its own output.
+33. **Vision tag synonym maps are the tuning knobs** — `TAG_SYNONYMS`, `AUDIENCE_SYNONYMS`, `USE_CASE_SYNONYMS`, and the mood `synonymMap` in `visionTaggingService.js` control tag quality. Adding a new canonical value requires updating BOTH the allowed list AND the prompt file. Forgetting the prompt file means the LLM won't know the value exists and will never return it.
+34. **`why_this_works` is NOT stored in the database** — It's returned from the LLM alongside hook/caption/cta but only attached to the API response (same pattern as `media_recommendation`). If you need to persist it, add a column to `posts` first.
+35. **Context cache TTL is 1 hour** — `agent_context:{userId}` in Redis. Agents on faster schedules (comments every 15min) may produce stale context. This is intentional — rebuilding context on every agent run would multiply DB queries. If freshness matters, pass `skipCache: true` to `buildContext()`.
+36. **New video_segments columns require migration** — `hook_potential`, `audience_fit`, `use_cases`, `text_overlay_opportunity` were added in `migration_enriched_video_tags.sql`. All are optional — existing segments work without them. Run the migration in Supabase SQL Editor before deploying code that writes to these columns.
 
 ---
 
@@ -549,7 +559,7 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 - `briefs` — niche, platforms (JSONB array), tone, post_type, objective, notes, talking_points, semantic metadata
 - `posts` — brief_id, platform, hook, caption, hashtags, cta, media_id, status (draft/approved/scheduled/publishing/published/failed), scheduled_for, error_message
 - `media_items` — cloud_provider, cloud_url, processed_url, process_status, file_type, duration, width, height
-- `video_segments` — media_item_id, start_time, end_time, energy_level, pacing, mood, scene_description, tags
+- `video_segments` — media_item_id, start_seconds, end_seconds, energy_level, pacing, mood, description, tags, hook_potential, audience_fit, use_cases, text_overlay_opportunity, thumbnail_url, platform_fit
 - `post_comments` — post_id, comment_text, author_handle, author_platform_id, sentiment, trigger_matched, dm_sent
 - `cloud_connections` — user_id, provider, encrypted_tokens, platform_user_id
 - `platform_metrics` — post_id, platform, likes, comments, shares, reach, impressions
@@ -630,3 +640,153 @@ PORT, NODE_ENV
 - **Always bump cache versions** — After changing any frontend JS file, bump `?v=N` in `index.html`
 - **Use `showToast()` for billing/subscription notifications** — `showAlert()` can be destroyed by DOM re-renders
 - **Separate API calls from UI refreshes** — Put the API call in its own try/catch so a re-render failure can't swallow success feedback
+
+---
+
+## 13. Shared Context Pipeline (Agent Intelligence Layer)
+
+> **Added:** 2026-03-21. This is the foundation layer that makes all Tier 1-3 premium features dramatically easier to build.
+
+### The Problem It Solves
+
+Before this, every AI agent worked in isolation:
+- Research agent generated trend insights → cached in Redis, only used by post generation
+- Performance agent tracked metrics → cached in Redis, only used by preflight panel
+- Video tagger analyzed frames → stored tags, only used by clip picker
+- Comment agent ingested comments → stored in DB, only used by DM automation
+
+No agent knew what any other agent had learned. Research didn't know what was actually performing well. Video tagging didn't know what the user's audience cared about. Post generation didn't know what topics the audience was asking about in comments.
+
+### How It Works Now
+
+**New file: `backend/services/contextBuilder.js`**
+
+`buildContext(userId)` pulls data from ALL agents and returns a structured object:
+
+| Section | Source | What It Contains |
+|---------|--------|-----------------|
+| `profile` | `user_profiles` table | Brand name, industry, audience, voice, geo |
+| `research` | Redis `research:{userId}` | Trending topics, niche insights, winning hooks |
+| `performance` | Redis `intelligence:{userId}` | Avg likes/reach, best platform, best hours, top hooks |
+| `cohort` | `cohort_performance` table | How peers with same industry/geo perform (aggregated, anonymous) |
+| `comments` | `post_comments` table | Sentiment counts, most-discussed topics, audience questions |
+| `content_patterns` | `posts` table | Recent post types, tones, platforms, hooks used (for variety) |
+| `video_tags` | `video_segments` table | Tag frequency, mood distribution, avg energy level |
+
+`formatForPrompt(context)` converts any/all sections to plain text for LLM prompt injection.
+
+**Data flow after this change:**
+
+```
+Research Agent discovers "fitness reels under 15s are trending"
+    ↓ cached in Redis
+Context Builder pulls this into shared context
+    ↓ injected via prompt {{variables}}
+Video Tagger sees the trend → tags clips with relevant use_cases
+    ↓ stored in video_segments
+Clip Selection uses tags + performance context → picks better clips
+    ↓
+Post Generation gets ALL context → writes smarter hooks + "Why This Will Work"
+    ↓ after publishing
+Performance Agent tracks results → updates intelligence cache
+    ↓ feeds back into
+Research Agent (next cycle) gets performance data → grounds research in reality
+```
+
+**The collective layer:** Individual user performance data feeds into `cohort_performance` (via `performanceAgent.js`). Cohort benchmarks then feed back into every user's context. More users posting = smarter agents for everyone. No individual post content is shared — only aggregated, anonymized metrics (avg likes, best hours, top hooks by industry/geo/platform).
+
+### Agents Currently Wired
+
+| Agent | Receives Context From | Outputs To |
+|-------|----------------------|------------|
+| **Post Generation** (`llmService.js`) | research, performance, cohort, comments, content_patterns, video_tags | Generated posts (with `why_this_works` field) |
+| **Research Agent** (`researchAgent.js`) | performance, cohort, comments, content_patterns (excludes research to avoid circular) | Redis `research:{userId}` cache |
+| **Vision Tagger** (`visionTaggingService.js`) | research, performance, cohort | `video_segments` table (enriched tags) |
+| **Clip Selection** (prompt only) | Via `{{context_shared}}` in `clip-selection.md` | Smarter segment picks |
+
+### Enriched Vision Tagging
+
+The vision tagger now returns 8 fields instead of 3:
+
+| Field | Type | Example | Use |
+|-------|------|---------|-----|
+| `description` | text | "A woman presents a product to camera in a home studio" | Clip picker display |
+| `tags` | text[] | ["presenter", "product", "home studio", "close-up"] | Clip matching |
+| `mood` | text | "professional" | Clip matching, brief alignment |
+| `hook_potential` | text | "high" / "medium" / "low" | Prioritize attention-grabbing clips |
+| `energy_level` | int | 7 (1-10 scale) | Match to brief energy profile |
+| `audience_fit` | text[] | ["entrepreneurs", "small business owners"] | Match clips to user's target audience |
+| `use_cases` | text[] | ["product demo", "tutorial"] | Match clips to brief post type |
+| `text_overlay_opportunity` | boolean | true | Know which clips have space for text |
+
+**SQL migration required:** `backend/data/migration_enriched_video_tags.sql` adds `hook_potential`, `audience_fit`, `use_cases`, `text_overlay_opportunity` to `video_segments`.
+
+### Hallucination Prevention (5 Layers)
+
+LLMs can hallucinate — invent plausible but wrong information. We prevent bad data from entering the database with 5 layers:
+
+1. **Constrained output format** — Prompts demand JSON-only responses. `temperature: 0.2` for tagging (low creativity, high accuracy). Structural validation rejects anything that isn't valid JSON.
+
+2. **Allowed value lists** — `mood` must be one of 10 words. `hook_potential` must be high/medium/low. `energy_level` must be 1-10. `audience_fit` must match 14 known audience types. `use_cases` must match 12 known post types. Anything else is rejected.
+
+3. **Synonym normalization** — LLMs return variants ("gymnasium" vs "gym", "bts" vs "behind-the-scenes"). Four normalizer functions (`validateMood`, `validateTags`, `validateAudienceFit`, `validateUseCases`) collapse variants to canonical forms using synonym maps. This is the main tuning knob — edit the maps in `visionTaggingService.js` to refine what the AI returns.
+
+4. **Deduplication** — After normalization, duplicates are removed. A tag that appears as both "gym" and "gymnasium" becomes a single "gym".
+
+5. **Graceful fallback** — If all validation fails, the function returns `null`. The segment still saves with FFmpeg-derived data (duration, pacing, platform_fit). Vision tags are a quality layer, not a requirement.
+
+**No loop risk:** Each tagging call is a single LLM request → single response. No "retry until correct" loops. If the response is bad, we return null and move on.
+
+### How to Tune the Agents (No Code Changes)
+
+All AI behavior is controlled by prompt files in `backend/prompts/`:
+
+| File | Controls | Edit to change |
+|------|----------|---------------|
+| `vision-tagging.md` | What the video tagger looks for in each frame | Add/remove tag categories, change what fields are returned |
+| `research-agent.md` | What the research agent focuses on | Change research sections, add/remove analysis areas |
+| `post-generation.md` | How the post generator writes content | Change rules, output format, add fields like `why_this_works` |
+| `clip-selection.md` | How clips are matched to posts | Change selection criteria, add weighting rules |
+| `post-generation-platforms.md` | Platform-specific writing rules | Change tone/length/format rules per platform |
+
+**Prompt files use `{{variables}}`** that get filled at runtime. `{{context_shared}}` injects cross-agent data. Edit the prompt to control what context matters and how the agent should use it.
+
+**After editing a prompt file:** Restart the backend container (`docker compose restart backend`). Prompts are cached in memory at startup — a restart picks up changes immediately. No code changes, no redeployment, no database migration.
+
+### Synonym Maps (Tag Quality Tuning)
+
+Four synonym maps in `visionTaggingService.js` control tag normalization:
+
+- **`TAG_SYNONYMS`** — General content tags (locations, people, actions, themes, visual styles). ~50 entries.
+- **`AUDIENCE_SYNONYMS`** — Audience type variants → 14 canonical types. ~30 entries.
+- **`USE_CASE_SYNONYMS`** — Post type variants → 12 canonical types. ~25 entries.
+- **Mood `synonymMap`** — Emotion variants → 10 canonical moods. ~15 entries.
+
+To add a new synonym: edit the map, restart the container. To add a new canonical value: add it to both the allowed list AND the prompt file so the LLM knows to use it.
+
+### "Why This Will Work" Explainer
+
+Post generation now returns a `why_this_works` field on each generated post. This is a one-sentence explanation referencing specific data points: "This hook uses the curiosity gap pattern, which got 3.2x engagement for your cohort on Instagram."
+
+- Returned from LLM alongside hook/caption/hashtags/cta
+- Not stored in DB (same as `media_recommendation` — attached to response only)
+- Displayed in the post preview UI as a green "Why This Will Work" card
+- Only appears when the LLM has enough context to explain its reasoning
+
+This was Feature A ("Why This Will Work" Explainer) from the roadmap — now built into the base generation flow rather than as a separate feature.
+
+### Media Storage Cost Decision
+
+**Context:** Media files are copied from Google Drive → Supabase Storage at attach time, and currently stay forever. With 5,000 users, this could reach hundreds of GB or terabytes.
+
+**Key insight:** Analysis data (tags, segments, scores) lives in the DATABASE, not the media file. Deleting the Supabase Storage copy after publishing does NOT require re-analysis — all video_segments rows and tags persist.
+
+**Current architecture:**
+1. User browses media library → thumbnails load from Google Drive's API (zero storage cost)
+2. User attaches media to a post → `mediaProcessAgent` copies file to Supabase Storage
+3. Post publishes → file uploaded from Supabase to platform
+4. After success → file stays in Supabase forever (this is the cost problem)
+
+**Recommended path (not yet implemented):** Delete the Supabase Storage copy after successful publish. The platform has the file, Drive still has the original, and all analysis data persists in the DB. Storage drops to only "in-flight" media (draft/scheduled posts). Estimated storage with cleanup: 5-10GB total vs potentially terabytes without.
+
+**Applies to all cloud providers:** Google Drive, Dropbox, and Box all provide thumbnail URLs via API. The media library browsing experience uses their bandwidth, not ours. Storage cost only applies to the copy-at-attach step.
