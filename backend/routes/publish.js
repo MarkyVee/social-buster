@@ -36,9 +36,13 @@ const { cacheSet, cacheGet, cacheDel } = require('../services/redisService');
 // META:    https://developers.facebook.com → Your App → Facebook Login → Valid OAuth Redirect URIs
 // THREADS: https://developers.facebook.com → Your App → Threads API → Redirect URIs
 // ----------------------------------------------------------------
-const META_REDIRECT_URI    = process.env.META_REDIRECT_URI    || 'http://localhost:3001/publish/oauth/meta/callback';
-const THREADS_REDIRECT_URI = process.env.THREADS_REDIRECT_URI || 'http://localhost:3001/publish/oauth/threads/callback';
-const FRONTEND_URL         = process.env.FRONTEND_URL         || 'http://localhost:3001';
+const META_REDIRECT_URI     = process.env.META_REDIRECT_URI     || 'http://localhost:3001/publish/oauth/meta/callback';
+const THREADS_REDIRECT_URI  = process.env.THREADS_REDIRECT_URI  || 'http://localhost:3001/publish/oauth/threads/callback';
+const TIKTOK_REDIRECT_URI   = process.env.TIKTOK_REDIRECT_URI   || 'http://localhost:3001/publish/oauth/tiktok/callback';
+const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/publish/oauth/linkedin/callback';
+const X_REDIRECT_URI        = process.env.X_REDIRECT_URI        || 'http://localhost:3001/publish/oauth/x/callback';
+const YOUTUBE_REDIRECT_URI  = process.env.YOUTUBE_REDIRECT_URI  || 'http://localhost:3001/publish/oauth/youtube/callback';
+const FRONTEND_URL          = process.env.FRONTEND_URL          || 'http://localhost:3001';
 
 // ================================================================
 // UNPROTECTED OAUTH CALLBACKS
@@ -311,6 +315,325 @@ router.all('/oauth/threads/data-deletion', async (req, res) => {
     url:               `${FRONTEND_URL}/data-deleted`,
     confirmation_code: confirmationCode
   });
+});
+
+// ----------------------------------------------------------------
+// GET /publish/oauth/tiktok/callback
+//
+// Called by TikTok after the user grants permission.
+// Exchanges the authorization code for an access token.
+// TikTok tokens expire after 24 hours — refresh_token lasts 365 days.
+// ----------------------------------------------------------------
+router.get('/oauth/tiktok/callback', async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+
+  const finish = (result) => {
+    res.cookie('sb_platform_oauth', JSON.stringify(result), {
+      maxAge: 30000, httpOnly: false, sameSite: 'lax'
+    });
+    return res.redirect(`${FRONTEND_URL}/#settings`);
+  };
+
+  if (oauthError || !code || !state) {
+    return finish({ status: 'cancelled' });
+  }
+
+  try {
+    const userId = Buffer.from(state, 'base64').toString('utf8');
+    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+
+    // Exchange code for access token
+    const tokenRes = await axios.post(
+      'https://open.tiktokapis.com/v2/oauth/token/',
+      new URLSearchParams({
+        client_key:    process.env.TIKTOK_CLIENT_KEY,
+        client_secret: process.env.TIKTOK_CLIENT_SECRET,
+        code,
+        grant_type:    'authorization_code',
+        redirect_uri:  TIKTOK_REDIRECT_URI
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30_000 }
+    );
+
+    const { access_token, refresh_token, expires_in, open_id } = tokenRes.data;
+    if (!access_token) throw new Error('TikTok returned no access_token');
+
+    const expiresAt = new Date(Date.now() + (expires_in || 86400) * 1000).toISOString();
+
+    // Fetch user info for display name
+    let username = 'TikTok User';
+    try {
+      const userRes = await axios.get('https://open.tiktokapis.com/v2/user/info/', {
+        params: { fields: 'display_name,username' },
+        headers: { Authorization: `Bearer ${access_token}` },
+        timeout: 30_000
+      });
+      username = userRes.data?.data?.user?.display_name || userRes.data?.data?.user?.username || username;
+    } catch (e) {
+      console.warn('[Publish] TikTok user info fetch failed (non-fatal):', e.message);
+    }
+
+    // Store connection
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           userId,
+        platform:          'tiktok',
+        access_token:      encryptToken(access_token),
+        refresh_token:     refresh_token ? encryptToken(refresh_token) : null,
+        token_expires_at:  expiresAt,
+        platform_user_id:  open_id,
+        platform_username: username,
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform' });
+
+    console.log(`[Publish] TikTok "${username}" connected for user ${userId}`);
+    return finish({ status: 'connected', platforms: ['tiktok'] });
+
+  } catch (err) {
+    console.error('[Publish] TikTok OAuth callback error:', err.response?.data || err.message);
+    return finish({ status: 'error', message: 'TikTok connection failed. Please try again.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /publish/oauth/linkedin/callback
+//
+// Called by LinkedIn after the user grants permission.
+// Exchanges code for access token (60-day lifetime).
+// ----------------------------------------------------------------
+router.get('/oauth/linkedin/callback', async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+
+  const finish = (result) => {
+    res.cookie('sb_platform_oauth', JSON.stringify(result), {
+      maxAge: 30000, httpOnly: false, sameSite: 'lax'
+    });
+    return res.redirect(`${FRONTEND_URL}/#settings`);
+  };
+
+  if (oauthError || !code || !state) {
+    return finish({ status: 'cancelled' });
+  }
+
+  try {
+    const userId = Buffer.from(state, 'base64').toString('utf8');
+    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+
+    // Exchange code for access token
+    const tokenRes = await axios.post(
+      'https://www.linkedin.com/oauth/v2/accessToken',
+      new URLSearchParams({
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  LINKEDIN_REDIRECT_URI,
+        client_id:     process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30_000 }
+    );
+
+    const accessToken = tokenRes.data.access_token;
+    const expiresIn   = tokenRes.data.expires_in || 5184000; // 60 days default
+    const expiresAt   = new Date(Date.now() + expiresIn * 1000).toISOString();
+    if (!accessToken) throw new Error('LinkedIn returned no access_token');
+
+    // Fetch user profile for ID and name
+    const meRes = await axios.get('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 30_000
+    });
+    const linkedinUser = meRes.data;
+
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           userId,
+        platform:          'linkedin',
+        access_token:      encryptToken(accessToken),
+        refresh_token:     tokenRes.data.refresh_token ? encryptToken(tokenRes.data.refresh_token) : null,
+        token_expires_at:  expiresAt,
+        platform_user_id:  linkedinUser.sub,
+        platform_username: linkedinUser.name || linkedinUser.email || 'LinkedIn User',
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform' });
+
+    console.log(`[Publish] LinkedIn "${linkedinUser.name}" connected for user ${userId}`);
+    return finish({ status: 'connected', platforms: ['linkedin'] });
+
+  } catch (err) {
+    console.error('[Publish] LinkedIn OAuth callback error:', err.response?.data || err.message);
+    return finish({ status: 'error', message: 'LinkedIn connection failed. Please try again.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /publish/oauth/x/callback
+//
+// Called by X (Twitter) after the user grants permission.
+// X uses OAuth 2.0 with PKCE — the code_verifier is stored in Redis
+// during the start flow and retrieved here for token exchange.
+// ----------------------------------------------------------------
+router.get('/oauth/x/callback', async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+
+  const finish = (result) => {
+    res.cookie('sb_platform_oauth', JSON.stringify(result), {
+      maxAge: 30000, httpOnly: false, sameSite: 'lax'
+    });
+    return res.redirect(`${FRONTEND_URL}/#settings`);
+  };
+
+  if (oauthError || !code || !state) {
+    return finish({ status: 'cancelled' });
+  }
+
+  try {
+    // State contains userId + we stored the PKCE code_verifier in Redis keyed by state
+    const userId = Buffer.from(state, 'base64').toString('utf8');
+    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+
+    // Retrieve the PKCE code_verifier stored during /start
+    const codeVerifier = await cacheGet(`x_pkce:${state}`);
+    if (!codeVerifier) throw new Error('PKCE session expired. Please try connecting again.');
+    await cacheDel(`x_pkce:${state}`);
+
+    // Exchange code for access token using Basic auth (client_id:client_secret)
+    const basicAuth = Buffer.from(`${process.env.X_CLIENT_ID}:${process.env.X_CLIENT_SECRET}`).toString('base64');
+
+    const tokenRes = await axios.post(
+      'https://api.x.com/2/oauth2/token',
+      new URLSearchParams({
+        code,
+        grant_type:     'authorization_code',
+        redirect_uri:   X_REDIRECT_URI,
+        code_verifier:  codeVerifier
+      }),
+      {
+        headers: {
+          'Content-Type':  'application/x-www-form-urlencoded',
+          Authorization:   `Basic ${basicAuth}`
+        },
+        timeout: 30_000
+      }
+    );
+
+    const accessToken  = tokenRes.data.access_token;
+    const refreshToken = tokenRes.data.refresh_token;
+    const expiresIn    = tokenRes.data.expires_in || 7200; // 2 hours default
+    const expiresAt    = new Date(Date.now() + expiresIn * 1000).toISOString();
+    if (!accessToken) throw new Error('X returned no access_token');
+
+    // Fetch user info
+    const meRes = await axios.get('https://api.x.com/2/users/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 30_000
+    });
+    const xUser = meRes.data?.data;
+
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           userId,
+        platform:          'x',
+        access_token:      encryptToken(accessToken),
+        refresh_token:     refreshToken ? encryptToken(refreshToken) : null,
+        token_expires_at:  expiresAt,
+        platform_user_id:  xUser?.id || null,
+        platform_username: xUser?.username || 'X User',
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform' });
+
+    console.log(`[Publish] X "@${xUser?.username}" connected for user ${userId}`);
+    return finish({ status: 'connected', platforms: ['x'] });
+
+  } catch (err) {
+    console.error('[Publish] X OAuth callback error:', err.response?.data || err.message);
+    return finish({ status: 'error', message: 'X connection failed. Please try again.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /publish/oauth/youtube/callback
+//
+// Called by Google after the user grants YouTube permission.
+// Uses the same Google OAuth as Drive but with youtube.upload scope.
+// ----------------------------------------------------------------
+router.get('/oauth/youtube/callback', async (req, res) => {
+  const { code, state, error: oauthError } = req.query;
+
+  const finish = (result) => {
+    res.cookie('sb_platform_oauth', JSON.stringify(result), {
+      maxAge: 30000, httpOnly: false, sameSite: 'lax'
+    });
+    return res.redirect(`${FRONTEND_URL}/#settings`);
+  };
+
+  if (oauthError || !code || !state) {
+    return finish({ status: 'cancelled' });
+  }
+
+  try {
+    const userId = Buffer.from(state, 'base64').toString('utf8');
+    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+
+    // Exchange code for tokens (Google returns both access + refresh on first auth)
+    const tokenRes = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      new URLSearchParams({
+        code,
+        client_id:     process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri:  YOUTUBE_REDIRECT_URI,
+        grant_type:    'authorization_code'
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30_000 }
+    );
+
+    const accessToken  = tokenRes.data.access_token;
+    const refreshToken = tokenRes.data.refresh_token;
+    const expiresIn    = tokenRes.data.expires_in || 3600;
+    const expiresAt    = new Date(Date.now() + expiresIn * 1000).toISOString();
+    if (!accessToken) throw new Error('Google returned no access_token');
+
+    // Fetch YouTube channel info
+    let channelName = 'YouTube Channel';
+    let channelId   = null;
+    try {
+      const channelRes = await axios.get('https://www.googleapis.com/youtube/v3/channels', {
+        params: { part: 'snippet', mine: true },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 30_000
+      });
+      const channel = channelRes.data?.items?.[0];
+      if (channel) {
+        channelId   = channel.id;
+        channelName = channel.snippet?.title || channelName;
+      }
+    } catch (e) {
+      console.warn('[Publish] YouTube channel info fetch failed (non-fatal):', e.message);
+    }
+
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           userId,
+        platform:          'youtube',
+        access_token:      encryptToken(accessToken),
+        refresh_token:     refreshToken ? encryptToken(refreshToken) : null,
+        token_expires_at:  expiresAt,
+        platform_user_id:  channelId,
+        platform_username: channelName,
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform' });
+
+    console.log(`[Publish] YouTube "${channelName}" connected for user ${userId}`);
+    return finish({ status: 'connected', platforms: ['youtube'] });
+
+  } catch (err) {
+    console.error('[Publish] YouTube OAuth callback error:', err.response?.data || err.message);
+    return finish({ status: 'error', message: 'YouTube connection failed. Please try again.' });
+  }
 });
 
 // ================================================================
@@ -743,6 +1066,131 @@ router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_conne
     `&redirect_uri=${encodeURIComponent(THREADS_REDIRECT_URI)}` +
     `&scope=threads_basic,threads_content_publish` +
     `&response_type=code` +
+    `&state=${state}`;
+
+  return res.json({ authUrl });
+});
+
+// ----------------------------------------------------------------
+// POST /publish/oauth/tiktok/start
+//
+// Generates the TikTok OAuth URL.
+// Required .env: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET
+// Required TikTok setup: Login Kit product enabled, redirect URI registered
+// ----------------------------------------------------------------
+router.post('/oauth/tiktok/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
+  if (!process.env.TIKTOK_CLIENT_KEY) {
+    return res.status(501).json({
+      error: 'TikTok is not set up yet. Add TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET to your .env file.'
+    });
+  }
+
+  const state = Buffer.from(req.user.id).toString('base64');
+
+  const authUrl = `https://www.tiktok.com/v2/auth/authorize/` +
+    `?client_key=${encodeURIComponent(process.env.TIKTOK_CLIENT_KEY)}` +
+    `&redirect_uri=${encodeURIComponent(TIKTOK_REDIRECT_URI)}` +
+    `&scope=user.info.basic,video.publish` +
+    `&response_type=code` +
+    `&state=${state}`;
+
+  return res.json({ authUrl });
+});
+
+// ----------------------------------------------------------------
+// POST /publish/oauth/linkedin/start
+//
+// Generates the LinkedIn OAuth URL.
+// Required .env: LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
+// Required LinkedIn setup: Sign In with LinkedIn + Share on LinkedIn products added
+// ----------------------------------------------------------------
+router.post('/oauth/linkedin/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
+  if (!process.env.LINKEDIN_CLIENT_ID) {
+    return res.status(501).json({
+      error: 'LinkedIn is not set up yet. Add LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET to your .env file.'
+    });
+  }
+
+  const state = Buffer.from(req.user.id).toString('base64');
+
+  const authUrl = `https://www.linkedin.com/oauth/v2/authorization` +
+    `?response_type=code` +
+    `&client_id=${encodeURIComponent(process.env.LINKEDIN_CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
+    `&scope=${encodeURIComponent('openid profile w_member_social')}` +
+    `&state=${state}`;
+
+  return res.json({ authUrl });
+});
+
+// ----------------------------------------------------------------
+// POST /publish/oauth/x/start
+//
+// Generates the X (Twitter) OAuth 2.0 URL with PKCE.
+// X requires PKCE (Proof Key for Code Exchange) — we generate a
+// code_verifier, hash it to a code_challenge, and store the verifier
+// in Redis so the callback can use it for token exchange.
+//
+// Required .env: X_CLIENT_ID, X_CLIENT_SECRET
+// ----------------------------------------------------------------
+router.post('/oauth/x/start', standardLimiter, checkLimit('platforms_connected'), async (req, res) => {
+  if (!process.env.X_CLIENT_ID) {
+    return res.status(501).json({
+      error: 'X (Twitter) is not set up yet. Add X_CLIENT_ID and X_CLIENT_SECRET to your .env file.'
+    });
+  }
+
+  const crypto = require('crypto');
+  const state = Buffer.from(req.user.id).toString('base64');
+
+  // Generate PKCE code_verifier (43-128 chars, URL-safe)
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+
+  // Generate code_challenge = base64url(sha256(code_verifier))
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+  // Store code_verifier in Redis (5 min TTL) keyed by state so the callback can retrieve it
+  await cacheSet(`x_pkce:${state}`, codeVerifier, 300);
+
+  const authUrl = `https://x.com/i/oauth2/authorize` +
+    `?response_type=code` +
+    `&client_id=${encodeURIComponent(process.env.X_CLIENT_ID)}` +
+    `&redirect_uri=${encodeURIComponent(X_REDIRECT_URI)}` +
+    `&scope=${encodeURIComponent('tweet.read tweet.write users.read offline.access')}` +
+    `&state=${state}` +
+    `&code_challenge=${codeChallenge}` +
+    `&code_challenge_method=S256`;
+
+  return res.json({ authUrl });
+});
+
+// ----------------------------------------------------------------
+// POST /publish/oauth/youtube/start
+//
+// Generates the Google/YouTube OAuth URL.
+// Uses Google OAuth 2.0 — same provider as Google Drive but with
+// youtube.upload scope. Can use the same Google Cloud project.
+//
+// Required .env: YOUTUBE_CLIENT_ID (or GOOGLE_CLIENT_ID),
+//                YOUTUBE_CLIENT_SECRET (or GOOGLE_CLIENT_SECRET)
+// ----------------------------------------------------------------
+router.post('/oauth/youtube/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
+  const clientId = process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return res.status(501).json({
+      error: 'YouTube is not set up yet. Add YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET (or use your existing GOOGLE_CLIENT_ID) to your .env file.'
+    });
+  }
+
+  const state = Buffer.from(req.user.id).toString('base64');
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth` +
+    `?client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(YOUTUBE_REDIRECT_URI)}` +
+    `&scope=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly')}` +
+    `&response_type=code` +
+    `&access_type=offline` +       // Request refresh_token
+    `&prompt=consent` +             // Force consent screen to always get refresh_token
     `&state=${state}`;
 
   return res.json({ authUrl });

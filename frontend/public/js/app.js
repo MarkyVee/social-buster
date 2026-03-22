@@ -1991,15 +1991,27 @@ async function connectPlatform(platformId) {
     return;
   }
 
-  // Other platforms — need separate developer apps set up first
-  const setupGuide = {
-    tiktok:   'TikTok requires a TikTok for Developers app. Add TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET to your .env, then rebuild.',
-    linkedin: 'LinkedIn requires a LinkedIn Developer App. Add LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET to your .env, then rebuild.',
-    x:        'X (Twitter) requires a Twitter Developer App with OAuth 2.0 enabled. Add TWITTER_CLIENT_ID and TWITTER_CLIENT_SECRET to your .env, then rebuild.',
-    youtube:  'YouTube requires a Google API project with the YouTube Data API enabled. Add YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET to your .env, then rebuild.'
+  // TikTok, LinkedIn, X, YouTube — each has its own OAuth flow
+  const oauthEndpoints = {
+    tiktok:   '/publish/oauth/tiktok/start',
+    linkedin: '/publish/oauth/linkedin/start',
+    x:        '/publish/oauth/x/start',
+    youtube:  '/publish/oauth/youtube/start'
   };
 
-  showAlert('settings-alerts', setupGuide[platformId] || 'This platform connection is coming soon.', 'info');
+  const endpoint = oauthEndpoints[platformId];
+  if (!endpoint) {
+    showAlert('settings-alerts', 'This platform connection is coming soon.', 'info');
+    return;
+  }
+
+  try {
+    const data = await apiFetch(endpoint, { method: 'POST' });
+    window.location.href = data.authUrl;
+  } catch (err) {
+    if (err.limitReached) showUpgradePrompt(err.feature, err.message);
+    else showAlert('settings-alerts', err.message, 'error');
+  }
 }
 
 // ----------------------------------------------------------------

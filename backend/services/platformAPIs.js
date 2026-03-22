@@ -355,26 +355,64 @@ async function publishToFacebook(post, accessToken, connection) {
 // TIKTOK — TikTok Content Posting API (Direct Post, pull from URL)
 // Required .env: TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET
 // Scopes needed: video.publish
-// post.media_url must be a publicly accessible video URL
-//
-// async function publishToTikTok(post, accessToken, connection) {
-//   const caption = [post.hook, post.hashtags.map(h=>'#'+h).join(' ')]
-//     .filter(Boolean).join(' ').slice(0, 2200);
-//   const res = await axios.post(
-//     'https://open.tiktokapis.com/v2/post/publish/video/init/',
-//     {
-//       post_info: { title: caption, privacy_level: 'PUBLIC_TO_EVERYONE',
-//                    disable_duet: false, disable_comment: false, disable_stitch: false },
-//       source_info: { source: 'PULL_FROM_URL', video_url: post.media_url }
-//     },
-//     { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' } }
-//   );
-//   return { platformPostId: res.data.data.publish_id };
-// }
+// TikTok is video-only — no image or text posts.
+// post.media_url must be a publicly accessible video URL.
 // ----------------------------------------------------------------
 async function publishToTikTok(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] TikTok not configured. Add TIKTOK_CLIENT_KEY/SECRET to .env.');
-  throw new Error('TikTok publishing requires OAuth setup. See services/platformAPIs.js.');
+  if (!post.media_url || post.media_file_type !== 'video') {
+    throw new Error('TikTok only supports video posts. Attach a video before publishing.');
+  }
+
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const caption = [post.hook, hashtags].filter(Boolean).join(' ').slice(0, 2200);
+
+  const TIMEOUT = 30_000;
+
+  console.log(`[PlatformAPIs] TikTok publish — userId=${connection.platform_user_id} mediaUrl=${post.media_url}`);
+
+  try {
+    const res = await axios.post(
+      'https://open.tiktokapis.com/v2/post/publish/video/init/',
+      {
+        post_info: {
+          title:            caption,
+          privacy_level:    'PUBLIC_TO_EVERYONE',
+          disable_duet:     false,
+          disable_comment:  false,
+          disable_stitch:   false
+        },
+        source_info: {
+          source:    'PULL_FROM_URL',
+          video_url: post.media_url
+        }
+      },
+      {
+        headers: {
+          Authorization:  `Bearer ${accessToken}`,
+          'Content-Type': 'application/json; charset=UTF-8'
+        },
+        timeout: TIMEOUT
+      }
+    );
+
+    const publishId = res.data?.data?.publish_id;
+    if (!publishId) {
+      throw new Error(`TikTok returned no publish_id: ${JSON.stringify(res.data)}`);
+    }
+
+    console.log(`[PlatformAPIs] TikTok publish OK — publishId=${publishId}`);
+    return { platformPostId: publishId };
+
+  } catch (err) {
+    const tkErr = err.response?.data?.error;
+    if (tkErr) {
+      console.log('[PlatformAPIs] TikTok raw error:', JSON.stringify(err.response.data));
+      throw new Error(`TikTok error ${tkErr.code}: ${tkErr.message}`);
+    }
+    throw err;
+  }
 }
 
 // ----------------------------------------------------------------
@@ -382,105 +420,553 @@ async function publishToTikTok(post, accessToken, connection) {
 // Required .env: LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET
 // Scopes needed: w_member_social
 //
-// async function publishToLinkedIn(post, accessToken, connection) {
-//   const text = [post.hook, post.caption, post.hashtags.map(h=>'#'+h).join(' '), post.cta]
-//     .filter(Boolean).join('\n\n');
-//   const body = {
-//     author: `urn:li:person:${connection.platform_user_id}`,
-//     lifecycleState: 'PUBLISHED',
-//     specificContent: {
-//       'com.linkedin.ugc.ShareContent': {
-//         shareCommentary: { text },
-//         shareMediaCategory: 'NONE'
-//       }
-//     },
-//     visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
-//   };
-//   const res = await axios.post('https://api.linkedin.com/v2/ugcPosts', body, {
-//     headers: { Authorization: `Bearer ${accessToken}`, 'X-Restli-Protocol-Version': '2.0.0' }
-//   });
-//   return { platformPostId: res.headers['x-restli-id'] };
-// }
+// connection.platform_user_id = LinkedIn member URN ID (the part after urn:li:person:)
+//
+// Text posts: single-step POST to /ugcPosts
+// Image posts: 2-step — register upload → upload binary → create post with asset
+// Video posts: multi-step — initialize upload → upload chunks → create post with asset
+//
+// LinkedIn requires the X-Restli-Protocol-Version: 2.0.0 header on ALL API calls.
 // ----------------------------------------------------------------
 async function publishToLinkedIn(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] LinkedIn not configured. Add LINKEDIN_CLIENT_ID/SECRET to .env.');
-  throw new Error('LinkedIn publishing requires OAuth setup. See services/platformAPIs.js.');
+  const personUrn = `urn:li:person:${connection.platform_user_id}`;
+  const TIMEOUT = 30_000;
+
+  // Build post text
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const text = [post.hook, post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
+
+  // LinkedIn error extractor
+  const liCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] LinkedIn raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] LinkedIn network error (no response):', err.message);
+      }
+      const liErr = err.response?.data;
+      if (liErr?.message) {
+        throw new Error(`LinkedIn error ${liErr.status || err.response?.status}: ${liErr.message}`);
+      }
+      throw err;
+    }
+  };
+
+  const headers = {
+    Authorization:                `Bearer ${accessToken}`,
+    'Content-Type':               'application/json',
+    'X-Restli-Protocol-Version':  '2.0.0'
+  };
+
+  console.log(`[PlatformAPIs] LinkedIn publish — personUrn=${personUrn} mediaType=${post.media_file_type || 'text'}`);
+
+  // Determine media category and handle media upload if needed
+  let shareMediaCategory = 'NONE';
+  let mediaContent = [];
+
+  if (post.media_url && post.media_file_type === 'image') {
+    // Image post — register upload asset, upload the image, then create post
+    shareMediaCategory = 'IMAGE';
+
+    // Step 1: Register image upload
+    const registerRes = await liCall(() => axios.post(
+      'https://api.linkedin.com/v2/assets?action=registerUpload',
+      {
+        registerUploadRequest: {
+          recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+          owner: personUrn,
+          serviceRelationships: [{
+            relationshipType: 'OWNER',
+            identifier: 'urn:li:userGeneratedContent'
+          }]
+        }
+      },
+      { headers, timeout: TIMEOUT }
+    ));
+
+    const uploadUrl = registerRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+    const asset = registerRes.data.value.asset;
+
+    // Step 2: Upload image binary from URL
+    const imageRes = await axios.get(post.media_url, { responseType: 'arraybuffer', timeout: 60_000 });
+    await liCall(() => axios.put(uploadUrl, imageRes.data, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/octet-stream'
+      },
+      timeout: 60_000
+    }));
+
+    mediaContent = [{
+      status: 'READY',
+      media: asset,
+      description: { text: post.hook || 'Image' },
+      title: { text: post.hook ? post.hook.slice(0, 100) : 'Image' }
+    }];
+
+  } else if (post.media_url && post.media_file_type === 'video') {
+    // Video post — register upload asset, upload the video, then create post
+    shareMediaCategory = 'VIDEO';
+
+    // Step 1: Register video upload
+    const registerRes = await liCall(() => axios.post(
+      'https://api.linkedin.com/v2/assets?action=registerUpload',
+      {
+        registerUploadRequest: {
+          recipes: ['urn:li:digitalmediaRecipe:feedshare-video'],
+          owner: personUrn,
+          serviceRelationships: [{
+            relationshipType: 'OWNER',
+            identifier: 'urn:li:userGeneratedContent'
+          }]
+        }
+      },
+      { headers, timeout: TIMEOUT }
+    ));
+
+    const uploadUrl = registerRes.data.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+    const asset = registerRes.data.value.asset;
+
+    // Step 2: Upload video binary from URL
+    const videoRes = await axios.get(post.media_url, { responseType: 'arraybuffer', timeout: 120_000 });
+    await liCall(() => axios.put(uploadUrl, videoRes.data, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/octet-stream'
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 120_000
+    }));
+
+    mediaContent = [{
+      status: 'READY',
+      media: asset,
+      description: { text: post.hook || 'Video' },
+      title: { text: post.hook ? post.hook.slice(0, 100) : 'Video' }
+    }];
+  }
+
+  // Create the UGC post
+  const body = {
+    author: personUrn,
+    lifecycleState: 'PUBLISHED',
+    specificContent: {
+      'com.linkedin.ugc.ShareContent': {
+        shareCommentary: { text },
+        shareMediaCategory,
+        ...(mediaContent.length > 0 && { media: mediaContent })
+      }
+    },
+    visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' }
+  };
+
+  const res = await liCall(() => axios.post(
+    'https://api.linkedin.com/v2/ugcPosts',
+    body,
+    { headers, timeout: TIMEOUT }
+  ));
+
+  const postId = res.headers['x-restli-id'] || res.data.id;
+  console.log(`[PlatformAPIs] LinkedIn publish OK — postId=${postId}`);
+  return { platformPostId: postId };
 }
 
 // ----------------------------------------------------------------
 // X (TWITTER) — Twitter API v2
 // Required .env: X_CLIENT_ID, X_CLIENT_SECRET
-// Scopes needed: tweet.write (OAuth 2.0 with PKCE)
-// Full tweet including hashtags must be ≤ 280 characters
+// Scopes needed: tweet.write, users.read (OAuth 2.0 with PKCE)
 //
-// async function publishToX(post, accessToken, connection) {
-//   const text = [post.hook, post.hashtags.slice(0,2).map(h=>'#'+h).join(' '), post.cta]
-//     .filter(Boolean).join(' ').slice(0, 280).trim();
-//   const res = await axios.post(
-//     'https://api.twitter.com/2/tweets', { text },
-//     { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
-//   );
-//   return { platformPostId: res.data.data.id };
-// }
+// Text tweets: single POST to /2/tweets — 280 char limit TOTAL (including hashtags)
+// Image tweets: upload media via v1.1 media/upload → attach media_id to tweet
+// Video tweets: chunked upload via v1.1 media/upload (INIT→APPEND→FINALIZE) → attach
+//
+// X uses OAuth 2.0 with PKCE for user auth but media upload still uses v1.1 endpoint.
 // ----------------------------------------------------------------
 async function publishToX(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] X not configured. Add X_CLIENT_ID/SECRET to .env.');
-  throw new Error('X publishing requires OAuth setup. See services/platformAPIs.js.');
+  const TIMEOUT = 30_000;
+
+  // X error extractor
+  const xCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] X raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] X network error (no response):', err.message);
+      }
+      const xErr = err.response?.data;
+      // Twitter API v2 error format
+      if (xErr?.detail) {
+        throw new Error(`X error ${xErr.status || err.response?.status}: ${xErr.detail}`);
+      }
+      // Twitter API v2 errors array format
+      if (xErr?.errors?.[0]) {
+        throw new Error(`X error: ${xErr.errors[0].message}`);
+      }
+      throw err;
+    }
+  };
+
+  // Build tweet text — must stay within 280 characters
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.slice(0, 3).map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const parts = [post.hook, hashtags, post.cta].filter(Boolean);
+  const text = parts.join(' ').slice(0, 280).trim();
+
+  if (!text) {
+    throw new Error('X requires text content. The post has no hook, hashtags, or CTA.');
+  }
+
+  console.log(`[PlatformAPIs] X publish — mediaType=${post.media_file_type || 'text'} textLen=${text.length}`);
+
+  const tweetBody = { text };
+
+  // If there's media, upload it first via v1.1 media/upload endpoint
+  if (post.media_url && (post.media_file_type === 'image' || post.media_file_type === 'video')) {
+    // Download the media file
+    const mediaRes = await axios.get(post.media_url, { responseType: 'arraybuffer', timeout: 60_000 });
+    const mediaBuffer = Buffer.from(mediaRes.data);
+
+    if (post.media_file_type === 'image') {
+      // Simple media upload for images
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('media_data', mediaBuffer.toString('base64'));
+
+      const uploadRes = await xCall(() => axios.post(
+        'https://upload.twitter.com/1.1/media/upload.json',
+        form,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            ...form.getHeaders()
+          },
+          timeout: TIMEOUT
+        }
+      ));
+
+      tweetBody.media = { media_ids: [uploadRes.data.media_id_string] };
+
+    } else {
+      // Chunked upload for video (INIT → APPEND → FINALIZE)
+      const totalBytes = mediaBuffer.length;
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+
+      // INIT
+      const initRes = await xCall(() => axios.post(
+        'https://upload.twitter.com/1.1/media/upload.json',
+        null,
+        {
+          params: {
+            command:          'INIT',
+            total_bytes:      totalBytes,
+            media_type:       'video/mp4',
+            media_category:   'tweet_video'
+          },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: TIMEOUT
+        }
+      ));
+
+      const mediaId = initRes.data.media_id_string;
+
+      // APPEND — upload in chunks
+      for (let i = 0; i * CHUNK_SIZE < totalBytes; i++) {
+        const chunk = mediaBuffer.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('command', 'APPEND');
+        form.append('media_id', mediaId);
+        form.append('segment_index', String(i));
+        form.append('media_data', chunk.toString('base64'));
+
+        await xCall(() => axios.post(
+          'https://upload.twitter.com/1.1/media/upload.json',
+          form,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              ...form.getHeaders()
+            },
+            timeout: 60_000
+          }
+        ));
+      }
+
+      // FINALIZE
+      const finalRes = await xCall(() => axios.post(
+        'https://upload.twitter.com/1.1/media/upload.json',
+        null,
+        {
+          params: { command: 'FINALIZE', media_id: mediaId },
+          headers: { Authorization: `Bearer ${accessToken}` },
+          timeout: TIMEOUT
+        }
+      ));
+
+      // Poll for processing completion if needed
+      if (finalRes.data.processing_info) {
+        let processingInfo = finalRes.data.processing_info;
+        while (processingInfo && processingInfo.state !== 'succeeded') {
+          if (processingInfo.state === 'failed') {
+            throw new Error(`X video processing failed: ${processingInfo.error?.message || 'unknown error'}`);
+          }
+          const waitSecs = processingInfo.check_after_secs || 5;
+          await new Promise(resolve => setTimeout(resolve, waitSecs * 1000));
+
+          const statusRes = await xCall(() => axios.get(
+            'https://upload.twitter.com/1.1/media/upload.json',
+            {
+              params: { command: 'STATUS', media_id: mediaId },
+              headers: { Authorization: `Bearer ${accessToken}` },
+              timeout: TIMEOUT
+            }
+          ));
+          processingInfo = statusRes.data.processing_info;
+          console.log(`[PlatformAPIs] X video processing: ${processingInfo?.state || 'unknown'}`);
+        }
+      }
+
+      tweetBody.media = { media_ids: [mediaId] };
+    }
+  }
+
+  // Create the tweet
+  const res = await xCall(() => axios.post(
+    'https://api.twitter.com/2/tweets',
+    tweetBody,
+    {
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: TIMEOUT
+    }
+  ));
+
+  const tweetId = res.data?.data?.id;
+  if (!tweetId) {
+    throw new Error(`X returned no tweet ID: ${JSON.stringify(res.data)}`);
+  }
+
+  console.log(`[PlatformAPIs] X publish OK — tweetId=${tweetId}`);
+  return { platformPostId: tweetId };
 }
 
 // ----------------------------------------------------------------
 // THREADS — Meta Threads API (two-step: create container → publish)
 // Required .env: THREADS_APP_ID, THREADS_APP_SECRET
 // Scopes needed: threads_basic, threads_content_publish
-// Text posts max 500 characters. No hashtags shown in Threads.
 //
-// async function publishToThreads(post, accessToken, connection) {
-//   const text = [post.hook, post.caption, post.cta].filter(Boolean).join('\n\n').slice(0, 500);
-//   const step1 = await axios.post(
-//     'https://graph.threads.net/v1.0/me/threads', null,
-//     { params: { media_type: 'TEXT', text, access_token: accessToken } }
-//   );
-//   const step2 = await axios.post(
-//     'https://graph.threads.net/v1.0/me/threads_publish', null,
-//     { params: { creation_id: step1.data.id, access_token: accessToken } }
-//   );
-//   return { platformPostId: step2.data.id };
-// }
+// Text posts: max 500 characters. No hashtags shown on Threads — don't append them.
+// Image posts: media_type=IMAGE + image_url (public URL required)
+// Video posts: media_type=VIDEO + video_url (public URL required)
+//
+// Flow: POST /me/threads (create container) → POST /me/threads_publish (publish)
+// For video: poll container status until FINISHED before publishing.
 // ----------------------------------------------------------------
 async function publishToThreads(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] Threads not configured. Add THREADS_APP_ID/SECRET to .env.');
-  throw new Error('Threads publishing requires OAuth setup. See services/platformAPIs.js.');
+  const TIMEOUT = 30_000;
+  const API_BASE = 'https://graph.threads.net/v1.0';
+
+  // Threads error extractor (same Meta Graph API format)
+  const thCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.response) {
+        console.log('[PlatformAPIs] Threads raw error response:', JSON.stringify(err.response.data));
+      } else {
+        console.log('[PlatformAPIs] Threads network error (no response):', err.message);
+      }
+      const fb = err.response?.data?.error;
+      if (fb) {
+        const sub = fb.error_subcode ? ` subcode=${fb.error_subcode}` : '';
+        const msg = fb.error_user_msg || fb.message;
+        throw new Error(`Threads error ${fb.code}${sub}: ${msg} (type: ${fb.type})`);
+      }
+      throw err;
+    }
+  };
+
+  // Build text — no hashtags on Threads (they don't render), max 500 chars
+  const text = [post.hook, post.caption, post.cta].filter(Boolean).join('\n\n').slice(0, 500);
+
+  if (!text && !post.media_url) {
+    throw new Error('Threads requires either text or media content.');
+  }
+
+  // Determine media type
+  const isVideo = post.media_url && post.media_file_type === 'video';
+  const isImage = post.media_url && post.media_file_type === 'image';
+
+  console.log(`[PlatformAPIs] Threads publish — mediaType=${post.media_file_type || 'text'} textLen=${text.length}`);
+
+  // ---- Step 1: Create media container ----
+  const containerParams = { access_token: accessToken };
+
+  if (isVideo) {
+    containerParams.media_type = 'VIDEO';
+    containerParams.video_url  = post.media_url;
+    if (text) containerParams.text = text;
+  } else if (isImage) {
+    containerParams.media_type = 'IMAGE';
+    containerParams.image_url  = post.media_url;
+    if (text) containerParams.text = text;
+  } else {
+    containerParams.media_type = 'TEXT';
+    containerParams.text       = text;
+  }
+
+  const containerRes = await thCall(() => axios.post(
+    `${API_BASE}/me/threads`,
+    null,
+    { params: containerParams, timeout: TIMEOUT }
+  ));
+
+  const containerId = containerRes.data.id;
+  console.log(`[PlatformAPIs] Threads container created — id=${containerId}`);
+
+  // ---- Step 2: For video, poll until container is ready ----
+  if (isVideo) {
+    const MAX_POLLS = 30;
+    const POLL_INTERVAL_MS = 10_000;
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+
+      const statusRes = await thCall(() => axios.get(
+        `${API_BASE}/${containerId}`,
+        { params: { fields: 'status', access_token: accessToken }, timeout: TIMEOUT }
+      ));
+
+      const status = statusRes.data.status;
+      console.log(`[PlatformAPIs] Threads container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})`);
+
+      if (status === 'FINISHED') break;
+      if (status === 'ERROR') {
+        throw new Error('Threads video processing failed. The video may be unsupported or too large.');
+      }
+
+      if (i === MAX_POLLS - 1) {
+        throw new Error('Threads video processing timed out after 5 minutes.');
+      }
+    }
+  }
+
+  // ---- Step 3: Publish the container ----
+  const publishRes = await thCall(() => axios.post(
+    `${API_BASE}/me/threads_publish`,
+    null,
+    { params: { creation_id: containerId, access_token: accessToken }, timeout: TIMEOUT }
+  ));
+
+  console.log(`[PlatformAPIs] Threads publish OK — mediaId=${publishRes.data.id}`);
+  return { platformPostId: publishRes.data.id };
 }
 
 // ----------------------------------------------------------------
 // YOUTUBE — YouTube Data API v3 (video upload)
-// Required .env: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET (Google OAuth)
+// Required .env: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET (Google OAuth — same project as Drive)
 // Scopes needed: https://www.googleapis.com/auth/youtube.upload
-// npm install googleapis
 //
-// async function publishToYoutube(post, accessToken, connection) {
-//   const { google } = require('googleapis');
-//   const auth = new google.auth.OAuth2(process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET);
-//   auth.setCredentials({ access_token: accessToken });
-//   const youtube = google.youtube({ version: 'v3', auth });
-//   const https = require('https');
-//   const videoStream = await new Promise((resolve, reject) =>
-//     https.get(post.media_url, resolve).on('error', reject)
-//   );
-//   const res = await youtube.videos.insert({
-//     part: ['snippet', 'status'],
-//     requestBody: {
-//       snippet: { title: post.hook.slice(0,100), description: `${post.caption}\n\n${post.cta}`, tags: post.hashtags },
-//       status: { privacyStatus: 'public' }
-//     },
-//     media: { body: videoStream }
-//   });
-//   return { platformPostId: res.data.id };
-// }
+// YouTube is video-only — no image or text posts.
+// Uses the googleapis SDK (already installed for Google Drive).
+// post.media_url must be a publicly accessible video URL.
+//
+// Quota: 10,000 units/day free. Video upload = 1,600 units (~6 uploads/day free).
 // ----------------------------------------------------------------
 async function publishToYoutube(post, accessToken, connection) {
-  console.warn('[PlatformAPIs] YouTube not configured. Add YOUTUBE_CLIENT_ID/SECRET to .env.');
-  throw new Error('YouTube publishing requires OAuth setup. See services/platformAPIs.js.');
+  if (!post.media_url || post.media_file_type !== 'video') {
+    throw new Error('YouTube only supports video posts. Attach a video before publishing.');
+  }
+
+  const { google } = require('googleapis');
+  const https = require('https');
+  const http  = require('http');
+
+  // Set up authenticated YouTube client
+  const auth = new google.auth.OAuth2(
+    process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
+    process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET
+  );
+  auth.setCredentials({ access_token: accessToken });
+  const youtube = google.youtube({ version: 'v3', auth });
+
+  // Build video metadata
+  const title = post.hook ? String(post.hook).slice(0, 100) : 'Video';
+  const hashtags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
+    : '';
+  const description = [post.caption, hashtags, post.cta].filter(Boolean).join('\n\n');
+  const tags = Array.isArray(post.hashtags)
+    ? post.hashtags.map(h => h.replace(/^#/, '')).slice(0, 30)
+    : [];
+
+  console.log(`[PlatformAPIs] YouTube publish — title="${title}" mediaUrl=${post.media_url}`);
+
+  // Download the video as a stream — googleapis SDK accepts a readable stream
+  const videoStream = await new Promise((resolve, reject) => {
+    const get = post.media_url.startsWith('https') ? https.get : http.get;
+    get(post.media_url, (res) => {
+      // Follow redirects (Supabase Storage may redirect)
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const redirectGet = res.headers.location.startsWith('https') ? https.get : http.get;
+        redirectGet(res.headers.location, resolve).on('error', reject);
+      } else if (res.statusCode >= 200 && res.statusCode < 300) {
+        resolve(res);
+      } else {
+        reject(new Error(`Failed to download video for YouTube upload: HTTP ${res.statusCode}`));
+      }
+    }).on('error', reject);
+  });
+
+  try {
+    const res = await youtube.videos.insert({
+      part: ['snippet', 'status'],
+      requestBody: {
+        snippet: {
+          title,
+          description,
+          tags,
+          categoryId: '22'  // "People & Blogs" — safe default
+        },
+        status: {
+          privacyStatus: 'public',
+          selfDeclaredMadeForKids: false
+        }
+      },
+      media: { body: videoStream }
+    });
+
+    const videoId = res.data.id;
+    if (!videoId) {
+      throw new Error(`YouTube returned no video ID: ${JSON.stringify(res.data)}`);
+    }
+
+    console.log(`[PlatformAPIs] YouTube publish OK — videoId=${videoId}`);
+    return { platformPostId: videoId };
+
+  } catch (err) {
+    // Extract Google API error details
+    if (err.response?.data?.error) {
+      const gErr = err.response.data.error;
+      console.log('[PlatformAPIs] YouTube raw error:', JSON.stringify(gErr));
+      throw new Error(`YouTube error ${gErr.code}: ${gErr.message}`);
+    }
+    if (err.errors?.[0]) {
+      console.log('[PlatformAPIs] YouTube API error:', JSON.stringify(err.errors));
+      throw new Error(`YouTube error: ${err.errors[0].message} (reason: ${err.errors[0].reason})`);
+    }
+    throw err;
+  }
 }
 
 // ================================================================
