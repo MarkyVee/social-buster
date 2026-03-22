@@ -23,10 +23,11 @@ const App = {
 // Store the JWT in localStorage so it survives page refreshes.
 // ============================================================
 
-function saveToken(token, refreshToken) {
+function saveToken(token, refreshToken, sessionId) {
   App.token = token;
   localStorage.setItem('sb_token', token);
   if (refreshToken) localStorage.setItem('sb_refresh_token', refreshToken);
+  if (sessionId) localStorage.setItem('sb_session_id', sessionId);
 }
 
 function loadToken() {
@@ -40,6 +41,7 @@ function clearToken() {
   App.user = null;
   localStorage.removeItem('sb_token');
   localStorage.removeItem('sb_refresh_token');
+  localStorage.removeItem('sb_session_id');
   // Stop background pollers so they don't fire 401s after logout
   if (App._unreadPoller) { clearInterval(App._unreadPoller); App._unreadPoller = null; }
 }
@@ -133,9 +135,11 @@ async function apiFetch(path, options = {}, _retried = false) {
     }
   }
 
+  const sessionId = localStorage.getItem('sb_session_id');
   const headers = {
     'Content-Type': 'application/json',
     ...(App.token ? { Authorization: `Bearer ${App.token}` } : {}),
+    ...(sessionId ? { 'X-Session-ID': sessionId } : {}),
     ...(options.headers || {})
   };
 
@@ -146,6 +150,14 @@ async function apiFetch(path, options = {}, _retried = false) {
     body = await response.json();
   } catch {
     body = {};
+  }
+
+  // Session invalidated = another device logged in. Don't retry, just log out.
+  if (response.status === 401 && body.session_invalidated) {
+    clearToken();
+    alert('Your account was logged into from another device. Please log in again.');
+    window.dispatchEvent(new CustomEvent('auth:expired'));
+    throw new Error(body.error);
   }
 
   // Reactive fallback: if we still get a 401 (clock skew, server-side
@@ -535,8 +547,8 @@ async function handleLogin(e) {
       body: JSON.stringify({ email, password })
     });
 
-    // Save the JWT and refresh token so sessions survive past the 1-hour expiry
-    saveToken(data.session.access_token, data.session.refresh_token);
+    // Save the JWT, refresh token, and session ID (for single-session enforcement)
+    saveToken(data.session.access_token, data.session.refresh_token, data.session_id);
     App.user = data.user;
 
     // Enrich with full profile (is_admin, brand fields, etc.).
@@ -568,7 +580,7 @@ async function handleRegister(e) {
       body: JSON.stringify({ email, password })
     });
 
-    saveToken(data.session.access_token, data.session.refresh_token);
+    saveToken(data.session.access_token, data.session.refresh_token, data.session_id);
     App.user = data.user;
 
     // Same race-condition guard as handleLogin above
@@ -1450,13 +1462,17 @@ async function renderProfile(el) {
         <div class="form-group">
           <label>Preferred Platforms <span class="required-marker">*</span> <span class="text-muted text-sm">(select at least one)</span></label>
           <div id="platform-checkboxes" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
-            ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => `
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:normal;">
+            ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => {
+              const comingSoon = p === 'whatsapp' || p === 'telegram';
+              return `
+              <label style="display:flex;align-items:center;gap:6px;${comingSoon ? 'opacity:0.4;cursor:default;' : 'cursor:pointer;'}font-weight:normal;"
+                     ${comingSoon ? 'title="Coming soon"' : ''}>
                 <input type="checkbox" name="preferred_platforms" value="${p}"
-                  ${(profile.preferred_platforms || []).includes(p) ? 'checked' : ''} />
-                ${p.charAt(0).toUpperCase() + p.slice(1)}
-              </label>
-            `).join('')}
+                  ${(profile.preferred_platforms || []).includes(p) ? 'checked' : ''}
+                  ${comingSoon ? 'disabled' : ''} />
+                ${p.charAt(0).toUpperCase() + p.slice(1)}${comingSoon ? ' <span style="font-size:10px;color:#94a3b8;">(soon)</span>' : ''}
+              </label>`;
+            }).join('')}
           </div>
           <div id="platform-limit-hint" class="text-muted text-sm" style="margin-top:6px;display:none;"></div>
         </div>
@@ -1913,13 +1929,14 @@ async function loadConnectedPlatforms() {
     { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'tiktok',   note: 'Requires TikTok for Business — credentials needed in .env' },
     { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'linkedin', note: 'Requires a LinkedIn App — credentials needed in .env' },
     { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'x',       note: 'Requires a Twitter Developer App — credentials needed in .env' },
-    { id: 'whatsapp',  label: 'WhatsApp',    icon: '💬', group: 'token',   note: 'Requires WhatsApp Business API — enter token + phone number ID' },
-    { id: 'telegram',  label: 'Telegram',    icon: '✈️', group: 'token',   note: 'Requires a Telegram Bot — enter bot token + channel username' }
+    { id: 'whatsapp',  label: 'WhatsApp',    icon: '💬', group: 'coming_soon', note: 'Coming soon — WhatsApp Business API integration' },
+    { id: 'telegram',  label: 'Telegram',    icon: '✈️', group: 'coming_soon', note: 'Coming soon — Telegram Bot integration' }
   ];
 
   container.innerHTML = platforms.map(p => {
     const conn        = connections.find(c => c.platform === p.id);
     const isConnected = !!conn;
+    const isComingSoon = p.group === 'coming_soon';
     const username    = conn?.platform_username || 'Connected';
     const connectedAt = conn?.connected_at
       ? new Date(conn.connected_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -1927,7 +1944,7 @@ async function loadConnectedPlatforms() {
 
     return `
       <div class="provider-card ${isConnected ? 'provider-connected' : ''}"
-           style="margin-bottom:10px;justify-content:space-between;align-items:center;">
+           style="margin-bottom:10px;justify-content:space-between;align-items:center;${isComingSoon ? 'opacity:0.5;pointer-events:none;' : ''}">
 
         <!-- Icon + name + status -->
         <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
@@ -1943,17 +1960,19 @@ async function loadConnectedPlatforms() {
           </div>
         </div>
 
-        <!-- Connect / Disconnect button -->
+        <!-- Connect / Disconnect / Coming Soon -->
         <div style="flex-shrink:0;margin-left:12px;">
-          ${isConnected
-            ? `<button class="btn btn-danger btn-xs"
-                 onclick="disconnectPlatform('${p.id}', '${p.label}')">
-                 Disconnect
-               </button>`
-            : `<button class="btn btn-primary btn-xs"
-                 onclick="connectPlatform('${p.id}')">
-                 Connect
-               </button>`
+          ${isComingSoon
+            ? `<span style="font-size:11px;color:#94a3b8;background:#1e293b;padding:3px 10px;border-radius:10px;font-weight:600;letter-spacing:0.3px;">COMING SOON</span>`
+            : isConnected
+              ? `<button class="btn btn-danger btn-xs"
+                   onclick="disconnectPlatform('${p.id}', '${p.label}')">
+                   Disconnect
+                 </button>`
+              : `<button class="btn btn-primary btn-xs"
+                   onclick="connectPlatform('${p.id}')">
+                   Connect
+                 </button>`
           }
         </div>
       </div>`;
@@ -2518,7 +2537,7 @@ function renderNewPasswordScreen(recoveryToken) {
 
       // If the server returned a session, log the user in automatically
       if (data.session) {
-        saveToken(data.session.access_token, data.session.refresh_token);
+        saveToken(data.session.access_token, data.session.refresh_token, data.session_id);
         App.user = data.user;
 
         // Clean up the URL so the recovery token is gone

@@ -8,10 +8,12 @@
 const express = require('express');
 const router = express.Router();
 
+const { v4: uuidv4 } = require('uuid');
 const { supabaseAdmin, createUserProfile, getUserProfile } = require('../services/supabaseService');
 const { createStripeCustomer } = require('../services/stripeService');
 const { requireAuth } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimit');
+const { cacheSet } = require('../services/redisService');
 
 // Apply auth-specific rate limiting (by IP) to all routes in this file
 router.use(authLimiter);
@@ -81,9 +83,19 @@ router.post('/register', async (req, res) => {
 
     if (sessionError) throw sessionError;
 
+    // Generate a unique session ID and store it so only one device can be active.
+    // Any previous session (from another device) is automatically invalidated.
+    const sessionId = uuidv4();
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ active_session_id: sessionId })
+      .eq('user_id', authUserId);
+    await cacheSet(`session:${authUserId}`, sessionId, 86400 * 60); // 60-day TTL matches refresh token
+
     return res.status(201).json({
       message: 'Account created successfully',
       session: sessionData.session,
+      session_id: sessionId,
       user: {
         id: authUserId,
         email
@@ -124,9 +136,19 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    // Generate a unique session ID and store it so only one device can be active.
+    // Any previous session (from another device) is automatically invalidated.
+    const sessionId = uuidv4();
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ active_session_id: sessionId })
+      .eq('user_id', data.user.id);
+    await cacheSet(`session:${data.user.id}`, sessionId, 86400 * 60); // 60-day TTL matches refresh token
+
     return res.json({
       message: 'Login successful',
       session: data.session,
+      session_id: sessionId,
       user: {
         id: data.user.id,
         email: data.user.email
@@ -264,9 +286,18 @@ router.post('/update-password', async (req, res) => {
       });
     }
 
+    // Generate session ID for single-session enforcement
+    const sessionId = uuidv4();
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ active_session_id: sessionId })
+      .eq('user_id', userData.user.id);
+    await cacheSet(`session:${userData.user.id}`, sessionId, 86400 * 60);
+
     return res.json({
       message: 'Password updated successfully.',
       session: sessionData.session,
+      session_id: sessionId,
       user: {
         id: userData.user.id,
         email: userData.user.email

@@ -1086,14 +1086,262 @@ function emptyMetrics() {
   return { likes:0, comments:0, shares:0, saves:0, reach:0, impressions:0, clicks:0, video_views:0 };
 }
 
-async function fetchInstagramMetrics(postId, accessToken) { return emptyMetrics(); }
-async function fetchFacebookMetrics(postId, accessToken)  { return emptyMetrics(); }
-async function fetchTikTokMetrics(postId, accessToken)    { return emptyMetrics(); }
-async function fetchLinkedInMetrics(postId, accessToken)  { return emptyMetrics(); }
-async function fetchXMetrics(postId, accessToken)         { return emptyMetrics(); }
-async function fetchThreadsMetrics(postId, accessToken)   { return emptyMetrics(); }
-async function fetchWhatsAppMetrics(postId, accessToken)  { return emptyMetrics(); }
-async function fetchTelegramMetrics(postId, accessToken)  { return emptyMetrics(); }
+// ----------------------------------------------------------------
+// fetchFacebookMetrics — Page post insights via Graph API.
+//
+// API: GET /{post-id}?fields=shares
+//      GET /{post-id}/insights?metric=post_impressions,post_impressions_unique,
+//            post_clicks,post_reactions_by_type_total,post_video_views_organic
+//
+// Note: Page Insights require 'pages_read_engagement' scope.
+// Video metrics only returned for video posts (otherwise 0).
+// ----------------------------------------------------------------
+async function fetchFacebookMetrics(postId, accessToken) {
+  try {
+    // Fetch basic engagement counts + shares from the post object itself
+    const [postRes, insightsRes] = await Promise.all([
+      axios.get(`https://graph.facebook.com/v21.0/${postId}`, {
+        params: { fields: 'shares,likes.summary(true),comments.summary(true)', access_token: accessToken },
+        timeout: 30_000
+      }).catch(() => null),
+      axios.get(`https://graph.facebook.com/v21.0/${postId}/insights`, {
+        params: {
+          metric: 'post_impressions,post_impressions_unique,post_clicks,post_video_views_organic',
+          access_token: accessToken
+        },
+        timeout: 30_000
+      }).catch(() => null)
+    ]);
+
+    // Parse the insights response — each metric is an object in data[]
+    const insights = {};
+    (insightsRes?.data?.data || []).forEach(m => {
+      insights[m.name] = m.values?.[0]?.value || 0;
+    });
+
+    return {
+      likes:       postRes?.data?.likes?.summary?.total_count || 0,
+      comments:    postRes?.data?.comments?.summary?.total_count || 0,
+      shares:      postRes?.data?.shares?.count || 0,
+      saves:       0, // Facebook doesn't expose saves count via API
+      reach:       insights.post_impressions_unique || 0,
+      impressions: insights.post_impressions || 0,
+      clicks:      insights.post_clicks || 0,
+      video_views: insights.post_video_views_organic || 0
+    };
+  } catch (err) {
+    console.error('[PlatformAPIs] Facebook metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchInstagramMetrics — Media insights via Graph API.
+//
+// API: GET /{media-id}/insights?metric=impressions,reach,likes,comments,shares,saved
+//
+// Note: Requires 'instagram_basic' scope. Insights have a 24–48hr delay.
+// Some metrics may not be available for very old posts.
+// ----------------------------------------------------------------
+async function fetchInstagramMetrics(postId, accessToken) {
+  try {
+    const res = await axios.get(
+      `https://graph.facebook.com/v21.0/${postId}/insights`,
+      {
+        params: {
+          metric: 'impressions,reach,likes,comments,shares,saved,video_views',
+          access_token: accessToken
+        },
+        timeout: 30_000
+      }
+    );
+
+    // Parse insights — each metric is an object in data[]
+    const insights = {};
+    (res.data?.data || []).forEach(m => {
+      insights[m.name] = m.values?.[0]?.value || 0;
+    });
+
+    return {
+      likes:       insights.likes || 0,
+      comments:    insights.comments || 0,
+      shares:      insights.shares || 0,
+      saves:       insights.saved || 0,
+      reach:       insights.reach || 0,
+      impressions: insights.impressions || 0,
+      clicks:      0, // Instagram doesn't expose link clicks for feed posts
+      video_views: insights.video_views || 0
+    };
+  } catch (err) {
+    // Instagram returns an error for metrics not available on the post type
+    // (e.g. video_views on a photo). This is expected — return what we got.
+    console.error('[PlatformAPIs] Instagram metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchTikTokMetrics — Video query via TikTok Content Posting API.
+//
+// API: POST https://open.tiktokapis.com/v2/video/query/
+//      Body: { filters: { video_ids: [postId] } }
+//
+// Note: Only returns metrics for videos posted via the API (which we do).
+// Requires 'video.publish' scope.
+// ----------------------------------------------------------------
+async function fetchTikTokMetrics(postId, accessToken) {
+  try {
+    const res = await axios.post(
+      'https://open.tiktokapis.com/v2/video/query/',
+      { filters: { video_ids: [postId] } },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30_000
+      }
+    );
+
+    const video = res.data?.data?.videos?.[0];
+    if (!video) return emptyMetrics();
+
+    return {
+      likes:       video.like_count || 0,
+      comments:    video.comment_count || 0,
+      shares:      video.share_count || 0,
+      saves:       0, // TikTok API doesn't expose saves
+      reach:       0, // TikTok API doesn't expose reach
+      impressions: video.view_count || 0, // view_count is the closest to impressions
+      clicks:      0,
+      video_views: video.view_count || 0
+    };
+  } catch (err) {
+    console.error('[PlatformAPIs] TikTok metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchLinkedInMetrics — UGC post social actions via LinkedIn API.
+//
+// API: GET /socialActions/{ugcPostUrn}
+//
+// Note: Requires 'w_member_social' scope. The postId stored in our DB
+// is the UGC post URN (e.g. "urn:li:ugcPost:12345").
+// ----------------------------------------------------------------
+async function fetchLinkedInMetrics(postId, accessToken) {
+  try {
+    // URL-encode the URN since it contains colons
+    const encodedUrn = encodeURIComponent(postId);
+    const res = await axios.get(
+      `https://api.linkedin.com/v2/socialActions/${encodedUrn}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0'
+        },
+        timeout: 30_000
+      }
+    );
+
+    const data = res.data || {};
+    return {
+      likes:       data.likesSummary?.totalLikes || 0,
+      comments:    data.commentsSummary?.totalFirstLevelComments || 0,
+      shares:      data.sharesSummary?.totalShares || 0,
+      saves:       0,
+      reach:       0, // LinkedIn doesn't expose reach via this endpoint
+      impressions: 0, // Requires separate analytics endpoint with partner access
+      clicks:      0,
+      video_views: 0
+    };
+  } catch (err) {
+    console.error('[PlatformAPIs] LinkedIn metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchXMetrics — Tweet public metrics via X API v2.
+//
+// API: GET /tweets/{id}?tweet.fields=public_metrics
+//
+// Note: Requires OAuth 2.0 user context. Rate limit: 450 req / 15 min.
+// ----------------------------------------------------------------
+async function fetchXMetrics(postId, accessToken) {
+  try {
+    const res = await axios.get(
+      `https://api.x.com/2/tweets/${postId}`,
+      {
+        params: { 'tweet.fields': 'public_metrics' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 30_000
+      }
+    );
+
+    const m = res.data?.data?.public_metrics || {};
+    return {
+      likes:       m.like_count || 0,
+      comments:    m.reply_count || 0,
+      shares:      (m.retweet_count || 0) + (m.quote_count || 0),
+      saves:       m.bookmark_count || 0,
+      reach:       0, // Not available via public_metrics
+      impressions: m.impression_count || 0,
+      clicks:      0,
+      video_views: 0
+    };
+  } catch (err) {
+    console.error('[PlatformAPIs] X metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchThreadsMetrics — Media insights via Threads API.
+//
+// API: GET /{media_id}/insights?metric=likes,replies,reposts,views
+//
+// Note: Requires 'threads_basic' scope. API is relatively new —
+// some metrics may not be available for all post types.
+// ----------------------------------------------------------------
+async function fetchThreadsMetrics(postId, accessToken) {
+  try {
+    const res = await axios.get(
+      `https://graph.threads.net/v1.0/${postId}/insights`,
+      {
+        params: {
+          metric: 'likes,replies,reposts,views',
+          access_token: accessToken
+        },
+        timeout: 30_000
+      }
+    );
+
+    const insights = {};
+    (res.data?.data || []).forEach(m => {
+      insights[m.name] = m.values?.[0]?.value || 0;
+    });
+
+    return {
+      likes:       insights.likes || 0,
+      comments:    insights.replies || 0,
+      shares:      insights.reposts || 0,
+      saves:       0,
+      reach:       0,
+      impressions: insights.views || 0,
+      clicks:      0,
+      video_views: 0
+    };
+  } catch (err) {
+    console.error('[PlatformAPIs] Threads metrics error:', err.message);
+    return emptyMetrics();
+  }
+}
+
+// WhatsApp and Telegram are messaging platforms — no public post metrics API
+async function fetchWhatsAppMetrics(postId, accessToken) { return emptyMetrics(); }
+async function fetchTelegramMetrics(postId, accessToken) { return emptyMetrics(); }
 
 // ================================================================
 // COMMENT FETCHERS — return empty arrays until credentials are wired up.
@@ -1205,12 +1453,191 @@ async function fetchInstagramComments(postId, accessToken, since) {
     return [];
   }
 }
-async function fetchTikTokComments(postId, accessToken, since)    { return []; }
-async function fetchLinkedInComments(postId, accessToken, since)  { return []; }
-async function fetchXComments(postId, accessToken, since)         { return []; }
-async function fetchThreadsComments(postId, accessToken, since)   { return []; }
-async function fetchWhatsAppComments(postId, accessToken, since)  { return []; }
-async function fetchTelegramComments(postId, accessToken, since)  { return []; }
+// ----------------------------------------------------------------
+// fetchTikTokComments — fetches comments on a TikTok video.
+//
+// API: POST https://open.tiktokapis.com/v2/comment/list/
+//      Body: { video_id, max_count: 50 }
+//
+// Note: TikTok's comment API has limited access. Returns comment text
+// and basic author info but author IDs are not usable for DMs.
+// ----------------------------------------------------------------
+async function fetchTikTokComments(postId, accessToken, since) {
+  try {
+    const res = await axios.post(
+      'https://open.tiktokapis.com/v2/comment/list/',
+      { video_id: postId, max_count: 50 },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30_000
+      }
+    );
+
+    let comments = (res.data?.data?.comments || []).map(c => ({
+      platformCommentId: c.id,
+      text:              c.text || '',
+      authorHandle:      c.user?.display_name || c.user?.username || 'Unknown',
+      authorPlatformId:  c.user?.user_id || null,
+      timestamp:         c.create_time ? new Date(c.create_time * 1000).toISOString() : new Date().toISOString()
+    }));
+
+    if (since) {
+      const sinceDate = new Date(since);
+      comments = comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    console.error('[PlatformAPIs] TikTok comments error:', err.message);
+    return [];
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchLinkedInComments — fetches comments on a LinkedIn UGC post.
+//
+// API: GET /socialActions/{ugcPostUrn}/comments
+//
+// Note: Requires 'w_member_social' scope. Author is returned as a
+// LinkedIn URN (e.g. "urn:li:person:XXXXXXX"), not a username.
+// ----------------------------------------------------------------
+async function fetchLinkedInComments(postId, accessToken, since) {
+  try {
+    const encodedUrn = encodeURIComponent(postId);
+    const res = await axios.get(
+      `https://api.linkedin.com/v2/socialActions/${encodedUrn}/comments`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0'
+        },
+        timeout: 30_000
+      }
+    );
+
+    let comments = (res.data?.elements || []).map(c => ({
+      platformCommentId: c.$URN || c.id || '',
+      text:              c.message?.text || '',
+      authorHandle:      c.actor || 'Unknown',       // LinkedIn returns actor URN
+      authorPlatformId:  c.actor || null,             // URN like urn:li:person:XXXXX
+      timestamp:         c.created?.time ? new Date(c.created.time).toISOString() : new Date().toISOString()
+    }));
+
+    if (since) {
+      const sinceDate = new Date(since);
+      comments = comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    console.error('[PlatformAPIs] LinkedIn comments error:', err.message);
+    return [];
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchXComments — fetches replies to a tweet via X API v2 search.
+//
+// API: GET /tweets/search/recent?query=conversation_id:{tweetId}
+//      &tweet.fields=created_at,author_id
+//      &expansions=author_id
+//      &user.fields=username
+//
+// Note: Rate limit 450 req / 15 min. Only returns replies from the
+// last 7 days (Twitter API limitation for recent search).
+// ----------------------------------------------------------------
+async function fetchXComments(postId, accessToken, since) {
+  try {
+    const params = {
+      query:          `conversation_id:${postId}`,
+      'tweet.fields': 'created_at,author_id',
+      expansions:     'author_id',
+      'user.fields':  'username',
+      max_results:    100
+    };
+    if (since) params.start_time = new Date(since).toISOString();
+
+    const res = await axios.get(
+      'https://api.x.com/2/tweets/search/recent',
+      {
+        params,
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 30_000
+      }
+    );
+
+    // Build a map of author_id → username from the includes.users expansion
+    const userMap = {};
+    (res.data?.includes?.users || []).forEach(u => {
+      userMap[u.id] = u.username;
+    });
+
+    let comments = (res.data?.data || []).map(t => ({
+      platformCommentId: t.id,
+      text:              t.text || '',
+      authorHandle:      userMap[t.author_id] || 'Unknown',
+      authorPlatformId:  t.author_id || null,
+      timestamp:         t.created_at
+    }));
+
+    if (since && !params.start_time) {
+      const sinceDate = new Date(since);
+      comments = comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    console.error('[PlatformAPIs] X comments error:', err.message);
+    return [];
+  }
+}
+
+// ----------------------------------------------------------------
+// fetchThreadsComments — fetches replies on a Threads post.
+//
+// API: GET /{media_id}/replies?fields=id,text,username,timestamp
+//
+// Note: Requires 'threads_basic' scope. API is relatively new.
+// ----------------------------------------------------------------
+async function fetchThreadsComments(postId, accessToken, since) {
+  try {
+    const res = await axios.get(
+      `https://graph.threads.net/v1.0/${postId}/replies`,
+      {
+        params: {
+          fields:       'id,text,username,timestamp',
+          access_token: accessToken
+        },
+        timeout: 30_000
+      }
+    );
+
+    let comments = (res.data?.data || []).map(c => ({
+      platformCommentId: c.id,
+      text:              c.text || '',
+      authorHandle:      c.username || 'Unknown',
+      authorPlatformId:  null, // Threads doesn't expose user IDs for DMs yet
+      timestamp:         c.timestamp
+    }));
+
+    if (since) {
+      const sinceDate = new Date(since);
+      comments = comments.filter(c => new Date(c.timestamp) > sinceDate);
+    }
+
+    return comments;
+  } catch (err) {
+    console.error('[PlatformAPIs] Threads comments error:', err.message);
+    return [];
+  }
+}
+
+// WhatsApp and Telegram are messaging platforms — no comment concept
+async function fetchWhatsAppComments(postId, accessToken, since) { return []; }
+async function fetchTelegramComments(postId, accessToken, since) { return []; }
 
 // ================================================================
 // TOKEN REFRESH

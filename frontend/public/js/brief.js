@@ -252,13 +252,17 @@ function renderBriefForm(el) {
       <div class="brief-section">
         <div class="brief-section-label">4. Which platforms should we generate posts for?</div>
         <div class="platform-grid">
-          ${PLATFORMS.map(p => `
-            <label class="platform-option">
-              <input type="checkbox" name="platforms" value="${p.value}" />
+          ${PLATFORMS.map(p => {
+            const comingSoon = p.value === 'whatsapp' || p.value === 'telegram';
+            return `
+            <label class="platform-option${comingSoon ? ' platform-coming-soon' : ''}"
+                   style="${comingSoon ? 'opacity:0.4;pointer-events:none;position:relative;' : ''}">
+              <input type="checkbox" name="platforms" value="${p.value}" ${comingSoon ? 'disabled' : ''} />
               <div class="platform-icon">${p.icon}</div>
               <div class="platform-name">${p.label}</div>
-            </label>
-          `).join('')}
+              ${comingSoon ? '<div style="font-size:9px;color:#94a3b8;margin-top:2px;font-weight:600;letter-spacing:0.3px;">COMING SOON</div>' : ''}
+            </label>`;
+          }).join('')}
         </div>
         <div class="field-error hidden" id="err-platforms">Please select at least one platform</div>
         <!-- Timing hint — shown dynamically when 4+ platforms are selected -->

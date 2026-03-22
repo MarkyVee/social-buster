@@ -280,7 +280,8 @@ async function runHealthCheck(mode = 'full') {
   try {
     const {
       publishQueue, commentQueue, mediaScanQueue,
-      performanceQueue, researchQueue, mediaAnalysisQueue
+      performanceQueue, researchQueue, mediaAnalysisQueue,
+      dmQueue, emailQueue
     } = require('./queues');
     const { cacheGet, cacheSet } = require('./services/redisService');
     const { supabaseAdmin }      = require('./services/supabaseService');
@@ -301,7 +302,9 @@ async function runHealthCheck(mode = 'full') {
       'media-scan':     mediaScanQueue,
       performance:      performanceQueue,
       research:         researchQueue,
-      'media-analysis': mediaAnalysisQueue
+      'media-analysis': mediaAnalysisQueue,
+      dm:               dmQueue,
+      email:            emailQueue
     };
 
     // ---- 1. Redis ping (always) ----

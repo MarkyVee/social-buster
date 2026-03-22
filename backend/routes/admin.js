@@ -30,7 +30,9 @@ const {
   mediaScanQueue,
   performanceQueue,
   researchQueue,
-  mediaAnalysisQueue
+  mediaAnalysisQueue,
+  dmQueue,
+  emailQueue
 } = require('../queues');
 
 // ----------------------------------------------------------------
@@ -58,7 +60,9 @@ try {
       new BullMQAdapter(mediaScanQueue,     { readOnlyMode: false }),
       new BullMQAdapter(performanceQueue,   { readOnlyMode: false }),
       new BullMQAdapter(researchQueue,      { readOnlyMode: false }),
-      new BullMQAdapter(mediaAnalysisQueue, { readOnlyMode: false })
+      new BullMQAdapter(mediaAnalysisQueue, { readOnlyMode: false }),
+      new BullMQAdapter(dmQueue,            { readOnlyMode: false }),
+      new BullMQAdapter(emailQueue,         { readOnlyMode: false })
     ],
     serverAdapter
   });

@@ -10,6 +10,8 @@
  */
 
 const { verifyToken } = require('../services/supabaseService');
+const { supabaseAdmin } = require('../services/supabaseService');
+const { cacheGet } = require('../services/redisService');
 
 async function requireAuth(req, res, next) {
   try {
@@ -31,6 +33,33 @@ async function requireAuth(req, res, next) {
     // Verify the token with Supabase and get the user object
     // verifyToken throws if the token is invalid or expired
     const user = await verifyToken(token);
+
+    // ---------------------------------------------------------------
+    // Single session enforcement: reject requests from stale sessions.
+    // The frontend sends X-Session-ID (set at login/register).
+    // If it doesn't match the active session, another device logged in
+    // and this session is no longer valid.
+    // ---------------------------------------------------------------
+    const clientSessionId = req.headers['x-session-id'];
+    if (clientSessionId) {
+      // Check Redis first (fast), fall back to DB if Redis misses
+      let activeSessionId = await cacheGet(`session:${user.id}`);
+      if (!activeSessionId) {
+        const { data: profile } = await supabaseAdmin
+          .from('user_profiles')
+          .select('active_session_id')
+          .eq('user_id', user.id)
+          .single();
+        activeSessionId = profile?.active_session_id;
+      }
+
+      if (activeSessionId && activeSessionId !== clientSessionId) {
+        return res.status(401).json({
+          error: 'Your account was logged into from another device. Please log in again.',
+          session_invalidated: true
+        });
+      }
+    }
 
     // Attach the authenticated user and raw token to the request
     // so downstream middleware and route handlers can use them

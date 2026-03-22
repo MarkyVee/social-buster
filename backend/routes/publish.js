@@ -36,12 +36,12 @@ const { cacheSet, cacheGet, cacheDel } = require('../services/redisService');
 // META:    https://developers.facebook.com → Your App → Facebook Login → Valid OAuth Redirect URIs
 // THREADS: https://developers.facebook.com → Your App → Threads API → Redirect URIs
 // ----------------------------------------------------------------
-const META_REDIRECT_URI     = process.env.META_REDIRECT_URI     || 'http://localhost:3001/publish/oauth/meta/callback';
-const THREADS_REDIRECT_URI  = process.env.THREADS_REDIRECT_URI  || 'http://localhost:3001/publish/oauth/threads/callback';
-const TIKTOK_REDIRECT_URI   = process.env.TIKTOK_REDIRECT_URI   || 'http://localhost:3001/publish/oauth/tiktok/callback';
-const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || 'http://localhost:3001/publish/oauth/linkedin/callback';
-const X_REDIRECT_URI        = process.env.X_REDIRECT_URI        || 'http://localhost:3001/publish/oauth/x/callback';
 const FRONTEND_URL          = process.env.FRONTEND_URL          || 'http://localhost:3001';
+const META_REDIRECT_URI     = process.env.META_REDIRECT_URI     || `${FRONTEND_URL}/publish/oauth/meta/callback`;
+const THREADS_REDIRECT_URI  = process.env.THREADS_REDIRECT_URI  || `${FRONTEND_URL}/publish/oauth/threads/callback`;
+const TIKTOK_REDIRECT_URI   = process.env.TIKTOK_REDIRECT_URI   || `${FRONTEND_URL}/publish/oauth/tiktok/callback`;
+const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || `${FRONTEND_URL}/publish/oauth/linkedin/callback`;
+const X_REDIRECT_URI        = process.env.X_REDIRECT_URI        || `${FRONTEND_URL}/publish/oauth/x/callback`;
 
 // ================================================================
 // UNPROTECTED OAUTH CALLBACKS
