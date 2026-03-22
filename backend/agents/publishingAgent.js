@@ -24,6 +24,7 @@
  *   Videos still need a local download + FFmpeg trim (platform-specific).
  */
 
+const axios              = require('axios');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { publish }        = require('../services/platformAPIs');
 const { downloadGoogleDriveFile } = require('../services/googleDriveService');
@@ -35,6 +36,10 @@ const {
   cleanupTemp,
   PLATFORM_LIMITS
 } = require('../services/ffmpegService');
+
+// Supabase Storage bucket where mediaProcessAgent uploads copies.
+// AI-generated images live in 'ai-generated-images' — we keep those.
+const PROCESSED_MEDIA_BUCKET = 'processed-media';
 
 const MAX_RETRIES = 3;
 const BATCH_CAP   = 50;  // Max posts processed per BullMQ job cycle
@@ -151,16 +156,20 @@ async function publishPost(post) {
   // ── Media resolution ──────────────────────────────────────────
   // tempFilePaths declared outside try so the finally block always cleans up,
   // even if markFailed() or a DB update throws unexpectedly.
+  // mediaItem hoisted here so post-publish cleanup can access it.
   let tempFilePaths = [];
+  let mediaItem = null;
 
   if (post.media_id) {
     console.log(`[PublishingAgent]    Looking up media item ${post.media_id}...`);
 
-    const { data: mediaItem, error: mediaErr } = await supabaseAdmin
+    const { data: fetchedMedia, error: mediaErr } = await supabaseAdmin
       .from('media_items')
       .select('id, processed_url, cloud_url, file_type, filename, duration_seconds, process_status, process_error, cloud_provider')
       .eq('id', post.media_id)
       .single();
+
+    mediaItem = fetchedMedia;
 
     // Log everything we know — this is the single most important diagnostic line
     console.log(`[PublishingAgent]    media lookup: found=${!!mediaItem} err=${mediaErr?.message || 'none'}`);
@@ -281,6 +290,21 @@ async function publishPost(post) {
           .eq('id', post.id);
 
         console.log(`[PublishingAgent] ── DONE post ${post.id} → published (${result.platformPostId}) ──`);
+
+        // ── Post-publish storage cleanup ──────────────────────────────
+        // Delete the copy from Supabase Storage to keep storage costs near zero.
+        // The platform now has the file, and the original is still in the user's
+        // cloud storage (Drive/Dropbox/Box). Analysis data (video_segments, tags)
+        // lives in the database and is NOT affected by this delete.
+        //
+        // Skip cleanup for:
+        //   - AI-generated images (user may reuse, different bucket)
+        //   - Drive videos (never copied to Supabase in the first place)
+        //   - Posts with no media
+        if (post.media_id && mediaItem) {
+          await cleanupProcessedMedia(post.media_id, mediaItem);
+        }
+
         return;
 
       } catch (err) {
@@ -307,6 +331,90 @@ async function publishPost(post) {
   } finally {
     // Always clean up temp files — runs whether we succeed, fail, or throw
     tempFilePaths.forEach(p => cleanupTemp(p));
+  }
+}
+
+// ----------------------------------------------------------------
+// cleanupProcessedMedia — deletes the Supabase Storage copy after
+// a post is successfully published. Keeps storage costs near zero.
+//
+// What gets cleaned up:
+//   - Google Drive images that were copied to processed-media bucket
+//
+// What is NOT cleaned up:
+//   - AI-generated images (cloud_provider = 'ai_generated') — user may reuse
+//   - Google Drive videos (never copied to Supabase — too large)
+//   - Media from other providers using direct URLs
+//
+// After cleanup, the media_items row stays in the DB with all metadata.
+// process_status is reset to 'pending' so if the user attaches the same
+// media to a new post, mediaProcessAgent will re-copy it from Drive.
+// Video analysis data (video_segments, tags) is NOT affected.
+// ----------------------------------------------------------------
+async function cleanupProcessedMedia(mediaId, mediaItem) {
+  try {
+    // Only clean up files we actually uploaded to the processed-media bucket.
+    // AI-generated images live in a different bucket and should be kept.
+    // Drive videos were never copied (too large for Supabase free tier).
+    if (mediaItem.cloud_provider === 'ai_generated') {
+      console.log(`[PublishingAgent] Skipping cleanup — AI-generated image (user may reuse)`);
+      return;
+    }
+
+    if (!mediaItem.processed_url || !mediaItem.processed_url.includes(PROCESSED_MEDIA_BUCKET)) {
+      console.log(`[PublishingAgent] Skipping cleanup — processed_url not in ${PROCESSED_MEDIA_BUCKET} bucket`);
+      return;
+    }
+
+    // Extract the storage path from the full URL.
+    // URL format: {SUPABASE_URL}/storage/v1/object/public/processed-media/{userId}/{uuid}.{ext}
+    const bucketPrefix = `/storage/v1/object/public/${PROCESSED_MEDIA_BUCKET}/`;
+    const pathIndex = mediaItem.processed_url.indexOf(bucketPrefix);
+    if (pathIndex === -1) {
+      console.warn(`[PublishingAgent] Could not extract storage path from URL: ${mediaItem.processed_url}`);
+      return;
+    }
+    const storagePath = mediaItem.processed_url.slice(pathIndex + bucketPrefix.length);
+
+    console.log(`[PublishingAgent] Cleaning up storage: ${PROCESSED_MEDIA_BUCKET}/${storagePath}`);
+
+    // Delete the file from Supabase Storage via REST API
+    const deleteUrl = `${process.env.SUPABASE_URL}/storage/v1/object/${PROCESSED_MEDIA_BUCKET}/${storagePath}`;
+    const deleteResp = await axios.delete(deleteUrl, {
+      headers: {
+        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
+      },
+      timeout: 15000,
+      validateStatus: () => true  // Don't throw — cleanup is best-effort
+    });
+
+    if (deleteResp.status >= 200 && deleteResp.status < 300) {
+      console.log(`[PublishingAgent] Storage file deleted successfully`);
+    } else if (deleteResp.status === 404) {
+      console.log(`[PublishingAgent] Storage file already gone (404) — nothing to delete`);
+    } else {
+      console.warn(`[PublishingAgent] Storage delete returned HTTP ${deleteResp.status}: ${JSON.stringify(deleteResp.data)}`);
+    }
+
+    // Reset the media item so it can be re-processed if attached to a future post.
+    // The media_items row stays in the DB with all metadata (filename, cloud_url,
+    // analysis_status, etc.). Only the Supabase copy reference is cleared.
+    await supabaseAdmin
+      .from('media_items')
+      .update({
+        processed_url:  null,
+        process_status: 'pending',
+        processed_at:   null
+      })
+      .eq('id', mediaId);
+
+    console.log(`[PublishingAgent] Media item ${mediaId} reset to pending (ready for re-processing if reused)`);
+
+  } catch (err) {
+    // Cleanup is best-effort — never let it break the publish success flow.
+    // The post is already published. If cleanup fails, storage just isn't reclaimed
+    // for this file. It will eventually be caught by a periodic cleanup job if we add one.
+    console.warn(`[PublishingAgent] Storage cleanup failed (non-fatal): ${err.message}`);
   }
 }
 
