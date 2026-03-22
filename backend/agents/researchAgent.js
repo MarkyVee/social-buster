@@ -25,6 +25,7 @@ const axios = require('axios');
 const { supabaseAdmin }          = require('../services/supabaseService');
 const { cacheSet, cacheGet }     = require('../services/redisService');
 const { loadPromptSections }     = require('../services/promptLoader');
+const { buildContext, formatForPrompt } = require('../services/contextBuilder');
 
 // Research cache TTL: 7 days
 const RESEARCH_TTL_SECONDS = 7 * 24 * 3600;
@@ -54,8 +55,21 @@ async function refreshResearch(userId) {
     return placeholder;
   }
 
-  // Build the research prompt
-  const researchPrompt = buildResearchPrompt(profile);
+  // Build shared context from other agents (performance, cohort, comments, content patterns).
+  // Exclude 'research' to avoid circular dependency (we ARE the research agent).
+  let sharedContext = '';
+  try {
+    const ctx = await buildContext(userId, {
+      sections: ['performance', 'cohort', 'comments', 'content_patterns'],
+      skipCache: true  // Research runs weekly — always get fresh data
+    });
+    sharedContext = formatForPrompt(ctx, ['performance', 'cohort', 'comments', 'content_patterns']);
+  } catch (err) {
+    console.warn(`[ResearchAgent] Failed to build shared context: ${err.message}`);
+  }
+
+  // Build the research prompt with cross-agent context injected
+  const researchPrompt = buildResearchPrompt(profile, sharedContext);
 
   // Call the LLM to generate research insights
   const research = await callLLMForResearch(researchPrompt);
@@ -84,12 +98,13 @@ async function getResearch(userId) {
 // fills in the user's profile details.
 // Edit that file to change what the research AI focuses on.
 // ----------------------------------------------------------------
-function buildResearchPrompt(profile) {
+function buildResearchPrompt(profile, sharedContext = '') {
   const { user } = loadPromptSections('research-agent', {
     brand_name:       profile.brand_name      || 'Not specified',
     industry:         profile.industry         || 'Not specified',
     target_audience:  profile.target_audience  || 'Not specified',
-    brand_voice:      profile.brand_voice      || 'Not specified'
+    brand_voice:      profile.brand_voice      || 'Not specified',
+    context_shared:   sharedContext
   });
   return user;
 }

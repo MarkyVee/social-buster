@@ -24,6 +24,7 @@
 
 const axios = require('axios');
 const { loadPrompt } = require('./promptLoader');
+const { buildContext, formatForPrompt } = require('./contextBuilder');
 
 // ----------------------------------------------------------------
 // How many platforms to generate per LLM call.
@@ -92,17 +93,17 @@ function buildUserPrompt(brief, userContext) {
     .map(p => PLATFORM_GUIDES[p])
     .join('\n');
 
-  // Intelligence context from Redis cache (empty for new users)
-  const intelligenceSection = userContext.intelligence
-    ? `PERFORMANCE INTELLIGENCE (use this to inform what will work for this audience):\n${userContext.intelligence}`
-    : '(No performance history yet — apply best practices for this audience and industry.)';
-
   // Writing style guidance derived from the semantic profiles of the brief selections.
   // Each post type, objective, and tone has a specific writing note that shapes
   // the LLM's output — better than just passing the value names alone.
   const styleSection = userContext.style_notes
     ? `WRITING STYLE GUIDANCE (apply these rules to every post you write):\n${userContext.style_notes}`
     : '';
+
+  // Shared context from all agents (research, performance, cohort, comments, content patterns, video tags).
+  // This is the cross-agent intelligence layer — each section comes from a different agent
+  // and is formatted as plain text ready for LLM injection.
+  const sharedContext = userContext.shared_context || '(No intelligence data available yet — use best practices.)';
 
   return `Generate ${totalPosts} social media posts (3 options x ${brief.platforms.length} platform${brief.platforms.length > 1 ? 's' : ''}).
 
@@ -119,7 +120,8 @@ BRAND CONTEXT:
 - Industry: ${userContext.industry || 'Not specified'}
 - Brand Voice: ${userContext.brand_voice || brief.tone}
 
-${styleSection ? styleSection + '\n\n' : ''}${intelligenceSection}
+${styleSection ? styleSection + '\n\n' : ''}INTELLIGENCE (data from all agents — use this to make smarter posts):
+${sharedContext}
 
 PLATFORM RULES:
 ${relevantGuides}
@@ -231,7 +233,8 @@ function parseLLMResponse(rawText) {
                               ? post.hashtags.map(h => String(h).replace(/^#/, '').trim())
                               : [],
       cta:                  post.cta || '',
-      media_recommendation: post.media_recommendation || ''
+      media_recommendation: post.media_recommendation || '',
+      why_this_works:       post.why_this_works || ''
     }))
     // Drop any posts that are missing platform or hook (incomplete generation)
     .filter(post => post.platform && post.hook);
@@ -309,6 +312,21 @@ async function callLLM(systemPrompt, userPrompt, attempt = 1) {
 // ----------------------------------------------------------------
 async function generatePosts(brief, userContext) {
   console.log(`[LLM] Generating posts | brief: ${brief.id} | platforms: ${brief.platforms.join(', ')}`);
+
+  // Build shared context from all agents (research, performance, cohort, comments, video tags).
+  // This pulls cached data from Redis and small DB queries — typically <100ms.
+  // If it fails, we proceed without context (graceful degradation).
+  try {
+    if (userContext.user_id && !userContext.shared_context) {
+      const context = await buildContext(userContext.user_id, {
+        sections: ['research', 'performance', 'cohort', 'comments', 'content_patterns', 'video_tags']
+      });
+      userContext.shared_context = formatForPrompt(context);
+      console.log(`[LLM] Shared context loaded (${userContext.shared_context.length} chars)`);
+    }
+  } catch (err) {
+    console.warn(`[LLM] Failed to build shared context: ${err.message} — proceeding without`);
+  }
 
   // Split platforms into batches, e.g. [['instagram','facebook','tiktok'], ['linkedin','x','threads'], ['youtube']]
   const batches = [];

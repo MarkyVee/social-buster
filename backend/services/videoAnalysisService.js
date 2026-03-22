@@ -197,25 +197,29 @@ async function analyzeVideo(mediaItemId) {
         // Upload to Supabase Storage (REST API — bypasses RLS)
         const thumbUrl = await uploadThumbnail(thumbPath, item.user_id, mediaItemId, i);
 
-        // Vision LLM — non-blocking: returns null if not configured or if it fails
-        const visionData = await tagSegmentWithVision(thumbUrl);
+        // Vision LLM — non-blocking: returns null if not configured or if it fails.
+        // Pass userId so the tagger gets cross-agent context (trends, performance data).
+        const visionData = await tagSegmentWithVision(thumbUrl, item.user_id);
 
         const pacing      = derivePacing(segDuration);
         const platformFit = derivePlatformFit(segDuration, pacing);
 
         segmentRows.push({
-          media_item_id: mediaItemId,
-          user_id:       item.user_id,
-          start_seconds: startSeconds,
-          end_seconds:   endSeconds,
-          thumbnail_url: thumbUrl,
-          description:   visionData?.description || null,
-          tags:          visionData?.tags        || [],
-          mood:          visionData?.mood        || null,
-          energy_level:  5,   // Audio energy analysis removed in v2.
-                              // Default to mid-scale (5). Vision LLM mood carries this signal.
+          media_item_id:            mediaItemId,
+          user_id:                  item.user_id,
+          start_seconds:            startSeconds,
+          end_seconds:              endSeconds,
+          thumbnail_url:            thumbUrl,
+          description:              visionData?.description              || null,
+          tags:                     visionData?.tags                     || [],
+          mood:                     visionData?.mood                     || null,
+          energy_level:             visionData?.energy_level             || 5,
+          hook_potential:           visionData?.hook_potential            || null,
+          audience_fit:             visionData?.audience_fit             || [],
+          use_cases:                visionData?.use_cases                || [],
+          text_overlay_opportunity: visionData?.text_overlay_opportunity ?? null,
           pacing,
-          platform_fit:  platformFit
+          platform_fit:             platformFit
         });
 
       } catch (segErr) {
@@ -553,7 +557,7 @@ async function setAnalysisStatus(mediaItemId, status) {
 async function retagUntaggedSegments() {
   const { data: segments, error } = await supabaseAdmin
     .from('video_segments')
-    .select('id, thumbnail_url')
+    .select('id, thumbnail_url, user_id')
     .is('description', null)
     .not('thumbnail_url', 'is', null);
 
@@ -570,16 +574,21 @@ async function retagUntaggedSegments() {
 
   for (const seg of segments) {
     try {
-      const visionData = await tagSegmentWithVision(seg.thumbnail_url);
+      const visionData = await tagSegmentWithVision(seg.thumbnail_url, seg.user_id);
 
       if (!visionData) continue;
 
       const { error: updateError } = await supabaseAdmin
         .from('video_segments')
         .update({
-          description: visionData.description,
-          tags:        visionData.tags,
-          mood:        visionData.mood
+          description:              visionData.description,
+          tags:                     visionData.tags,
+          mood:                     visionData.mood,
+          hook_potential:           visionData.hook_potential || null,
+          energy_level:             visionData.energy_level  || null,
+          audience_fit:             visionData.audience_fit  || [],
+          use_cases:                visionData.use_cases     || [],
+          text_overlay_opportunity: visionData.text_overlay_opportunity
         })
         .eq('id', seg.id);
 

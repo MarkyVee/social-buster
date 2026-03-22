@@ -126,6 +126,7 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
     const styleNotes = getStyleNotes(briefData.post_type, briefData.objective, briefData.tone);
 
     const userContext = {
+      user_id:      userId,   // Needed by contextBuilder to pull cross-agent data
       brand_name:   userProfile.brand_name,
       industry:     userProfile.industry,
       brand_voice:  userProfile.brand_voice,
@@ -167,7 +168,11 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
       const matchingGenerated = generatedPosts.find(
         g => g.platform === savedPost.platform && g.option_number === savedPost.option_number
       );
-      return { ...savedPost, media_recommendation: matchingGenerated?.media_recommendation || null };
+      return {
+        ...savedPost,
+        media_recommendation: matchingGenerated?.media_recommendation || null,
+        why_this_works:       matchingGenerated?.why_this_works       || null
+      };
     });
 
     // --- Step 5: Mark brief as complete ---

@@ -240,6 +240,13 @@ function renderWysiwygCard(post, platform) {
           ${editableField(post.id, 'cta',     'Call to Action', post.cta     || '')}
         </div>
 
+        ${post.why_this_works
+          ? `<div class="post-field post-field-why" style="margin-top:4px;">
+               <div class="post-field-label" style="color:#16a34a;">&#x1f4a1; Why This Will Work</div>
+               <div class="post-field-content" style="font-size:0.88rem;color:#555;font-style:italic;">${escapeHtml(post.why_this_works)}</div>
+             </div>`
+          : ''}
+
         <!-- AI Image Generation — always visible regardless of media_recommendation.
              Default prompt = recommendation (if AI provided one) otherwise the caption.
              This means the button works even after a page reload when recommendation

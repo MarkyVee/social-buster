@@ -37,6 +37,7 @@
 
 const axios = require('axios');
 const { loadPromptSections } = require('./promptLoader');
+const { buildContext, formatForPrompt } = require('./contextBuilder');
 
 // ----------------------------------------------------------------
 // Config — all from .env, falls back to the main LLM settings
@@ -55,7 +56,9 @@ const ALLOWED_MOODS = [
 // Prompts are loaded from prompts/vision-tagging.md at startup.
 // Edit that file to change what the AI looks for — no code changes needed.
 // The file has two sections separated by "---": system prompt and user prompt.
-const { system: SYSTEM_PROMPT, user: USER_PROMPT } = loadPromptSections('vision-tagging');
+// The user prompt contains {{context_shared}} which gets filled with cross-agent data.
+const PROMPT_SECTIONS = loadPromptSections('vision-tagging');
+const SYSTEM_PROMPT = PROMPT_SECTIONS.system;
 
 // ----------------------------------------------------------------
 // fetchImageAsBase64
@@ -81,13 +84,19 @@ async function fetchImageAsBase64(imageUrl) {
 // tagSegmentWithVision
 //
 // Main function. Download the thumbnail, convert to base64, send to
-// the vision AI, and get back { description, tags, mood }.
+// the vision AI, and get back enriched tag data.
 // Returns null if vision is not available or if tagging fails.
 //
 // thumbnailUrl: Public URL of the segment thumbnail (Supabase Storage)
-// Returns: { description: string, tags: string[], mood: string } or null
+// userId:       Optional. If provided, cross-agent context (research,
+//               performance, cohort data) is injected into the prompt
+//               so the AI tags content with awareness of what performs
+//               well for this user and their niche.
+//
+// Returns: { description, tags, mood, hook_potential, energy_level,
+//            audience_fit, use_cases, text_overlay_opportunity } or null
 // ----------------------------------------------------------------
-async function tagSegmentWithVision(thumbnailUrl) {
+async function tagSegmentWithVision(thumbnailUrl, userId = null) {
   // If the thumbnail wasn't uploaded, we have nothing to send
   if (!thumbnailUrl) {
     return null;
@@ -102,6 +111,24 @@ async function tagSegmentWithVision(thumbnailUrl) {
     // Groq (and some other providers) require the image as base64, not a URL.
     // We download the thumbnail first, then send the raw bytes inline.
     const base64Image = await fetchImageAsBase64(thumbnailUrl);
+
+    // Build user prompt with cross-agent context if userId is available.
+    // This lets the vision tagger know what's trending, what performs well,
+    // and what the user's audience cares about — making tags more relevant.
+    let userPrompt = PROMPT_SECTIONS.user;
+    if (userId) {
+      try {
+        const ctx = await buildContext(userId, {
+          sections: ['research', 'performance', 'cohort']
+        });
+        const sharedContext = formatForPrompt(ctx, ['research', 'performance', 'cohort']);
+        userPrompt = userPrompt.replace('{{context_shared}}', sharedContext);
+      } catch (_) {
+        userPrompt = userPrompt.replace('{{context_shared}}', '');
+      }
+    } else {
+      userPrompt = userPrompt.replace('{{context_shared}}', '');
+    }
 
     const response = await axios.post(
       `${VISION_BASE_URL}/chat/completions`,
@@ -122,7 +149,7 @@ async function tagSegmentWithVision(thumbnailUrl) {
               },
               {
                 type: 'text',
-                text: USER_PROMPT
+                text: userPrompt
               }
             ]
           }
@@ -179,7 +206,7 @@ function parseVisionResponse(rawText) {
 
     const parsed = JSON.parse(cleaned);
 
-    // Validate that we got the fields we need
+    // Validate core fields (always required)
     const description = typeof parsed.description === 'string' ? parsed.description.trim() : null;
     const mood        = validateMood(parsed.mood);
     const tags        = validateTags(parsed.tags);
@@ -189,7 +216,17 @@ function parseVisionResponse(rawText) {
       return null;
     }
 
-    return { description, tags, mood };
+    // Enriched fields (optional — older prompts may not return these)
+    const hook_potential            = ['high', 'medium', 'low'].includes(parsed.hook_potential) ? parsed.hook_potential : null;
+    const energy_level              = typeof parsed.energy_level === 'number' && parsed.energy_level >= 1 && parsed.energy_level <= 10 ? parsed.energy_level : null;
+    const audience_fit              = Array.isArray(parsed.audience_fit) ? parsed.audience_fit.filter(a => typeof a === 'string').slice(0, 5) : [];
+    const use_cases                 = Array.isArray(parsed.use_cases) ? parsed.use_cases.filter(u => typeof u === 'string').slice(0, 4) : [];
+    const text_overlay_opportunity  = typeof parsed.text_overlay_opportunity === 'boolean' ? parsed.text_overlay_opportunity : null;
+
+    return {
+      description, tags, mood,
+      hook_potential, energy_level, audience_fit, use_cases, text_overlay_opportunity
+    };
 
   } catch (parseErr) {
     // The AI returned something that isn't valid JSON — this happens occasionally
