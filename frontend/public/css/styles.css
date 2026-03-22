@@ -105,6 +105,16 @@ img { display: block; max-width: 100%; }
   color: var(--color-primary);
   text-align: center;
   margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.auth-logo img {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
 }
 
 .auth-tagline {
@@ -169,6 +179,15 @@ img { display: block; max-width: 100%; }
   font-weight: 700;
   color: #fff;
   border-bottom: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sidebar-logo img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
 }
 
 .sidebar-logo span { color: var(--color-primary); }

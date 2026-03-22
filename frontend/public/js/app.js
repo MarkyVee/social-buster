@@ -444,7 +444,7 @@ function renderAuthScreen() {
   app.innerHTML = `
     <div class="auth-screen">
       <div class="auth-card">
-        <div class="auth-logo">⚡ Social Buster</div>
+        <div class="auth-logo"><img src="/images/logo.png" alt="Social Buster"> Social Buster</div>
         <div class="auth-tagline">AI-powered social media marketing platform</div>
 
         <div class="auth-tabs">
@@ -634,7 +634,7 @@ function renderAppShell() {
 
       <!-- ---- Sidebar ---- -->
       <nav class="sidebar">
-        <div class="sidebar-logo">⚡ Social<span>Buster</span></div>
+        <div class="sidebar-logo"><img src="/images/logo.png" alt="Social Buster"> Social<span>Buster</span></div>
 
         <div class="sidebar-nav">
           <div class="sidebar-section-label">Create</div>
@@ -2473,7 +2473,7 @@ function renderNewPasswordScreen(recoveryToken) {
   app.innerHTML = `
     <div class="auth-screen">
       <div class="auth-card">
-        <div class="auth-logo">⚡ Social Buster</div>
+        <div class="auth-logo"><img src="/images/logo.png" alt="Social Buster"> Social Buster</div>
         <div class="auth-tagline">Set your new password</div>
 
         <div id="auth-alerts"></div>
