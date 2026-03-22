@@ -1434,7 +1434,7 @@ async function renderProfile(el) {
         <div class="form-section-label">Posting Preferences</div>
         <div class="form-group">
           <label>Preferred Platforms <span class="required-marker">*</span> <span class="text-muted text-sm">(select at least one)</span></label>
-          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
+          <div id="platform-checkboxes" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
             ${['instagram','facebook','tiktok','linkedin','x','threads','youtube'].map(p => `
               <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:normal;">
                 <input type="checkbox" name="preferred_platforms" value="${p}"
@@ -1443,6 +1443,7 @@ async function renderProfile(el) {
               </label>
             `).join('')}
           </div>
+          <div id="platform-limit-hint" class="text-muted text-sm" style="margin-top:6px;display:none;"></div>
         </div>
         <button type="submit" class="btn btn-primary" id="save-profile-btn">Save Profile</button>
       </form>
@@ -1450,6 +1451,64 @@ async function renderProfile(el) {
   `;
 
   document.getElementById('profile-form').addEventListener('submit', handleSaveProfile);
+
+  // Fetch the user's platform limit and enforce it on checkboxes
+  enforcePlatformCheckboxLimit();
+}
+
+// ============================================================
+// enforcePlatformCheckboxLimit — fetches the user's tier limit
+// for platforms_connected and prevents checking more than allowed.
+// Shows the upgrade prompt if they try to exceed the cap.
+// ============================================================
+async function enforcePlatformCheckboxLimit() {
+  try {
+    const data = await apiFetch('/billing/my-limits');
+    const platformLimit = data.limits?.platforms_connected;
+
+    // No limit row, or feature not enabled → no restriction on checkboxes
+    if (!platformLimit) return;
+
+    // Toggle OFF = feature blocked for this tier → block all checkboxes
+    // Toggle ON with limit_value = -1 → unlimited → no restriction
+    const maxPlatforms = !platformLimit.enabled ? 0
+      : platformLimit.limit_value === -1 ? Infinity
+      : platformLimit.limit_value;
+
+    // Show hint text under the checkboxes
+    const hint = document.getElementById('platform-limit-hint');
+    if (hint && maxPlatforms !== Infinity) {
+      hint.style.display = 'block';
+      hint.textContent = maxPlatforms === 0
+        ? 'Platform selection is not available on your current plan.'
+        : `Your plan allows up to ${maxPlatforms} platform${maxPlatforms !== 1 ? 's' : ''}.`;
+    }
+
+    // Add click handler to each checkbox
+    const checkboxes = document.querySelectorAll('input[name="preferred_platforms"]');
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', () => {
+        const checked = document.querySelectorAll('input[name="preferred_platforms"]:checked');
+        if (checked.length > maxPlatforms) {
+          // Undo the check
+          cb.checked = false;
+          // Show upgrade prompt
+          showUpgradePrompt('platforms_connected',
+            maxPlatforms === 0
+              ? 'Platform selection is not included in your plan. Upgrade to select platforms.'
+              : `Your plan allows up to ${maxPlatforms} platform${maxPlatforms !== 1 ? 's' : ''}. Upgrade to add more.`
+          );
+        }
+      });
+    });
+
+    // If already over the limit (e.g. downgraded), don't forcibly uncheck —
+    // let them save, but prevent adding more.
+
+  } catch (err) {
+    // Non-fatal — if we can't fetch limits, don't block the profile page
+    console.warn('[Profile] Could not fetch platform limits:', err.message);
+  }
 }
 
 async function renderSettings(el) {

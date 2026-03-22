@@ -21,6 +21,7 @@ const {
 const { supabaseAdmin } = require('../services/supabaseService');
 const { requireAuth } = require('../middleware/auth');
 const { standardLimiter } = require('../middleware/rateLimit');
+const { getAllLimits } = require('../middleware/checkLimit');
 
 // Apply standard rate limiting to all billing routes
 router.use(standardLimiter);
@@ -76,6 +77,56 @@ router.get('/status', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[Billing] Status error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch subscription status' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /billing/my-limits
+// Returns the tier limits for the current user's plan.
+// Used by the frontend to enforce caps (e.g. platform checkboxes).
+// ----------------------------------------------------------------
+router.get('/my-limits', requireAuth, async (req, res) => {
+  try {
+    // Determine the user's tier (same logic as checkLimit middleware)
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('subscription_tier')
+      .eq('user_id', req.user.id)
+      .single();
+
+    let tier = profile?.subscription_tier || null;
+
+    if (!tier) {
+      const { data: sub } = await supabaseAdmin
+        .from('subscriptions')
+        .select('plan, status')
+        .eq('user_id', req.user.id)
+        .single();
+
+      const activePlan = (sub?.status === 'active' || sub?.status === 'trialing')
+        ? (sub?.plan || 'free')
+        : 'free';
+      tier = activePlan === 'free' ? 'free_trial' : activePlan;
+    }
+
+    // Get all limits and filter to this tier
+    const allLimits = await getAllLimits();
+    const myLimits = {};
+    for (const row of allLimits) {
+      if (row.tier === tier) {
+        myLimits[row.feature] = {
+          enabled:     row.enabled,
+          limit_value: row.limit_value,
+          label:       row.label
+        };
+      }
+    }
+
+    return res.json({ tier, limits: myLimits });
+
+  } catch (err) {
+    console.error('[Billing] My-limits error:', err.message);
+    return res.json({ tier: 'free_trial', limits: {} });
   }
 });
 
