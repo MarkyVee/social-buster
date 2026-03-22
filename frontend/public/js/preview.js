@@ -247,6 +247,16 @@ function renderWysiwygCard(post, platform) {
              </div>`
           : ''}
 
+        <!-- Performance Prediction — fetch on demand to avoid slowing page load -->
+        <div class="post-field" style="margin-top:4px;">
+          <button
+            class="btn btn-xs btn-secondary predict-btn"
+            id="predict-btn-${post.id}"
+            onclick="fetchPrediction('${post.id}', '${post.platform}')"
+          >&#x1f4ca; Predict Performance</button>
+          <div id="prediction-card-${post.id}" style="display:none;"></div>
+        </div>
+
         <!-- AI Image Generation — always visible regardless of media_recommendation.
              Default prompt = recommendation (if AI provided one) otherwise the caption.
              This means the button works even after a page reload when recommendation
@@ -1999,5 +2009,137 @@ async function toggleAutomationActive(automationId, active, postId) {
   } catch (err) {
     alert('Failed to update: ' + err.message);
   }
+}
+
+// ================================================================
+// PERFORMANCE PREDICTOR
+//
+// Fetches a predicted engagement score from the backend and renders
+// it inline on the post card. The prediction uses cohort benchmarks
+// and the user's own history — no extra LLM calls unless tweaks
+// are requested.
+// ================================================================
+
+async function fetchPrediction(postId, platform) {
+  const btn       = document.getElementById(`predict-btn-${postId}`);
+  const container = document.getElementById(`prediction-card-${postId}`);
+  if (!btn || !container) return;
+
+  // Read current post content from the editable fields
+  const card = document.querySelector(`.wysiwyg-card[data-post-id="${postId}"]`);
+  if (!card) return;
+
+  const hook    = card.querySelector('[data-field="hook"]')?.innerText    || '';
+  const caption = card.querySelector('[data-field="caption"]')?.innerText || '';
+
+  // Get brief metadata from the stored preview state
+  const briefObj = _previewBrief || {};
+
+  btn.disabled  = true;
+  btn.innerHTML = '&#x23F3; Predicting...';
+
+  try {
+    const resp = await apiFetch('/intelligence/predict', {
+      method: 'POST',
+      body: JSON.stringify({
+        platform,
+        post_type: briefObj.post_type || null,
+        tone:      briefObj.tone      || null,
+        hook,
+        caption
+      })
+    });
+
+    const pred = resp.prediction;
+    if (!pred?.available) {
+      container.innerHTML = renderPredictionUnavailable(pred?.message || 'Not enough data yet.');
+    } else {
+      container.innerHTML = renderPredictionCard(pred);
+    }
+    container.style.display = 'block';
+    btn.innerHTML = '&#x1f4ca; Refresh Prediction';
+
+  } catch (err) {
+    container.innerHTML = `<div class="prediction-error" style="color:#ef4444;font-size:0.85rem;margin-top:6px;">Prediction failed: ${escapeHtml(err.message)}</div>`;
+    container.style.display = 'block';
+    btn.innerHTML = '&#x1f4ca; Retry Prediction';
+  }
+
+  btn.disabled = false;
+}
+
+function renderPredictionUnavailable(message) {
+  return `
+    <div class="prediction-card prediction-unavailable" style="margin-top:8px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+      <div style="font-size:0.85rem;color:#64748b;">${escapeHtml(message)}</div>
+    </div>
+  `;
+}
+
+function renderPredictionCard(pred) {
+  const conf = pred.confidence;
+  const confColor = conf >= 70 ? '#16a34a' : conf >= 40 ? '#eab308' : '#94a3b8';
+  const confLabel = conf >= 70 ? 'High' : conf >= 40 ? 'Medium' : 'Low';
+
+  const r = pred.engagement_range;
+
+  // Format factors
+  const factorsHtml = (pred.factors || []).map(f => {
+    const icon = f.type === 'positive' ? '&#x2705;'
+               : f.type === 'warning'  ? '&#x26A0;&#xFE0F;'
+               : f.type === 'tip'      ? '&#x1f4a1;'
+               : '&#x2139;&#xFE0F;';
+    return `<div style="font-size:0.82rem;margin:3px 0;color:#475569;">${icon} ${escapeHtml(f.text)}</div>`;
+  }).join('');
+
+  // Data points info
+  const dp = pred.data_points || {};
+  const dataInfo = [];
+  if (dp.cohort_sample_size > 0) dataInfo.push(`${dp.cohort_sample_size} peer posts`);
+  if (dp.user_post_count > 0)    dataInfo.push(`${dp.user_post_count} of your posts`);
+
+  return `
+    <div class="prediction-card" style="margin-top:8px;padding:14px;background:linear-gradient(135deg,#f0f4ff,#f8fafc);border:1px solid #c7d2fe;border-radius:10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-weight:600;font-size:0.92rem;color:#312e81;">&#x1f4ca; Predicted Performance</div>
+        <div style="font-size:0.78rem;padding:2px 8px;border-radius:12px;background:${confColor}22;color:${confColor};font-weight:600;">
+          ${confLabel} confidence (${conf}%)
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="text-align:center;padding:8px;background:white;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+          <div style="font-size:0.75rem;color:#94a3b8;">&#x2764;&#xFE0F; Likes</div>
+          <div style="font-size:1rem;font-weight:700;color:#312e81;">${formatRange(r.likes)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:white;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+          <div style="font-size:0.75rem;color:#94a3b8;">&#x1f4ac; Comments</div>
+          <div style="font-size:1rem;font-weight:700;color:#312e81;">${formatRange(r.comments)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:white;border-radius:8px;box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+          <div style="font-size:0.75rem;color:#94a3b8;">&#x1f4e3; Reach</div>
+          <div style="font-size:1rem;font-weight:700;color:#312e81;">${formatRange(r.reach)}</div>
+        </div>
+      </div>
+
+      ${factorsHtml ? `<div style="margin-bottom:6px;">${factorsHtml}</div>` : ''}
+
+      ${dataInfo.length > 0
+        ? `<div style="font-size:0.72rem;color:#94a3b8;text-align:right;">Based on ${dataInfo.join(' + ')}</div>`
+        : ''}
+    </div>
+  `;
+}
+
+function formatRange(range) {
+  if (!range) return '--';
+  if (range.min === 0 && range.max === 0) return '0';
+  return `${formatNum(range.min)}-${formatNum(range.max)}`;
+}
+
+function formatNum(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
 }
 

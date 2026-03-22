@@ -28,6 +28,9 @@ const { checkLimit }         = require('../middleware/checkLimit');
 const { cacheGet }           = require('../services/redisService');
 const { refreshResearch }    = require('../agents/researchAgent');
 const { getCohortBenchmark } = require('../agents/performanceAgent');
+const { predictEngagement }  = require('../services/performancePredictorService');
+const { minePainPoints }     = require('../services/painPointMinerService');
+const { getVoiceProfile }    = require('../services/brandVoiceService');
 
 // Apply auth + tenancy + intelligence tier check to all routes in this file
 router.use(requireAuth, enforceTenancy, checkLimit('intelligence_dashboard'));
@@ -287,6 +290,82 @@ router.get('/preflight', standardLimiter, async (req, res) => {
   } catch (err) {
     console.error('[Intelligence] Preflight error:', err.message);
     return res.status(500).json({ error: 'Failed to load preflight data' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /intelligence/predict
+//
+// Predicts engagement performance for a post draft BEFORE publishing.
+// Uses cohort benchmarks + user's own history to estimate likes,
+// comments, and reach — plus factors explaining the score.
+//
+// Body: { platform, post_type, tone, hook, caption }
+// ----------------------------------------------------------------
+router.post('/predict', standardLimiter, async (req, res) => {
+  const { platform, post_type, tone, hook, caption } = req.body;
+
+  if (!platform) {
+    return res.status(400).json({ error: 'platform is required' });
+  }
+
+  try {
+    const prediction = await predictEngagement(req.user.id, {
+      platform,
+      post_type: post_type || null,
+      tone:      tone      || null,
+      hook:      hook       || '',
+      caption:   caption    || ''
+    });
+
+    return res.json({ prediction });
+
+  } catch (err) {
+    console.error('[Intelligence] Prediction error:', err.message);
+    return res.status(500).json({ error: 'Failed to generate prediction' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /intelligence/pain-points
+//
+// Mines audience comments from the last 30 days to extract recurring
+// pain points, questions, and desires. Groups them into themes with
+// frequency counts and example quotes.
+//
+// Optional: ?platform=instagram  ?limit=5
+// ----------------------------------------------------------------
+router.get('/pain-points', standardLimiter, async (req, res) => {
+  try {
+    const painPoints = await minePainPoints(req.user.id, {
+      platform: req.query.platform || null,
+      limit:    parseInt(req.query.limit) || 5
+    });
+
+    return res.json(painPoints);
+
+  } catch (err) {
+    console.error('[Intelligence] Pain-point mining error:', err.message);
+    return res.status(500).json({ error: 'Failed to mine pain points' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /intelligence/voice-profile
+//
+// Returns the user's learned brand voice profile — built from
+// analyzing their published posts over time. Includes writing
+// patterns, vocabulary preferences, sentence structure, and tone.
+// ----------------------------------------------------------------
+router.get('/voice-profile', standardLimiter, async (req, res) => {
+  try {
+    const profile = await getVoiceProfile(req.user.id);
+
+    return res.json({ voice_profile: profile });
+
+  } catch (err) {
+    console.error('[Intelligence] Voice profile error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch voice profile' });
   }
 });
 

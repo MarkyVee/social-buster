@@ -36,6 +36,8 @@
 
 const { supabaseAdmin }      = require('./supabaseService');
 const { cacheGet, cacheSet } = require('./redisService');
+const { minePainPoints }     = require('./painPointMinerService');
+const { getVoiceProfileForPrompt } = require('./brandVoiceService');
 
 // Context cache TTL: 1 hour. Agents run on schedules (15min to weekly),
 // so stale-by-1-hour is fine. Keeps DB queries minimal.
@@ -57,7 +59,8 @@ const CONTEXT_TTL = 3600;
 async function buildContext(userId, options = {}) {
   const sections = options.sections || [
     'profile', 'research', 'performance', 'cohort',
-    'comments', 'content_patterns', 'video_tags'
+    'comments', 'content_patterns', 'video_tags',
+    'pain_points', 'voice_profile'
   ];
 
   // Check cache first
@@ -90,6 +93,8 @@ async function buildContext(userId, options = {}) {
   if (sections.includes('comments'))         builders.push(buildCommentSection(userId).then(d => context.comments = d));
   if (sections.includes('content_patterns')) builders.push(buildContentPatterns(userId).then(d => context.content_patterns = d));
   if (sections.includes('video_tags'))       builders.push(buildVideoTagsSection(userId).then(d => context.video_tags = d));
+  if (sections.includes('pain_points'))      builders.push(buildPainPointsSection(userId).then(d => context.pain_points = d));
+  if (sections.includes('voice_profile'))    builders.push(buildVoiceSection(userId).then(d => context.voice_profile = d));
 
   await Promise.all(builders);
 
@@ -134,6 +139,14 @@ function formatForPrompt(context, sectionNames) {
 
   if (include.includes('video_tags') && context.video_tags) {
     parts.push(`## YOUR VIDEO LIBRARY (tagged content available)\n${context.video_tags}`);
+  }
+
+  if (include.includes('pain_points') && context.pain_points) {
+    parts.push(`## AUDIENCE PAIN POINTS (from Pain-Point Miner)\n${context.pain_points}`);
+  }
+
+  if (include.includes('voice_profile') && context.voice_profile) {
+    parts.push(`## YOUR BRAND VOICE (learned from your published posts)\n${context.voice_profile}`);
   }
 
   return parts.join('\n\n') || '(No intelligence data available yet — use best practices.)';
@@ -414,5 +427,38 @@ async function buildVideoTagsSection(userId) {
   } catch (_) { return null; }
 }
 
+
+// ----------------------------------------------------------------
+// Pain Points — LLM-clustered audience themes from comments.
+// Uses the painPointMinerService (cached 6 hours internally).
+// ----------------------------------------------------------------
+async function buildPainPointsSection(userId) {
+  try {
+    const result = await minePainPoints(userId, { limit: 5 });
+    if (!result?.available || !result.pain_points?.length) return null;
+
+    const lines = [`${result.comment_count} comments analyzed, ${result.pain_points.length} pain points identified:`];
+
+    result.pain_points.forEach((pp, i) => {
+      lines.push(`\n${i + 1}. ${pp.theme} [${pp.urgency} urgency, ${pp.frequency}x mentioned]`);
+      if (pp.description) lines.push(`   ${pp.description}`);
+      if (pp.post_angles?.length) {
+        pp.post_angles.forEach(angle => lines.push(`   → Post idea: ${angle}`));
+      }
+    });
+
+    return lines.join('\n');
+  } catch (_) { return null; }
+}
+
+// ----------------------------------------------------------------
+// Voice Profile — learned writing style from published posts.
+// Uses the brandVoiceService (cached 24 hours internally).
+// ----------------------------------------------------------------
+async function buildVoiceSection(userId) {
+  try {
+    return await getVoiceProfileForPrompt(userId);
+  } catch (_) { return null; }
+}
 
 module.exports = { buildContext, formatForPrompt };
