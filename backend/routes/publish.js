@@ -984,7 +984,7 @@ router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_conne
 
   const state = Buffer.from(req.user.id).toString('base64');
 
-  const authUrl = `https://www.threads.net/oauth/authorize` +
+  const authUrl = `https://threads.net/oauth/authorize` +
     `?client_id=${encodeURIComponent(threadsAppId)}` +
     `&redirect_uri=${encodeURIComponent(THREADS_REDIRECT_URI)}` +
     `&scope=threads_basic,threads_content_publish` +
