@@ -292,7 +292,8 @@ router.get('/me', requireAuth, async (req, res) => {
       .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
     const isAdmin = adminEmails.includes((req.user.email || '').toLowerCase());
 
-    // Fetch subscription data so the frontend can show the correct plan badge
+    // Fetch subscription data so the frontend can show the correct plan badge.
+    // Admin overrides (user_profiles.subscription_tier) take priority over Stripe.
     let subscription = { plan: 'free_trial', status: 'active' };
     try {
       const { data: sub } = await supabaseAdmin
@@ -302,6 +303,12 @@ router.get('/me', requireAuth, async (req, res) => {
         .single();
       if (sub) subscription = sub;
     } catch (_) { /* non-fatal — default to free_trial */ }
+
+    // Apply admin override if set
+    if (profile?.subscription_tier) {
+      subscription.plan           = profile.subscription_tier;
+      subscription.admin_override = true;
+    }
 
     return res.json({
       user: {

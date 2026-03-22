@@ -56,6 +56,18 @@ router.get('/plans', async (req, res) => {
 // ----------------------------------------------------------------
 router.get('/status', requireAuth, async (req, res) => {
   try {
+    // 1. Check for admin override in user_profiles first.
+    //    Admin can manually set a user's tier via the Admin Dashboard,
+    //    which takes priority over whatever Stripe says.
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('subscription_tier')
+      .eq('user_id', req.user.id)
+      .single();
+
+    const adminOverride = profile?.subscription_tier || null;
+
+    // 2. Get the Stripe subscription (if any)
     const { data, error } = await supabaseAdmin
       .from('subscriptions')
       .select('plan, status, current_period_end')
@@ -68,8 +80,19 @@ router.get('/status', requireAuth, async (req, res) => {
     if (error || !data) {
       console.warn(`[Billing] No subscription found for user ${req.user.id} — error: ${error?.message || 'no row'}`);
       return res.json({
-        subscription: { plan: 'free_trial', status: 'active', current_period_end: null }
+        subscription: {
+          plan:               adminOverride || 'free_trial',
+          status:             'active',
+          current_period_end: null,
+          admin_override:     !!adminOverride
+        }
       });
+    }
+
+    // If admin override exists, use it instead of the Stripe plan
+    if (adminOverride) {
+      data.plan           = adminOverride;
+      data.admin_override = true;
     }
 
     return res.json({ subscription: data });
