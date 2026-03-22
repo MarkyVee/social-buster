@@ -900,4 +900,28 @@ This creates a feedback loop: better posts → more engagement → more data →
 
 40. **contextBuilder now has 9 sections.** The full context (profile, research, performance, cohort, comments, content_patterns, video_tags, pain_points, voice_profile) could get large. LLM token limits are the constraint. If posts get truncated, reduce the section count in the `buildContext()` call.
 
-41. **Tier limits for premium features not yet in DB.** The `tier_limits` table needs rows for `performance_predictor`, `pain_point_miner`, and `brand_voice_tracker`. Until then, all users have access to all features. Add rows before launching paid plans.
+41. **Tier limits for premium features are live in DB.** The `tier_limits` table has rows for `performance_predictor`, `pain_point_miner`, and `brand_voice_tracker`. All three are gated to Professional and Enterprise tiers. Free Trial and Starter users see an upgrade prompt. Admin can toggle per tier in the Limits tab.
+
+### Tier Limits Wiring (completed 2026-03-21)
+
+All three Tier 1 features are fully wired into the existing tier limits system:
+
+**Enforcement:**
+- `POST /intelligence/predict` — `checkLimit('performance_predictor')`
+- `GET /intelligence/pain-points` — `checkLimit('pain_point_miner')`
+- `GET /intelligence/voice-profile` — `checkLimit('brand_voice_tracker')`
+
+**Default tier access:**
+| Feature | Free Trial | Starter | Professional | Enterprise |
+|---------|-----------|---------|-------------|-----------|
+| Performance Predictor | Blocked | Blocked | Enabled | Enabled |
+| Pain-Point Miner | Blocked | Blocked | Enabled | Enabled |
+| Brand Voice Tracker | Blocked | Blocked | Enabled | Enabled |
+
+**Files modified:**
+- `backend/routes/intelligence.js` — `checkLimit()` middleware on 3 endpoints
+- `backend/routes/admin.js` — auto-seed defaults include 3 new features
+- `frontend/public/js/app.js` — `FEATURE_INFO` upgrade prompt copy for all 3
+- `backend/data/migration_tier1_limits.sql` — SQL migration for existing deployments (already run)
+
+**Admin controls:** Admin can change any tier's access in the Limits tab of the admin dashboard. Changes take effect immediately (Redis cache is busted on save).
