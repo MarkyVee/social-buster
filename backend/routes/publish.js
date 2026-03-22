@@ -228,12 +228,16 @@ router.get('/oauth/threads/callback', async (req, res) => {
     const userId = Buffer.from(state, 'base64').toString('utf8');
     if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
 
+    // Threads has its own App ID/Secret, separate from the Facebook Login Meta App.
+    const threadsAppId     = process.env.THREADS_APP_ID || process.env.META_APP_ID;
+    const threadsAppSecret = process.env.THREADS_APP_SECRET || process.env.META_APP_SECRET;
+
     // Step 1: Exchange code for short-lived Threads access token
     const tokenRes = await axios.post(
       'https://graph.threads.net/oauth/access_token',
       new URLSearchParams({
-        client_id:     process.env.META_APP_ID,
-        client_secret: process.env.META_APP_SECRET,
+        client_id:     threadsAppId,
+        client_secret: threadsAppSecret,
         grant_type:    'authorization_code',
         redirect_uri:  THREADS_REDIRECT_URI,
         code
@@ -246,7 +250,7 @@ router.get('/oauth/threads/callback', async (req, res) => {
     const longTokenRes = await axios.get('https://graph.threads.net/access_token', {
       params: {
         grant_type:    'th_exchange_token',
-        client_secret: process.env.META_APP_SECRET,
+        client_secret: threadsAppSecret,
         access_token:  shortToken
       }
     });
@@ -969,16 +973,18 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
 // Required Meta App setup: Threads API product added, redirect URI registered
 // ----------------------------------------------------------------
 router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
-  if (!process.env.META_APP_ID || process.env.META_APP_ID === 'your_meta_app_id') {
+  // Threads has its own App ID/Secret, separate from the Facebook Login Meta App.
+  const threadsAppId = process.env.THREADS_APP_ID || process.env.META_APP_ID;
+  if (!threadsAppId) {
     return res.status(501).json({
-      error: 'Threads is not set up yet. Add META_APP_ID and META_APP_SECRET to your .env file, then rebuild the Docker container.'
+      error: 'Threads is not set up yet. Add THREADS_APP_ID and THREADS_APP_SECRET to your .env file.'
     });
   }
 
   const state = Buffer.from(req.user.id).toString('base64');
 
   const authUrl = `https://threads.net/oauth/authorize` +
-    `?client_id=${encodeURIComponent(process.env.META_APP_ID)}` +
+    `?client_id=${encodeURIComponent(threadsAppId)}` +
     `&redirect_uri=${encodeURIComponent(THREADS_REDIRECT_URI)}` +
     `&scope=threads_basic,threads_content_publish` +
     `&response_type=code` +
