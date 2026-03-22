@@ -86,13 +86,14 @@ async function countUsage(userId, feature) {
     }
 
     case 'ai_images_per_month': {
-      // Posts that have an AI-generated image attached
+      // AI-generated images are stored in media_items with cloud_provider = 'ai_generated'.
+      // (The posts table does NOT have an ai_image_url column — that's landmine #16.)
       const { count, error } = await supabaseAdmin
-        .from('posts')
+        .from('media_items')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .not('ai_image_url', 'is', null)
-        .gte('created_at', monthStart);
+        .eq('cloud_provider', 'ai_generated')
+        .gte('catalogued_at', monthStart);
       if (error) throw new Error(error.message);
       return count || 0;
     }

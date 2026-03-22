@@ -103,7 +103,11 @@ async function submitInlineSchedule(postId) {
       confirmBtn.disabled    = false;
       confirmBtn.textContent = 'Confirm';
     }
-    alert(`Scheduling failed: ${err.message}`);
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      alert(`Scheduling failed: ${err.message}`);
+    }
   }
 }
 
@@ -149,7 +153,9 @@ async function handlePublishNow(postId) {
       publishBtn.disabled    = false;
       publishBtn.textContent = '🚀 Publish Now';
     }
-    if (typeof showAlert === 'function') {
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else if (typeof showAlert === 'function') {
       showAlert('posts-alerts', `Publish failed: ${err.message}`, 'error');
     }
   }

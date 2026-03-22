@@ -557,6 +557,10 @@ textarea { resize: vertical; min-height: 80px; }
 .spinner-xs  { width: 11px; height: 11px; border-width: 2px; vertical-align: middle; display: inline-block; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 .loading-overlay {
   display: flex;

@@ -159,6 +159,17 @@ async function apiFetch(path, options = {}, _retried = false) {
     }
   }
 
+  // Detect tier-limit 429 responses and tag them so callers can show upgrade prompts
+  if (response.status === 429 && body.limit_reached) {
+    const err = new Error(body.error || 'You have reached a plan limit.');
+    err.limitReached = true;
+    err.feature      = body.feature;
+    err.limit        = body.limit;
+    err.usage        = body.usage;
+    err.tier         = body.tier;
+    throw err;
+  }
+
   if (!response.ok) {
     const message = body.error || `Request failed with status ${response.status}`;
     throw new Error(message);
@@ -217,6 +228,115 @@ function showToast(message, type = 'success', durationMs = 5000) {
     toast.style.transition = 'opacity 0.3s, transform 0.3s';
     setTimeout(() => toast.remove(), 300);
   }, durationMs);
+}
+
+// ============================================================
+// Feature descriptions — shown in upgrade prompts so users know
+// what they're missing and why it's worth upgrading.
+// ============================================================
+const FEATURE_INFO = {
+  briefs_per_month: {
+    name:  'AI Post Generation',
+    desc:  'Generate scroll-stopping hooks, captions, hashtags, and CTAs powered by AI. Each brief analyzes trending content and your audience data to create posts that actually perform.',
+    icon:  '✍️'
+  },
+  ai_images_per_month: {
+    name:  'AI Image Generation',
+    desc:  'Create eye-catching images for your posts with AI. Just describe what you want and get a publish-ready image in seconds — no design skills needed.',
+    icon:  '🎨'
+  },
+  platforms_connected: {
+    name:  'Platform Connections',
+    desc:  'Connect more social media accounts to publish everywhere from one dashboard. Manage Facebook, Instagram, TikTok, LinkedIn, X, Threads, and YouTube all in one place.',
+    icon:  '🔗'
+  },
+  scheduled_queue_size: {
+    name:  'Scheduled Post Queue',
+    desc:  'Queue up more posts to publish automatically at the perfect time. Schedule a week (or month) of content in one sitting and let Social Buster handle the rest.',
+    icon:  '📅'
+  },
+  comment_monitoring: {
+    name:  'Comment-to-DM Automation',
+    desc:  'Automatically send personalized DMs when someone comments a trigger word on your post. Turn comments into leads with multi-step conversations that collect emails, phone numbers, and more.',
+    icon:  '💬'
+  },
+  dm_lead_capture: {
+    name:  'Lead Capture & Export',
+    desc:  'Collect and export lead data (emails, phone numbers, names) from your DM automations. Download CSV files to import into your CRM or email marketing tool.',
+    icon:  '📊'
+  },
+  intelligence_dashboard: {
+    name:  'Intelligence Dashboard',
+    desc:  'See what\'s working and what isn\'t with AI-powered performance analytics. Get trend research, sentiment analysis on comments, and data-driven recommendations to improve every post.',
+    icon:  '🧠'
+  }
+};
+
+// ============================================================
+// showUpgradePrompt — modal overlay encouraging the user to
+// upgrade their plan. Shows what the locked feature does so
+// it doubles as a selling point.
+// ============================================================
+function showUpgradePrompt(feature, errorMessage) {
+  const info = FEATURE_INFO[feature] || {
+    name: 'Premium Feature',
+    desc: 'This feature is available on a higher plan. Upgrade to unlock it.',
+    icon: '⭐'
+  };
+
+  // Remove any existing upgrade modal
+  const existing = document.getElementById('upgrade-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'upgrade-modal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;max-width:440px;width:90%;padding:32px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:fadeInUp 0.25s ease-out;">
+      <div style="font-size:48px;margin-bottom:12px;">${info.icon}</div>
+      <h2 style="margin:0 0 8px;font-size:22px;color:#0f172a;">${info.name}</h2>
+      <p style="color:#475569;font-size:14px;line-height:1.6;margin:0 0 20px;">${info.desc}</p>
+      <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px;margin-bottom:20px;">
+        <p style="margin:0;font-size:13px;color:#92400e;">${errorMessage || 'Upgrade your plan to unlock this feature.'}</p>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button onclick="document.getElementById('upgrade-modal').remove()" style="padding:10px 20px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#64748b;cursor:pointer;font-size:14px;">Maybe Later</button>
+        <button onclick="document.getElementById('upgrade-modal').remove(); navigate('settings');" style="padding:10px 20px;border:none;border-radius:8px;background:var(--primary, #6366f1);color:#fff;cursor:pointer;font-size:14px;font-weight:600;">View Plans & Upgrade</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Close on backdrop click
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.remove();
+  });
+}
+
+// ============================================================
+// renderUpgradePlaceholder — inline upgrade card shown in place
+// of a feature's content area (e.g. intelligence dashboard).
+// ============================================================
+function renderUpgradePlaceholder(container, feature, errorMessage) {
+  const info = FEATURE_INFO[feature] || {
+    name: 'Premium Feature',
+    desc: 'This feature is available on a higher plan.',
+    icon: '⭐'
+  };
+
+  container.innerHTML = `
+    <div style="text-align:center;padding:48px 24px;">
+      <div style="font-size:64px;margin-bottom:16px;">${info.icon}</div>
+      <h2 style="margin:0 0 8px;font-size:24px;color:#0f172a;">${info.name}</h2>
+      <p style="color:#475569;font-size:15px;line-height:1.7;max-width:480px;margin:0 auto 24px;">${info.desc}</p>
+      <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px;max-width:400px;margin:0 auto 24px;">
+        <p style="margin:0;font-size:13px;color:#92400e;">${errorMessage || 'This feature is not included in your current plan.'}</p>
+      </div>
+      <button class="btn btn-primary" onclick="navigate('settings')" style="font-size:15px;padding:12px 32px;">
+        View Plans & Upgrade
+      </button>
+    </div>
+  `;
 }
 
 // ============================================================
@@ -918,7 +1038,11 @@ async function retryQueuePost(postId, platform) {
     showAlert('queue-alerts', `Retrying ${platform} post — publishing within 60 seconds…`, 'success');
     renderQueuePlaceholder(document.getElementById('main-content-area'));
   } catch (err) {
-    showAlert('queue-alerts', err.message, 'error');
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      showAlert('queue-alerts', err.message, 'error');
+    }
   }
 }
 
@@ -957,6 +1081,19 @@ async function renderIntelligencePlaceholder(el) {
       apiFetch('/intelligence/comments?limit=10'),
       apiFetch('/intelligence/performance')
     ]);
+
+    // If ALL requests were rejected with a limit error, show the upgrade placeholder
+    const allLimited = [summaryData, researchData, commentsData, perfData].every(
+      r => r.status === 'rejected' && r.reason?.limitReached
+    );
+    if (allLimited) {
+      const container = document.getElementById('intelligence-container');
+      if (container) {
+        const reason = summaryData.reason;
+        renderUpgradePlaceholder(container, reason.feature || 'intelligence_dashboard', reason.message);
+      }
+      return;
+    }
 
     const container = document.getElementById('intelligence-container');
     if (!container) return;
@@ -1060,7 +1197,11 @@ async function refreshIntelligence() {
     // Reload the whole view to show new research
     renderIntelligencePlaceholder(document.getElementById('main-content-area'));
   } catch (err) {
-    showAlert('intelligence-alerts', err.message, 'error');
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      showAlert('intelligence-alerts', err.message, 'error');
+    }
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Research'; }
   }
 }
@@ -2440,6 +2581,16 @@ async function exportLeadsCSV() {
     const response = await fetch('/automations/leads/export', {
       headers: { Authorization: `Bearer ${App.token}` }
     });
+
+    // Handle tier-limit 429 — response is JSON, not CSV
+    if (response.status === 429) {
+      const body = await response.json().catch(() => ({}));
+      if (body.limit_reached) {
+        showUpgradePrompt(body.feature, body.error);
+        return;
+      }
+    }
+
     if (!response.ok) throw new Error('Export failed');
 
     const blob = await response.blob();

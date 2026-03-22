@@ -24,12 +24,13 @@ const router  = express.Router();
 const { requireAuth }        = require('../middleware/auth');
 const { enforceTenancy }     = require('../middleware/tenancy');
 const { standardLimiter }    = require('../middleware/rateLimit');
+const { checkLimit }         = require('../middleware/checkLimit');
 const { cacheGet }           = require('../services/redisService');
 const { refreshResearch }    = require('../agents/researchAgent');
 const { getCohortBenchmark } = require('../agents/performanceAgent');
 
-// Apply auth + tenancy to all routes in this file
-router.use(requireAuth, enforceTenancy);
+// Apply auth + tenancy + intelligence tier check to all routes in this file
+router.use(requireAuth, enforceTenancy, checkLimit('intelligence_dashboard'));
 
 // ----------------------------------------------------------------
 // GET /intelligence/summary

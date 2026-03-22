@@ -29,6 +29,7 @@ const router  = express.Router();
 const { requireAuth }    = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter, aiLimiter, videoLimiter } = require('../middleware/rateLimit');
+const { checkLimit }     = require('../middleware/checkLimit');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { encryptToken }   = require('../services/tokenEncryption');
 const { cacheSet, cacheGet, cacheDel } = require('../services/redisService');
@@ -961,7 +962,7 @@ router.post('/oauth/google_drive/folder', standardLimiter, async (req, res) => {
 // ----------------------------------------------------------------
 // requireAuth MUST come before aiLimiter so the rate limit is per-user, not per-IP.
 // Per-IP limiting lets one user behind a shared NAT exhaust the limit for everyone.
-router.post('/generate-image', requireAuth, enforceTenancy, aiLimiter, async (req, res) => {
+router.post('/generate-image', requireAuth, enforceTenancy, aiLimiter, checkLimit('ai_images_per_month'), async (req, res) => {
   const { prompt, image_size = 'square_hd' } = req.body;
 
   if (!prompt || !prompt.trim()) {

@@ -11,6 +11,7 @@ const router = express.Router();
 const { requireAuth } = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter } = require('../middleware/rateLimit');
+const { checkLimit }     = require('../middleware/checkLimit');
 const { supabaseAdmin } = require('../services/supabaseService');
 const { publishQueue, mediaProcessQueue, mediaAnalysisQueue } = require('../queues');
 
@@ -195,7 +196,7 @@ router.put('/:id', standardLimiter, async (req, res) => {
 // POST /posts/:id/approve
 // Mark a post as approved so it can be published.
 // ----------------------------------------------------------------
-router.post('/:id/approve', standardLimiter, async (req, res) => {
+router.post('/:id/approve', standardLimiter, checkLimit('scheduled_queue_size'), async (req, res) => {
   try {
     // Verify the post exists and belongs to this user before approving
     const { data: post, error: fetchError } = await req.db
@@ -234,7 +235,7 @@ router.post('/:id/approve', standardLimiter, async (req, res) => {
 // Schedule a post for publishing at a specific date and time.
 // Body: { scheduled_at: "2025-06-01T10:00:00Z" }
 // ----------------------------------------------------------------
-router.post('/:id/schedule', standardLimiter, async (req, res) => {
+router.post('/:id/schedule', standardLimiter, checkLimit('scheduled_queue_size'), async (req, res) => {
   const { scheduled_at } = req.body;
 
   if (!scheduled_at) {

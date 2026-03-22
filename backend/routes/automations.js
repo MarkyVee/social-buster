@@ -22,6 +22,7 @@ const express = require('express');
 const router  = express.Router();
 const { requireAuth }    = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
+const { checkLimit }     = require('../middleware/checkLimit');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { getDailyUsage }  = require('../services/messagingService');
 
@@ -107,7 +108,7 @@ router.get('/stats', async (req, res) => {
 // GET /api/automations/leads/export — CSV export of all collected leads.
 // Query params: automation_id (optional filter), from, to (date range)
 // ----------------------------------------------------------------
-router.get('/leads/export', async (req, res) => {
+router.get('/leads/export', checkLimit('dm_lead_capture'), async (req, res) => {
   try {
     const { automation_id, from, to } = req.query;
 
@@ -269,7 +270,7 @@ router.get('/:id/leads', async (req, res) => {
 //   trigger_keywords — array of keyword strings
 //   steps            — array of { message_template, collects_field?, custom_field_label? }
 // ----------------------------------------------------------------
-router.post('/', async (req, res) => {
+router.post('/', checkLimit('comment_monitoring'), async (req, res) => {
   try {
     const { post_id, name, flow_type, trigger_keywords, steps } = req.body;
 

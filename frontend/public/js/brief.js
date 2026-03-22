@@ -467,7 +467,11 @@ async function handleBriefSubmit(e) {
     form.classList.remove('hidden');
     submitBtn.disabled = false;
 
-    showAlert('brief-alerts', err.message, 'error');
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      showAlert('brief-alerts', err.message, 'error');
+    }
   }
 }
 
@@ -750,7 +754,11 @@ async function approvePost(postId) {
     showAlert('posts-alerts', 'Post approved! Publishing options coming in Phase 5.', 'success');
 
   } catch (err) {
-    showAlert('posts-alerts', `Failed to approve: ${err.message}`, 'error');
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      showAlert('posts-alerts', `Failed to approve: ${err.message}`, 'error');
+    }
     approveBtn.disabled = false;
     approveBtn.textContent = '✅ Approve';
   }

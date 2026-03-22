@@ -846,6 +846,13 @@ async function generateImageForPost(postId, autoAttach = false) {
     }
 
   } catch (err) {
+    // If the user hit their tier limit, show the upgrade modal instead of a generic error
+    if (err.limitReached) {
+      if (result) result.innerHTML = '';
+      showUpgradePrompt(err.feature, err.message);
+      if (btn) { btn.disabled = false; btn.textContent = '✨ Generate'; }
+      return;
+    }
     if (result) result.innerHTML = `<p class="gen-image-error">Generation failed: ${escapeHtml(err.message)}</p>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '✨ Generate'; }
@@ -1952,7 +1959,11 @@ async function saveAutomation(postId, existingId) {
     await toggleAutomationPanel(postId); // close
     await toggleAutomationPanel(postId); // reopen with fresh data
   } catch (err) {
-    alert('Failed to save automation: ' + err.message);
+    if (err.limitReached) {
+      showUpgradePrompt(err.feature, err.message);
+    } else {
+      alert('Failed to save automation: ' + err.message);
+    }
   }
 }
 
