@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Full Handoff
 
-> **Last updated:** 2026-03-21 (late session — tier limits + admin override)
+> **Last updated:** 2026-03-21 (Tier 1 premium features: Performance Predictor, Pain-Point Miner, Brand Voice Tracker)
 > **Purpose:** Complete context document so any AI or developer can pick up exactly where we left off.
 > Covers: what's built, what's in progress, what's next, and the full feature roadmap with implementation notes.
 
@@ -21,6 +21,7 @@
 11. [Platform Publishing Status](#11-platform-publishing-status)
 12. [Environment & Deployment](#12-environment--deployment)
 13. [Shared Context Pipeline (Agent Intelligence Layer)](#13-shared-context-pipeline-agent-intelligence-layer)
+14. [Tier 1 Premium Features](#14-tier-1-premium-features-built-2026-03-21)
 
 ---
 
@@ -787,6 +788,116 @@ This was Feature A ("Why This Will Work" Explainer) from the roadmap — now bui
 3. Post publishes → file uploaded from Supabase to platform
 4. After success → file stays in Supabase forever (this is the cost problem)
 
-**Recommended path (not yet implemented):** Delete the Supabase Storage copy after successful publish. The platform has the file, Drive still has the original, and all analysis data persists in the DB. Storage drops to only "in-flight" media (draft/scheduled posts). Estimated storage with cleanup: 5-10GB total vs potentially terabytes without.
+**Implemented (2026-03-21):** `cleanupProcessedMedia()` in `publishingAgent.js` deletes the Supabase Storage copy after successful publish. The platform has the file, Drive still has the original, and all analysis data persists in the DB. Storage drops to only "in-flight" media (draft/scheduled posts). Estimated storage with cleanup: 5-10GB total vs potentially terabytes without. AI-generated images are excluded from cleanup (different bucket, reusable).
 
 **Applies to all cloud providers:** Google Drive, Dropbox, and Box all provide thumbnail URLs via API. The media library browsing experience uses their bandwidth, not ours. Storage cost only applies to the copy-at-attach step.
+
+---
+
+## 14. Tier 1 Premium Features (Built 2026-03-21)
+
+Three premium intelligence features that use the shared context pipeline to deliver insights no other tool provides.
+
+### Feature 1: Performance Predictor
+
+**What it does:** Predicts engagement (likes, comments, reach) for a post BEFORE publishing. Shows confidence score and actionable factors explaining the prediction.
+
+**How it works:**
+1. User clicks "Predict Performance" button on any post card in the preview UI
+2. Backend pulls cohort benchmarks (peers with same industry/geo/platform) + user's own 30-day metrics
+3. Blends both data sources: 60% user weight, 40% cohort weight (if user has enough data)
+4. Calculates confidence (0-100%) based on cohort sample size + user post count
+5. Analyzes factors: hook length, question hooks, tone match, user vs peer performance, best hours
+6. Returns engagement range (±30% at high confidence, ±60% at low) + factors list
+
+**Files:**
+- `backend/services/performancePredictorService.js` — core prediction math (no LLM, pure data)
+- `backend/routes/intelligence.js` — `POST /intelligence/predict` endpoint
+- `frontend/public/js/preview.js` — `fetchPrediction()` + `renderPredictionCard()` UI
+
+**Key design decisions:**
+- No LLM call for the core prediction — pure math on existing data. Fast and free.
+- On-demand (button click), not auto-loaded. Avoids slowing down post preview page.
+- Graceful degradation: returns "not enough data" message if no cohort or user history.
+- Confidence score prevents over-reliance on thin data. Users see exactly how much data backs the number.
+
+**Tier limit key:** `performance_predictor` — add to `tier_limits` table to gate by plan.
+
+### Feature 2: Audience Pain-Point Miner
+
+**What it does:** Clusters audience comments from the last 30 days into recurring themes — pain points, questions, and desires. Each theme includes urgency, frequency, example quotes, and suggested post angles.
+
+**How it works:**
+1. Pulls raw comments from `comments` table (last 30 days)
+2. Pre-filters: prioritizes questions (ends with ?) and negative-sentiment comments
+3. Deduplicates and caps at 100 comments (stays within LLM token limits)
+4. Sends to LLM with `pain-point-mining.md` prompt for theme clustering
+5. Parses structured response: theme, urgency, frequency, quotes, post angles
+6. Caches result in Redis (6-hour TTL)
+7. Falls back to simple word-frequency clustering if LLM fails
+
+**Files:**
+- `backend/services/painPointMinerService.js` — mining + LLM clustering + fallback
+- `backend/prompts/pain-point-mining.md` — LLM prompt (editable, no code changes)
+- `backend/routes/intelligence.js` — `GET /intelligence/pain-points` endpoint
+- `backend/services/contextBuilder.js` — `buildPainPointsSection()` feeds into post generation
+
+**Integration with post generation:**
+Pain points are injected into the shared context (via `contextBuilder.js`) so the LLM can write posts that directly address what the audience is asking about. This is the feature that makes generated posts feel eerily relevant.
+
+**Tier limit key:** `pain_point_miner` — add to `tier_limits` table to gate by plan.
+
+### Feature 3: Brand Voice Tracker
+
+**What it does:** Analyzes published posts to learn the user's unique writing voice. The more they publish, the more accurately the AI mimics their style. Profile includes tone patterns, hook preferences, signature phrases, vocabulary level, and concrete writing rules.
+
+**How it works:**
+1. Pulls hooks + captions from published posts (last 90 days, up to 50 posts)
+2. Sends to LLM with `brand-voice-analysis.md` prompt
+3. LLM returns structured profile: overall_tone, sentence_style, vocabulary_level, hook_patterns, signature_phrases, cta_style, emoji_usage, writing_rules
+4. Cached in Redis (24-hour TTL)
+5. `getVoiceProfileForPrompt()` converts to plain text for LLM injection
+6. Feeds into `contextBuilder.js` → injected into post generation prompts
+
+**Files:**
+- `backend/services/brandVoiceService.js` — analysis + LLM + caching
+- `backend/prompts/brand-voice-analysis.md` — LLM prompt (editable)
+- `backend/routes/intelligence.js` — `GET /intelligence/voice-profile` endpoint
+- `backend/services/contextBuilder.js` — `buildVoiceSection()` feeds into post generation
+
+**Key design decisions:**
+- Needs minimum 5 published posts to build a profile. Below that, returns "not enough data."
+- Profile is derived, not stored. If posts change, the profile auto-updates on next cache expiry.
+- 90-day window captures enough voice data without including outdated style patterns.
+- Writing rules are concrete instructions ("Always use contractions", "Start hooks with 'You'") not vague descriptions.
+
+**Tier limit key:** `brand_voice_tracker` — add to `tier_limits` table to gate by plan.
+
+### How All Three Connect
+
+```
+Audience comments → Pain-Point Miner → "What to write about"
+                                             ↓
+User's published posts → Brand Voice Tracker → "How to write it"
+                                             ↓
+Cohort + user metrics → Performance Predictor → "Will it work?"
+```
+
+All three feed into the shared context pipeline (`contextBuilder.js`), which injects into post generation. The AI gets:
+- What topics the audience cares about (pain points)
+- How this creator specifically writes (voice profile)
+- What engagement to expect (performance data)
+
+This creates a feedback loop: better posts → more engagement → more data → better predictions → even better posts.
+
+### New Landmines
+
+37. **Pain-point miner needs ≥5 comments.** Returns graceful "not enough data" message below threshold. Don't lower it — with fewer comments, the LLM hallucinates themes.
+
+38. **Brand voice needs ≥5 published posts.** Same principle. Below threshold, the LLM invents patterns from insufficient data. The minimum is intentionally conservative.
+
+39. **Pain-point cache is 6 hours, voice cache is 24 hours.** These are long TTLs. If a user publishes 10 new posts and wants an updated voice profile immediately, they'd need to wait up to 24 hours. Could add a manual refresh button later if users complain.
+
+40. **contextBuilder now has 9 sections.** The full context (profile, research, performance, cohort, comments, content_patterns, video_tags, pain_points, voice_profile) could get large. LLM token limits are the constraint. If posts get truncated, reduce the section count in the `buildContext()` call.
+
+41. **Tier limits for premium features not yet in DB.** The `tier_limits` table needs rows for `performance_predictor`, `pain_point_miner`, and `brand_voice_tracker`. Until then, all users have access to all features. Add rows before launching paid plans.
