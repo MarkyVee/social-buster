@@ -53,7 +53,7 @@ function parsePlatformGuides() {
   const cleaned = raw.split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
 
   const guides  = {};
-  const keys    = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'youtube'];
+  const keys    = ['instagram', 'facebook', 'tiktok', 'linkedin', 'x', 'threads', 'whatsapp', 'telegram'];
 
   for (let i = 0; i < keys.length; i++) {
     const key   = keys[i];
@@ -328,7 +328,7 @@ async function generatePosts(brief, userContext) {
     console.warn(`[LLM] Failed to build shared context: ${err.message} — proceeding without`);
   }
 
-  // Split platforms into batches, e.g. [['instagram','facebook','tiktok'], ['linkedin','x','threads'], ['youtube']]
+  // Split platforms into batches, e.g. [['instagram','facebook','tiktok'], ['linkedin','x','threads'], ['whatsapp','telegram']]
   const batches = [];
   for (let i = 0; i < brief.platforms.length; i += PLATFORM_BATCH_SIZE) {
     batches.push(brief.platforms.slice(i, i + PLATFORM_BATCH_SIZE));

@@ -939,7 +939,8 @@ async function generateAllImages(postIds, platform) {
 const PLATFORM_VIDEO_LIMITS = {
   tiktok:    60,
   instagram: 90,
-  youtube:   60,
+  whatsapp:  120,
+  telegram:  120,
   facebook:  180,
   linkedin:  600,
   x:         140,

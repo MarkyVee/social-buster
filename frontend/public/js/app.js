@@ -247,7 +247,7 @@ const FEATURE_INFO = {
   },
   platforms_connected: {
     name:  'Platform Connections',
-    desc:  'Connect more social media accounts to publish everywhere from one dashboard. Manage Facebook, Instagram, TikTok, LinkedIn, X, Threads, and YouTube all in one place.',
+    desc:  'Connect more social media accounts to publish everywhere from one dashboard. Manage Facebook, Instagram, TikTok, LinkedIn, X, Threads, WhatsApp, and Telegram all in one place.',
     icon:  '🔗'
   },
   scheduled_queue_size: {

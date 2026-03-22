@@ -727,7 +727,7 @@ router.get('/platforms', standardLimiter, async (req, res) => {
 // Saves (or updates) OAuth credentials for a social media platform.
 //
 // Body:
-//   platform          — one of: instagram | facebook | tiktok | linkedin | x | threads | youtube
+//   platform          — one of: instagram | facebook | tiktok | linkedin | x | threads | whatsapp | telegram
 //   access_token      — plain-text OAuth access token (will be AES-encrypted before storage)
 //   refresh_token     — optional refresh token
 //   token_expires_at  — ISO datetime when access_token expires (optional)

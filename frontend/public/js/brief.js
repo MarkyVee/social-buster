@@ -193,7 +193,8 @@ const PLATFORMS = [
   { value: 'linkedin',  label: 'LinkedIn',  icon: '💼' },
   { value: 'x',         label: 'X',         icon: '𝕏' },
   { value: 'threads',   label: 'Threads',   icon: '🧵' },
-  { value: 'youtube',   label: 'YouTube',   icon: '▶️' }
+  { value: 'whatsapp',  label: 'WhatsApp',  icon: '💬' },
+  { value: 'telegram',  label: 'Telegram',  icon: '✈️' }
 ];
 
 // ----------------------------------------------------------------

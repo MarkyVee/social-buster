@@ -522,7 +522,8 @@ function derivePacing(segmentDurationSeconds) {
 function derivePlatformFit(durationSeconds, pacing) {
   const platforms = [];
 
-  if (durationSeconds <= 60)  platforms.push('tiktok', 'instagram', 'youtube');
+  if (durationSeconds <= 60)  platforms.push('tiktok', 'instagram');
+  if (durationSeconds <= 120) platforms.push('whatsapp', 'telegram');
   if (durationSeconds <= 140) platforms.push('x');
   if (durationSeconds <= 180) platforms.push('facebook');
   if (durationSeconds <= 300) platforms.push('threads');

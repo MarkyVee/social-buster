@@ -38,7 +38,8 @@ if (process.env.FFMPEG_PATH) {
 const PLATFORM_LIMITS = {
   tiktok:    60,
   instagram: 90,
-  youtube:   60,
+  whatsapp:  120,
+  telegram:  120,
   facebook:  180,
   linkedin:  600,
   x:         140,
@@ -56,7 +57,8 @@ const PLATFORM_IMAGE_LIMITS = {
   linkedin:  10 * 1024 * 1024,  // 10 MB
   tiktok:    10 * 1024 * 1024,  // 10 MB
   threads:   8  * 1024 * 1024,  // 8 MB
-  youtube:   Infinity            // YouTube does not accept image posts
+  whatsapp:  16 * 1024 * 1024,  // 16 MB (WhatsApp Cloud API limit)
+  telegram:  10 * 1024 * 1024   // 10 MB (Telegram Bot API URL limit)
 };
 
 // Max pixel length of the longest side after downsampling.
