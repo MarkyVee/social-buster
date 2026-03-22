@@ -219,8 +219,8 @@ function parseVisionResponse(rawText) {
     // Enriched fields (optional — older prompts may not return these)
     const hook_potential            = ['high', 'medium', 'low'].includes(parsed.hook_potential) ? parsed.hook_potential : null;
     const energy_level              = typeof parsed.energy_level === 'number' && parsed.energy_level >= 1 && parsed.energy_level <= 10 ? parsed.energy_level : null;
-    const audience_fit              = Array.isArray(parsed.audience_fit) ? parsed.audience_fit.filter(a => typeof a === 'string').slice(0, 5) : [];
-    const use_cases                 = Array.isArray(parsed.use_cases) ? parsed.use_cases.filter(u => typeof u === 'string').slice(0, 4) : [];
+    const audience_fit              = validateAudienceFit(parsed.audience_fit);
+    const use_cases                 = validateUseCases(parsed.use_cases);
     const text_overlay_opportunity  = typeof parsed.text_overlay_opportunity === 'boolean' ? parsed.text_overlay_opportunity : null;
 
     return {
@@ -278,16 +278,211 @@ function validateMood(rawMood) {
 // ----------------------------------------------------------------
 // validateTags
 //
-// Ensures tags is a clean array of lowercase strings.
-// Filters out anything that isn't a short string (max 50 chars).
+// Ensures tags is a clean array of lowercase strings with synonym
+// normalization. Common variants get collapsed to canonical forms
+// so clip matching works consistently.
+//
+// Edit TAG_SYNONYMS to refine what the AI returns over time.
+// This is the tuning knob for tag quality.
 // ----------------------------------------------------------------
+const TAG_SYNONYMS = {
+  // Locations
+  'gymnasium':    'gym',
+  'outdoors':     'outdoor',
+  'indoors':      'indoor',
+  'outside':      'outdoor',
+  'inside':       'indoor',
+  'home office':  'office',
+  'workspace':    'office',
+  'eatery':       'restaurant',
+  'cafe':         'restaurant',
+  'coffee shop':  'restaurant',
+
+  // People
+  'woman':        'adult',
+  'man':          'adult',
+  'kid':          'child',
+  'kids':         'child',
+  'children':     'child',
+  'toddler':      'child',
+  'teen':         'teenager',
+  'teens':        'teenager',
+  'group':        'crowd',
+  'audience':     'crowd',
+  'speaker':      'presenter',
+
+  // Actions
+  'working out':  'exercising',
+  'exercise':     'exercising',
+  'workout':      'exercising',
+  'running':      'exercising',
+  'lifting':      'exercising',
+  'eating':       'food',
+  'dining':       'food',
+  'chatting':     'talking',
+  'speaking':     'talking',
+  'discussing':   'talking',
+  'laughing':     'people laughing',
+  'smiling':      'happy',
+  'crying':       'emotional',
+
+  // Themes
+  'xmas':         'christmas',
+  'x-mas':        'christmas',
+  'bday':         'birthday',
+  'new year':     'new years',
+  'new years eve': 'new years',
+  'back to school': 'back-to-school',
+  'diy':          'DIY',
+  'do it yourself': 'DIY',
+  'health':       'wellness',
+  'healthy':      'wellness',
+  'selfcare':     'self-care',
+  'self care':    'self-care',
+
+  // Visual styles
+  'closeup':      'close-up',
+  'close up':     'close-up',
+  'wideshot':     'wide shot',
+  'wide-shot':    'wide shot',
+  'slo-mo':       'slow motion',
+  'slowmo':       'slow motion',
+  'timelapse':    'time-lapse',
+  'time lapse':   'time-lapse'
+};
+
 function validateTags(rawTags) {
   if (!Array.isArray(rawTags)) return [];
 
-  return rawTags
+  const normalized = rawTags
     .filter(t => typeof t === 'string' && t.trim().length > 0 && t.length <= 50)
-    .map(t => t.toLowerCase().trim())
-    .slice(0, 30);  // Cap at 30 tags — anything more is probably noise
+    .map(t => {
+      const lower = t.toLowerCase().trim();
+      return TAG_SYNONYMS[lower] || lower;
+    });
+
+  // Deduplicate after normalization (synonyms may collapse to the same tag)
+  const unique = [...new Set(normalized)];
+
+  return unique.slice(0, 30);  // Cap at 30 tags — anything more is probably noise
+}
+
+// ----------------------------------------------------------------
+// validateAudienceFit
+//
+// Restricts audience_fit to a known set of audience types.
+// If the AI invents a category, map it to the closest match or drop it.
+// ----------------------------------------------------------------
+const ALLOWED_AUDIENCES = [
+  'entrepreneurs', 'parents', 'fitness enthusiasts', 'foodies', 'students',
+  'professionals', 'teens', 'creators', 'pet owners', 'travelers',
+  'beauty/fashion', 'tech enthusiasts', 'small business owners', 'health/wellness'
+];
+
+const AUDIENCE_SYNONYMS = {
+  'business owners':    'small business owners',
+  'startup founders':   'entrepreneurs',
+  'moms':               'parents',
+  'dads':               'parents',
+  'families':           'parents',
+  'gym goers':          'fitness enthusiasts',
+  'athletes':           'fitness enthusiasts',
+  'runners':            'fitness enthusiasts',
+  'content creators':   'creators',
+  'influencers':        'creators',
+  'bloggers':           'creators',
+  'developers':         'tech enthusiasts',
+  'programmers':        'tech enthusiasts',
+  'gamers':             'tech enthusiasts',
+  'college students':   'students',
+  'high school':        'teens',
+  'teenagers':          'teens',
+  'gen z':              'teens',
+  'millennials':        'professionals',
+  'dog owners':         'pet owners',
+  'cat owners':         'pet owners',
+  'fashion':            'beauty/fashion',
+  'beauty':             'beauty/fashion',
+  'makeup':             'beauty/fashion',
+  'wellness':           'health/wellness',
+  'self-care':          'health/wellness',
+  'cooking':            'foodies',
+  'food lovers':        'foodies',
+  'adventure':          'travelers',
+  'backpackers':        'travelers'
+};
+
+function validateAudienceFit(rawAudience) {
+  if (!Array.isArray(rawAudience)) return [];
+
+  const validated = rawAudience
+    .filter(a => typeof a === 'string')
+    .map(a => {
+      const lower = a.toLowerCase().trim();
+      if (ALLOWED_AUDIENCES.includes(lower)) return lower;
+      return AUDIENCE_SYNONYMS[lower] || null;
+    })
+    .filter(Boolean);
+
+  return [...new Set(validated)].slice(0, 5);
+}
+
+// ----------------------------------------------------------------
+// validateUseCases
+//
+// Restricts use_cases to a known set of post types.
+// ----------------------------------------------------------------
+const ALLOWED_USE_CASES = [
+  'product demo', 'testimonial', 'behind-the-scenes', 'educational',
+  'entertainment', 'emotional storytelling', 'trend participation',
+  'before/after', 'tutorial', 'announcement', 'brand awareness',
+  'community building'
+];
+
+const USE_CASE_SYNONYMS = {
+  'how-to':               'tutorial',
+  'how to':               'tutorial',
+  'teaching':             'educational',
+  'informational':        'educational',
+  'explainer':            'educational',
+  'demo':                 'product demo',
+  'demonstration':        'product demo',
+  'review':               'testimonial',
+  'customer story':       'testimonial',
+  'bts':                  'behind-the-scenes',
+  'behind the scenes':    'behind-the-scenes',
+  'funny':                'entertainment',
+  'comedy':               'entertainment',
+  'meme':                 'entertainment',
+  'transformation':       'before/after',
+  'makeover':             'before/after',
+  'launch':               'announcement',
+  'reveal':               'announcement',
+  'unboxing':             'announcement',
+  'story':                'emotional storytelling',
+  'personal story':       'emotional storytelling',
+  'storytime':            'emotional storytelling',
+  'trending':             'trend participation',
+  'challenge':            'trend participation',
+  'viral':                'trend participation',
+  'engagement':           'community building',
+  'q&a':                  'community building',
+  'poll':                 'community building'
+};
+
+function validateUseCases(rawCases) {
+  if (!Array.isArray(rawCases)) return [];
+
+  const validated = rawCases
+    .filter(u => typeof u === 'string')
+    .map(u => {
+      const lower = u.toLowerCase().trim();
+      if (ALLOWED_USE_CASES.includes(lower)) return lower;
+      return USE_CASE_SYNONYMS[lower] || null;
+    })
+    .filter(Boolean);
+
+  return [...new Set(validated)].slice(0, 4);
 }
 
 module.exports = { tagSegmentWithVision };
