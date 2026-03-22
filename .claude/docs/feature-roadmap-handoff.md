@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Full Handoff
 
-> **Last updated:** 2026-03-21 (evening session)
+> **Last updated:** 2026-03-21 (late session — tier limits + admin override)
 > **Purpose:** Complete context document so any AI or developer can pick up exactly where we left off.
 > Covers: what's built, what's in progress, what's next, and the full feature roadmap with implementation notes.
 
@@ -82,11 +82,27 @@
 - **Admin dashboard** — Tabs: Overview, Users, Queues, Messages, Limits, Revenue, Email, Plans
 - **DB-driven plans editor** — Admin can edit plan names, prices, features, colors, Stripe price IDs without code changes
 - **Tier limits editor** — DB-driven per-tier feature caps with toggle on/off (briefs/month, AI images/month, platforms, queue size, comment monitoring, DM/lead capture, intelligence dashboard)
+- **Toggle semantics:** Toggle ON = feature available (with numeric cap if set). Toggle OFF = feature blocked for that tier. No row = no restriction.
 - **Feature flag toggles** — Simple on/off for comment monitoring, DM & lead capture, intelligence dashboard per tier
+- **Admin tier override** — Admin can set any user's tier via Admin > Users. Override stored in `user_profiles.subscription_tier`, takes priority over Stripe subscription everywhere (billing status, auth/me, checkLimit, my-limits)
 - **Bulk email system** — Admin email campaigns via Resend (groups + campaigns)
 - **In-app subscription management** — Plan cards, upgrade via Stripe Checkout, downgrade to free, cancel subscription (all working with Stripe)
 - **Revenue tab** — Pulls prices from plans DB table
 - **Health check system** — Quick (5min) + full (60min) checks, auto-remediation, email alerts
+
+### Tier Limit Enforcement (fully wired)
+- **Backend middleware:** `checkLimit(feature)` wired on all guarded routes:
+  - `POST /briefs` → `briefs_per_month`
+  - `POST /media/generate-image` → `ai_images_per_month`
+  - `POST /posts/:id/approve` and `/schedule` → `scheduled_queue_size`
+  - `POST /automations` → `comment_monitoring`
+  - `GET /automations/leads/export` → `dm_lead_capture`
+  - All `/intelligence/*` routes → `intelligence_dashboard` (router-level)
+  - `POST /publish/oauth/meta/start` and `/threads/start` → `platforms_connected` (blocks before OAuth redirect)
+  - `POST /platforms/connect` → `platforms_connected`
+- **Frontend upgrade prompts:** `apiFetch` detects 429 `limit_reached` responses → shows `showUpgradePrompt()` modal with feature icon, selling description, and "View Plans & Upgrade" button. Intelligence dashboard shows full-page upgrade placeholder when tier-blocked.
+- **Platform checkbox cap:** Profile page fetches `GET /billing/my-limits` and limits "Preferred Platforms" checkboxes to the user's `platforms_connected` cap. Exceeding shows upgrade prompt.
+- **Feature descriptions (FEATURE_INFO):** 7 features with icon, name, and marketing description shown in upgrade modals so locked features sell themselves.
 
 ### Auth & Token Refresh
 - **JWT-aware proactive refresh** — checks token expiry before every API call, refreshes if within 5 minutes of expiring
@@ -114,21 +130,18 @@
 
 ## 3. What's In Progress
 
-### Stripe Billing — WORKING (as of 2026-03-21 evening)
+### Stripe Billing — FULLY WORKING (as of 2026-03-21)
 - **Working:** Subscribe (Stripe Checkout for free→paid), change plan (paid→paid with proration), cancel at period end, downgrade to free (immediate), Stripe customer portal
 - **Working:** Webhook receives events correctly, `STRIPE_WEBHOOK_SECRET` confirmed working in Coolify
-- **Working:** Plan cards UI, upgrade/downgrade/cancel buttons with loading states
-- **Fixed this session:**
-  - Webhook was overwriting `cancelling` status back to `active` — Stripe keeps status=`active` when `cancel_at_period_end=true`. Webhook now checks `cancel_at_period_end` and maps to `cancelling`. (commit `5fa5553`)
-  - Billing success/error notifications were invisible — `showAlert` inserted into DOM that got rebuilt by `renderSubscriptionSection()`. Added global toast system (`#global-toasts` outside `#app`, `showToast()` function) that is immune to DOM re-renders. (commit `ad2a1f1`)
-  - Downgrade-to-free confirmation now warns about losing credit and needing new payment to re-upgrade. (commit `0289131`)
-  - Added loading states ("Cancelling...", "Changing...", "Downgrading...") to all billing buttons. (commit `af4e7a6`)
-- **Not done:** Tier gating enforcement in backend routes (checking limits before allowing actions)
-
-### Admin Limits Tab Bug
-- **Issue:** Limits tab showed "No tier limits configured" when navigating away and back
-- **Fix applied:** Moved `panel.dataset.loaded` flag to after successful data fetch (commit `f023bf4`)
-- **Status:** Needs verification after next Coolify redeploy
+- **Working:** Plan cards UI, upgrade/downgrade/cancel buttons with loading states and global toast notifications
+- **Working:** Tier limit enforcement on all routes with frontend upgrade prompts
+- **Working:** Admin tier override — changing a user's tier in Admin Dashboard takes effect immediately everywhere
+- **Prior fixes (this session):**
+  - Webhook `cancel_at_period_end` race condition (commit `5fa5553`)
+  - Global toast system for billing notifications (commit `ad2a1f1`)
+  - Toggle logic inversion — OFF now blocks instead of allowing unlimited (commit `96032bf`)
+  - Admin tier override not reflected in `/auth/me` and `/billing/status` (commit `3c8bf40`)
+  - Platform checkbox enforcement on profile page (commit `2607fe8`)
 
 ---
 
@@ -141,8 +154,8 @@ These are non-feature items that need to be done for production readiness:
 | **Meta App Review** | HIGH | `pages_messaging`, `pages_read_engagement`, `instagram_manage_messages` scopes needed for production DM automation |
 | **Meta webhook registration** | HIGH | Register `https://yourdomain.com/webhooks/meta` in Meta Developer Portal for multi-step DM replies |
 | **Privacy Policy page** | HIGH | Required before Meta App Review. Page exists at `/privacy.html` but may need content review |
-| **Tier limit enforcement** | HIGH | Backend `checkLimit` middleware exists but feature flags (comment_monitoring, dm_lead_capture, intelligence_dashboard) need wiring into routes |
-| **Stripe end-to-end test** | DONE | Subscribe, upgrade, downgrade, cancel all tested and working. Webhook confirmed receiving events. |
+| **Tier limit enforcement** | DONE | `checkLimit` wired on all routes. Frontend upgrade prompts with feature descriptions. Platform checkbox cap on profile. Admin toggle semantics fixed (OFF=blocked). |
+| **Stripe end-to-end test** | DONE | Subscribe, upgrade, downgrade, cancel all tested and working. Webhook confirmed receiving events. Admin tier override working. |
 | **LinkedIn OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
 | **TikTok OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
 | **X (Twitter) OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
@@ -466,7 +479,7 @@ Instead of one-off posts, let users plan multi-post campaigns: "Product launch w
 ### Frontend JS Files
 | File | Purpose |
 |------|---------|
-| `app.js` | Shell, auth, routing, settings, subscription UI, global toast system, token refresh |
+| `app.js` | Shell, auth, routing, settings, subscription UI, global toast system, token refresh, upgrade prompts (showUpgradePrompt, renderUpgradePlaceholder, FEATURE_INFO), platform checkbox enforcement |
 | `brief.js` | Brief form + AI generation flow |
 | `preview.js` | WYSIWYG post preview + DM automation panel |
 | `publish.js` | Publishing queue UI, OAuth connect/disconnect |
@@ -522,13 +535,17 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 25. **Never use `showAlert` for actions that trigger `renderSubscriptionSection()`** — The re-render rebuilds DOM and can destroy/displace alert elements. Use `showToast()` instead — it renders to `#global-toasts` which lives outside `#app` and survives all re-renders.
 26. **Always bump `app.js?v=N` in `index.html` after frontend changes** — Without this, browsers serve cached old code and new features/fixes don't appear. Production uses Coolify which rebuilds the Docker image, but browsers cache aggressively.
 27. **Always `git push origin main` after every commit** — Coolify deploys from GitHub. Unpushed commits = undeployed code. The user manually triggers redeploy in Coolify after being told code is pushed.
+28. **Admin toggle OFF = feature BLOCKED, not "no limit"** — `checkLimit.js` was originally coded so `enabled: false` meant "skip check = allow through". This was fixed (commit `96032bf`). Now: toggle OFF = blocked, no row = allow, toggle ON = enforce limit. If you see the old `if (!limit || !limit.enabled) return next()` pattern, it's wrong — they must be separate checks.
+29. **Admin tier override must be checked in ALL tier-reading endpoints** — `user_profiles.subscription_tier` takes priority over `subscriptions.plan`. Three places read the tier: `checkLimit.js`, `GET /billing/status`, `GET /auth/me`. All three must check `user_profiles.subscription_tier` first. The `GET /billing/my-limits` endpoint also follows this pattern. If you add a new endpoint that reads the user's plan, check the admin override first.
+30. **`platforms_connected` limit must be on OAuth start, not just connect** — Without this, users go through the full Facebook OAuth flow (redirect to Facebook, authorize, come back) only to be told they can't connect. Always check the limit at the start route (`/oauth/meta/start`, `/oauth/threads/start`) so they see the upgrade prompt immediately.
+31. **Feature-flag limits (comment_monitoring, dm_lead_capture, intelligence_dashboard) use `countUsage` default case** — These features don't have a numeric counter. `countUsage()` returns 0 for unknown features (default case). When `limit_value = 0` and `enabled = true`, `0 < 0 = false` → blocked. When `limit_value = 1`, `0 < 1 = true` → allowed. This is by design — don't add counter cases for feature flags.
 
 ---
 
 ## 10. Database Tables Reference
 
 ### Core Tables
-- `user_profiles` — brand_name, industry, target_audience, brand_voice, business_type, geo_region, target_age_range, content_goals
+- `user_profiles` — brand_name, industry, target_audience, brand_voice, business_type, geo_region, target_age_range, content_goals, subscription_tier (admin override — takes priority over Stripe), admin_notes
 - `briefs` — niche, platforms (JSONB array), tone, post_type, objective, notes, talking_points, semantic metadata
 - `posts` — brief_id, platform, hook, caption, hashtags, cta, media_id, status (draft/approved/scheduled/publishing/published/failed), scheduled_for, error_message
 - `media_items` — cloud_provider, cloud_url, processed_url, process_status, file_type, duration, width, height
@@ -546,7 +563,7 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 ### Billing & Admin Tables
 - `subscriptions` — user_id, stripe_customer_id, stripe_subscription_id, plan, status, current_period_end
 - `plans` — tier, name, price_display, period_label, stripe_price_id, features (JSONB), color, badge, sort_order, is_active
-- `tier_limits` — tier, feature, limit_value, enabled
+- `tier_limits` — tier, feature, limit_value, enabled, label. Toggle ON = enforce limit. Toggle OFF = feature blocked for tier. No row = no restriction. limit_value: -1 = unlimited, 0 = blocked, N = cap at N.
 - `cohort_performance` — cohort_key, platform, post_type, avg_likes, avg_reach, top_hooks, top_tones, best_post_hours
 
 ---
