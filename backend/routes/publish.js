@@ -975,6 +975,7 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
 router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
   // Threads has its own App ID/Secret, separate from the Facebook Login Meta App.
   const threadsAppId = process.env.THREADS_APP_ID || process.env.META_APP_ID;
+  console.log(`[Threads OAuth] THREADS_APP_ID=${process.env.THREADS_APP_ID}, META_APP_ID=${process.env.META_APP_ID}, resolved=${threadsAppId}`);
   if (!threadsAppId) {
     return res.status(501).json({
       error: 'Threads is not set up yet. Add THREADS_APP_ID and THREADS_APP_SECRET to your .env file.'
