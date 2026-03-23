@@ -381,6 +381,7 @@ async function resizeImageIfNeeded(inputPath, platform) {
       .on('end', resolve)
       .on('error', (err) => reject(new Error(`Image resize failed: ${err.message}`)))
       .run();
+  });
 
   const newSizeBytes = fs.statSync(outputPath).size;
   console.log(
