@@ -491,7 +491,7 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`[Server] Social Buster API running on port ${PORT}`);
       console.log(`[Server] Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`[Server] Frontend: http://localhost:${PORT}`);
+      console.log(`[Server] Frontend: ${process.env.FRONTEND_URL || `http://localhost:${PORT}`}`);
     });
 
     // ----------------------------------------------------------------
