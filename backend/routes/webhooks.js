@@ -143,4 +143,48 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   }
 });
 
+// ----------------------------------------------------------------
+// POST /webhooks/meta/deauthorize
+//
+// Meta calls this when a user removes your app from their Facebook or
+// Instagram account. Required field in Meta App Settings.
+// URL to register: https://social-buster.com/webhooks/meta/deauthorize
+//
+// Meta sends a signed_request in the body. In production you'd decode
+// the signed_request to find the user_id and revoke their connection.
+// ----------------------------------------------------------------
+router.post('/deauthorize', (req, res) => {
+  const signedRequest = req.body?.signed_request || '(unknown)';
+  console.log('[Webhooks] Meta deauthorize webhook received. signed_request:', signedRequest);
+
+  // TODO (production): decode signed_request using FACEBOOK_APP_SECRET,
+  // find user by platform_user_id, delete their row in platform_connections.
+
+  return res.sendStatus(200);
+});
+
+// ----------------------------------------------------------------
+// GET  /webhooks/meta/data-deletion  (Meta redirects users here)
+// POST /webhooks/meta/data-deletion  (Meta calls this as a webhook)
+//
+// Required by Meta for GDPR / data deletion requests.
+// When a user asks Facebook to delete their data, Meta calls this endpoint.
+// Must return JSON with a confirmation_code and a url where the user
+// can check the status of their deletion request.
+// URL to register: https://social-buster.com/webhooks/meta/data-deletion
+// ----------------------------------------------------------------
+router.all('/data-deletion', async (req, res) => {
+  const signedRequest = req.body?.signed_request || req.query?.signed_request || '(unknown)';
+  const confirmationCode = `sb-deletion-${Date.now()}`;
+  console.log('[Webhooks] Meta data deletion request received. Code:', confirmationCode, 'signed_request:', signedRequest);
+
+  // TODO (production): decode signed_request, find user, queue data cleanup,
+  // store confirmation_code so the status_url page can show progress.
+
+  return res.json({
+    url:               `${process.env.FRONTEND_URL || 'https://social-buster.com'}/data-deleted`,
+    confirmation_code: confirmationCode
+  });
+});
+
 module.exports = router;
