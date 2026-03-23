@@ -1815,17 +1815,16 @@ function renderAutomationSteps(postId, flowType, steps) {
         >${escapeHtml(step.message_template || '')}</textarea>
         <div style="margin-top:4px;">
           <label class="text-sm">Collect:</label>
-          <select class="form-control form-control-sm" id="auto-step-field-${postId}-${i}" style="display:inline-block;width:auto;margin-left:4px;">
+          <select class="form-control form-control-sm" id="auto-step-field-${postId}-${i}" style="display:inline-block;width:auto;margin-left:4px;"
+                  onchange="toggleCustomFieldLabel('${postId}', ${i})">
             <option value="" ${!step.collects_field ? 'selected' : ''}>Nothing (final message)</option>
             <option value="email" ${step.collects_field === 'email' ? 'selected' : ''}>Email</option>
             <option value="phone" ${step.collects_field === 'phone' ? 'selected' : ''}>Phone</option>
             <option value="name" ${step.collects_field === 'name' ? 'selected' : ''}>Name</option>
             <option value="custom" ${step.collects_field === 'custom' ? 'selected' : ''}>Custom</option>
           </select>
-          ${step.collects_field === 'custom' ? `
-            <input type="text" class="form-control form-control-sm" style="display:inline-block;width:120px;margin-left:4px;"
-                   id="auto-step-custom-${postId}-${i}" value="${escapeHtml(step.custom_field_label || '')}" placeholder="Field label" />
-          ` : ''}
+          <input type="text" class="form-control form-control-sm" style="display:${step.collects_field === 'custom' ? 'inline-block' : 'none'};width:120px;margin-left:4px;"
+                 id="auto-step-custom-${postId}-${i}" value="${escapeHtml(step.custom_field_label || '')}" placeholder="Field label" />
         </div>
       </div>
     `;
@@ -1833,6 +1832,15 @@ function renderAutomationSteps(postId, flowType, steps) {
 
   html += `<button class="btn btn-xs btn-secondary" onclick="addAutomationStep('${postId}')" style="margin-top:4px;">+ Add Step</button>`;
   return html;
+}
+
+// Show/hide the custom field label input when the "Collect" dropdown changes
+function toggleCustomFieldLabel(postId, stepIndex) {
+  const select = document.getElementById(`auto-step-field-${postId}-${stepIndex}`);
+  const input  = document.getElementById(`auto-step-custom-${postId}-${stepIndex}`);
+  if (!select || !input) return;
+  input.style.display = select.value === 'custom' ? 'inline-block' : 'none';
+  if (select.value !== 'custom') input.value = '';
 }
 
 function toggleFlowType(postId, type) {
