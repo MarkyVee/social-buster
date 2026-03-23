@@ -170,6 +170,26 @@ async function saveMetaPageConnection(userId, page, finish) {
   connectedPlatforms.push('facebook');
   console.log(`[Publish] Facebook Page "${page.name}" (${page.id}) connected for user ${userId}`);
 
+  // Subscribe the Page to our app's webhooks so Meta sends us
+  // real-time events (comments, messages, etc.) for this Page.
+  // Without this call, the webhook URL we registered won't receive events.
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps`,
+      null,
+      { params: {
+          access_token: page.access_token,
+          subscribed_fields: 'feed,messages,messaging_postbacks,message_deliveries,messaging_optins'
+        },
+        timeout: 10000
+      }
+    );
+    console.log(`[Publish] Page "${page.name}" subscribed to app webhooks (feed, messages)`);
+  } catch (subErr) {
+    // Non-fatal — webhooks won't fire but polling still works as a safety net
+    console.warn(`[Publish] Could not subscribe Page to webhooks:`, subErr.response?.data?.error?.message || subErr.message);
+  }
+
   // Check for a linked Instagram Business Account on this Page
   if (page.instagram_business_account?.id) {
     try {
