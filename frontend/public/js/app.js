@@ -430,6 +430,9 @@ function renderView(view) {
       if (typeof renderAdminDashboard === 'function') renderAdminDashboard(contentEl);
       else contentEl.innerHTML = '<div class="page-header"><div class="page-title">Admin</div><p>admin.js not loaded.</p></div>';
       break;
+    case 'help':
+      renderHelpView(contentEl);
+      break;
     default:
       renderDashboard(contentEl);
   }
@@ -676,6 +679,9 @@ function renderAppShell() {
         </div>
 
         <div class="sidebar-footer">
+          <button class="sidebar-link" data-view="help" onclick="navigate('help')">
+            <span class="sidebar-icon">❓</span> Help & Tutorials
+          </button>
           <div class="sidebar-user" onclick="navigate('profile')" style="cursor:pointer;" title="Edit your profile">
             <div class="sidebar-avatar">${userInitial}</div>
             <div class="sidebar-user-email">${userEmail}</div>
@@ -2802,6 +2808,210 @@ async function exportLeadsCSV() {
   } catch (err) {
     alert('Failed to export: ' + err.message);
   }
+}
+
+// ============================================================
+// HELP & TUTORIALS VIEW
+// ============================================================
+function renderHelpView(container) {
+  // Help topics — each section is collapsible
+  const topics = [
+    {
+      id: 'getting-started',
+      title: 'Getting Started',
+      icon: '🚀',
+      items: [
+        { q: 'What is Social Buster?', a: 'Social Buster is an AI-powered social media marketing platform. It helps you create high-performing posts, schedule them across multiple platforms, and automate comment-to-DM lead capture — all from one dashboard.' },
+        { q: 'How do I set up my profile?', a: 'Click <strong>My Profile</strong> in the sidebar. Fill in your brand name, industry, target audience, and geographic region. This information powers the AI — the more detail you provide, the better your generated content will be.' },
+        { q: 'Which platforms are supported?', a: 'Currently <strong>Facebook</strong> and <strong>Instagram</strong> are fully connected for publishing. Threads is connected for OAuth. TikTok, LinkedIn, X (Twitter), and YouTube are coming soon.' },
+        { q: 'How do I connect a social platform?', a: 'Go to <strong>Settings & Billing</strong> → scroll to <strong>Platform Connections</strong>. Click "Connect" next to the platform you want. You\'ll be redirected to that platform to authorize Social Buster. Once approved, you\'ll see a green "Connected" badge.' }
+      ]
+    },
+    {
+      id: 'briefs-generation',
+      title: 'Briefs & AI Generation',
+      icon: '✏️',
+      items: [
+        { q: 'What is a brief?', a: 'A brief is your creative input — it tells the AI what kind of post to generate. You pick the platforms, post type (educational, promotional, storytelling, etc.), tone, objective, and provide any specific instructions.' },
+        { q: 'How do I create a brief?', a: 'Click <strong>New Brief</strong> in the sidebar. Select your target platforms, pick a post type and tone, add any custom instructions, then click <strong>Generate Posts</strong>. The AI will create tailored content for each platform.' },
+        { q: 'Can I edit generated posts?', a: 'Yes! After generation, each post appears in the <strong>Generated Posts</strong> view. Click any post to open the full editor where you can modify the hook, caption, hashtags, CTA, and attached media.' },
+        { q: 'What is the Intelligence pre-flight?', a: 'Before generating, the AI checks your performance history, trending topics, and audience data to inform the content. This "pre-flight" step is what makes Social Buster posts more effective than generic AI output.' },
+        { q: 'How do I attach media to a post?', a: 'In the post editor, click <strong>Attach Media</strong>. You can pick from your Media Library (uploaded files, Google Drive, or AI-generated images). Media is processed and optimized for each platform automatically.' }
+      ]
+    },
+    {
+      id: 'media-library',
+      title: 'Media Library',
+      icon: '🎬',
+      items: [
+        { q: 'How do I add media?', a: 'Go to <strong>Media Library</strong> in the sidebar. You can connect Google Drive to scan for media files, or generate AI images directly in the app. All your media is stored and organized in one place.' },
+        { q: 'How does Google Drive integration work?', a: 'In Settings, connect your Google Drive account. Social Buster will scan your Drive for images and videos. When you attach a Drive file to a post, it\'s automatically copied to our storage so publishing works reliably.' },
+        { q: 'What is AI image generation?', a: 'In the Media Library, click <strong>Generate AI Image</strong>. Describe what you want and the AI will create a custom image. These images are saved to your library and can be attached to any post.' },
+        { q: 'How does video clip selection work?', a: 'When you upload a video, Social Buster analyzes it in the background and identifies the best segments. When attaching video to a post, you\'ll see suggested clips with thumbnails — pick the one that fits your content.' }
+      ]
+    },
+    {
+      id: 'publishing',
+      title: 'Publishing & Scheduling',
+      icon: '🗓️',
+      items: [
+        { q: 'How do I publish a post?', a: 'From <strong>Generated Posts</strong>, approve the posts you want to publish. They\'ll appear in your <strong>Publishing Queue</strong>. You can publish immediately or schedule them for a specific date and time.' },
+        { q: 'What does each post status mean?', a: '<strong>Draft</strong> = still editing. <strong>Approved</strong> = ready to publish. <strong>Scheduled</strong> = will publish at the set time. <strong>Publishing</strong> = currently being sent. <strong>Published</strong> = live on the platform. <strong>Failed</strong> = something went wrong (check the error message).' },
+        { q: 'What if a post fails to publish?', a: 'Failed posts show an error message explaining what went wrong. Common issues: expired platform token (reconnect in Settings), duplicate content (Facebook rejects identical posts), or missing media. Fix the issue and retry from the queue.' },
+        { q: 'Can I publish to multiple platforms at once?', a: 'Yes! When you create a brief, select multiple platforms. The AI generates platform-specific content for each one. When you approve them, each platform version publishes independently.' }
+      ]
+    },
+    {
+      id: 'dm-automation',
+      title: 'DM Automation & Leads',
+      icon: '🤖',
+      items: [
+        { q: 'What is comment-to-DM automation?', a: 'You set trigger keywords on a published post. When someone comments with one of those keywords, Social Buster automatically sends them a DM with your configured message. This turns commenters into leads.' },
+        { q: 'How do I set up an automation?', a: 'Go to <strong>DM Automations</strong> in the sidebar. Click "New Automation", select a published post, add your trigger keywords (e.g., "info", "link", "interested"), write your DM message, and activate it.' },
+        { q: 'What are multi-step conversations?', a: 'Instead of a single DM, you can create a conversation flow with multiple steps. Each step asks a question and waits for the user\'s reply before moving to the next. Great for collecting email, phone, or qualifying leads.' },
+        { q: 'Where do I see my leads?', a: 'In the <strong>DM Automations</strong> view, click on any automation to see its leads. You can also export all leads as a CSV file for use in your CRM or email marketing tool.' },
+        { q: 'Are there DM limits?', a: 'Yes — Meta enforces limits: ~100 DMs/day per Facebook Page and ~80 DMs/day per Instagram account. Social Buster tracks these limits automatically. Also, you can only DM users who interacted with your content within the last 24 hours.' }
+      ]
+    },
+    {
+      id: 'intelligence',
+      title: 'Intelligence & Analytics',
+      icon: '🧠',
+      items: [
+        { q: 'What is the Intelligence Dashboard?', a: 'It shows AI-powered insights about your content performance: what\'s working, what\'s not, trending topics in your niche, and recommendations for your next posts.' },
+        { q: 'What is the main Dashboard?', a: 'The <strong>Dashboard</strong> gives you a quick overview: recent posts, publishing stats, connected platforms, and your account status.' },
+        { q: 'How does the AI learn from my data?', a: 'Every time you publish and get engagement data back (likes, comments, shares), Social Buster feeds that into the intelligence engine. Over time, the AI learns what content resonates with your specific audience.' }
+      ]
+    },
+    {
+      id: 'settings-billing',
+      title: 'Settings & Billing',
+      icon: '⚙️',
+      items: [
+        { q: 'How do I manage my subscription?', a: 'Go to <strong>Settings & Billing</strong>. You\'ll see your current plan and usage. Click "Manage Subscription" to upgrade, downgrade, or update your payment method through our secure Stripe portal.' },
+        { q: 'What plans are available?', a: '<strong>Free Trial</strong> — limited features to try the platform. <strong>Starter ($29/mo)</strong> — core features for individual creators. <strong>Professional ($79/mo)</strong> — full feature set with higher limits. <strong>Buster ($199/mo)</strong> — enterprise-grade with priority support and maximum limits.' },
+        { q: 'How do I disconnect a platform?', a: 'Go to <strong>Settings & Billing</strong> → Platform Connections. Click "Disconnect" next to the platform. Your existing published posts won\'t be affected, but you won\'t be able to publish new ones until you reconnect.' },
+        { q: 'How do I change my password?', a: 'Currently, password changes are handled through the Supabase auth system. Go to the login screen and use "Forgot Password" to reset it via email.' }
+      ]
+    },
+    {
+      id: 'troubleshooting',
+      title: 'Troubleshooting',
+      icon: '🔧',
+      items: [
+        { q: 'My post published as text-only (no image/video)', a: 'This usually means the media wasn\'t processed before publishing. Make sure your media shows a green "Ready" status in the post editor before approving. If it shows "Processing", wait for it to complete.' },
+        { q: 'I got a "token expired" error', a: 'Your platform connection has expired. Go to <strong>Settings & Billing</strong> → Platform Connections and click "Reconnect" for the affected platform. You\'ll re-authorize and get a fresh token.' },
+        { q: 'The AI generated content doesn\'t match my brand', a: 'Update your <strong>My Profile</strong> with more specific details: brand voice, industry, target audience, and any style preferences in the custom instructions field. The AI uses all of this to tailor content.' },
+        { q: 'Publishing is stuck on "Publishing" status', a: 'If a post stays in "Publishing" for more than 3 minutes, the system will automatically reset it to "Failed" so you can retry. Check the error message for details.' },
+        { q: 'I can\'t connect my Instagram account', a: 'Instagram publishing requires a <strong>Business or Creator account</strong> connected to a Facebook Page. Make sure your Instagram is linked to a Facebook Page in Instagram\'s settings, then connect Facebook in Social Buster — Instagram will be available automatically.' },
+        { q: 'Google Drive files aren\'t showing up', a: 'After connecting Google Drive, click "Scan Drive" in the Media Library. Only image and video files in supported formats will appear. The scan runs automatically every 30 minutes after the first scan.' }
+      ]
+    }
+  ];
+
+  container.innerHTML = `
+    <div class="page-header">
+      <div class="page-title">Help & Tutorials</div>
+      <p class="text-muted">Everything you need to know about using Social Buster</p>
+    </div>
+
+    <!-- Search -->
+    <div class="form-group" style="max-width:500px; margin-bottom:24px;">
+      <input type="text" id="help-search" class="form-input" placeholder="Search help topics..." oninput="filterHelpTopics(this.value)">
+    </div>
+
+    <!-- Video tutorials section -->
+    <div class="card" style="margin-bottom:24px; border-left:4px solid var(--primary);">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-size:24px;">🎥</span>
+        <div>
+          <strong>Video Tutorials</strong>
+          <p class="text-muted" style="margin:4px 0 0;">Video walkthroughs are coming soon. We'll cover platform setup, brief creation, DM automation, and more.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Help topics -->
+    <div id="help-topics">
+      ${topics.map(section => `
+        <div class="help-section card" data-section="${section.id}" style="margin-bottom:16px;">
+          <div class="help-section-header" onclick="toggleHelpSection('${section.id}')" style="cursor:pointer; display:flex; align-items:center; justify-content:space-between; padding:4px 0;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="font-size:20px;">${section.icon}</span>
+              <strong style="font-size:16px;">${section.title}</strong>
+              <span class="text-muted text-sm">(${section.items.length})</span>
+            </div>
+            <span class="help-chevron" id="chevron-${section.id}" style="transition:transform 0.2s; font-size:12px; color:var(--text-secondary);">▶</span>
+          </div>
+          <div class="help-section-body" id="body-${section.id}" style="display:none; margin-top:12px;">
+            ${section.items.map((item, i) => `
+              <div class="help-item" style="padding:12px 0; ${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
+                <div class="help-question" style="font-weight:600; margin-bottom:6px; color:var(--text-primary);">${item.q}</div>
+                <div class="help-answer text-muted" style="line-height:1.6;">${item.a}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <!-- No results message (hidden by default) -->
+    <div id="help-no-results" style="display:none; text-align:center; padding:40px; color:var(--text-secondary);">
+      <span style="font-size:32px;">🔍</span>
+      <p style="margin-top:12px;">No help topics match your search. Try different keywords.</p>
+    </div>
+
+    <!-- Contact support -->
+    <div class="card" style="margin-top:8px; text-align:center; padding:24px;">
+      <strong>Still need help?</strong>
+      <p class="text-muted" style="margin:8px 0 0;">Send us a message from the <a href="#messages" onclick="navigate('messages')" style="color:var(--primary); text-decoration:underline;">Messages</a> page and we'll get back to you.</p>
+    </div>
+  `;
+}
+
+// Toggle a help section open/closed
+function toggleHelpSection(sectionId) {
+  const body    = document.getElementById('body-' + sectionId);
+  const chevron = document.getElementById('chevron-' + sectionId);
+  if (!body) return;
+
+  const isOpen = body.style.display !== 'none';
+  body.style.display    = isOpen ? 'none' : 'block';
+  chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+// Filter help topics by search query
+function filterHelpTopics(query) {
+  const q = query.toLowerCase().trim();
+  const sections = document.querySelectorAll('.help-section');
+  let anyVisible = false;
+
+  sections.forEach(section => {
+    const items = section.querySelectorAll('.help-item');
+    let sectionHasMatch = false;
+
+    items.forEach(item => {
+      const text = item.textContent.toLowerCase();
+      const match = !q || text.includes(q);
+      item.style.display = match ? '' : 'none';
+      if (match) sectionHasMatch = true;
+    });
+
+    section.style.display = sectionHasMatch ? '' : 'none';
+    if (sectionHasMatch) anyVisible = true;
+
+    // Auto-expand sections that have matches when searching
+    if (q && sectionHasMatch) {
+      const sectionId = section.dataset.section;
+      const body = document.getElementById('body-' + sectionId);
+      const chevron = document.getElementById('chevron-' + sectionId);
+      if (body) body.style.display = 'block';
+      if (chevron) chevron.style.transform = 'rotate(90deg)';
+    }
+  });
+
+  const noResults = document.getElementById('help-no-results');
+  if (noResults) noResults.style.display = anyVisible ? 'none' : 'block';
 }
 
 // Start the app when the DOM is ready
