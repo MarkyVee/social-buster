@@ -1649,13 +1649,15 @@ async function renderProfile(el) {
           <div id="platform-checkboxes" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
             ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => {
               const comingSoon = p === 'whatsapp' || p === 'telegram';
+              const displayName = p === 'x' ? 'X' : p.charAt(0).toUpperCase() + p.slice(1);
               return `
-              <label style="display:flex;align-items:center;gap:6px;${comingSoon ? 'opacity:0.4;cursor:default;' : 'cursor:pointer;'}font-weight:normal;"
+              <label style="display:flex;align-items:center;gap:8px;${comingSoon ? 'opacity:0.4;cursor:default;' : 'cursor:pointer;'}font-weight:normal;padding:6px 12px;border:1.5px solid #e2e8f0;border-radius:8px;transition:all 0.15s;"
                      ${comingSoon ? 'title="Coming soon"' : ''}>
                 <input type="checkbox" name="preferred_platforms" value="${p}"
                   ${(profile.preferred_platforms || []).includes(p) ? 'checked' : ''}
-                  ${comingSoon ? 'disabled' : ''} />
-                ${p.charAt(0).toUpperCase() + p.slice(1)}${comingSoon ? ' <span style="font-size:10px;color:#94a3b8;">(soon)</span>' : ''}
+                  ${comingSoon ? 'disabled' : ''} style="display:none;" />
+                ${platformLogoSvg(p, 20)}
+                <span style="font-size:13px;">${displayName}</span>${comingSoon ? '<span style="font-size:10px;color:#94a3b8;">(soon)</span>' : ''}
               </label>`;
             }).join('')}
           </div>

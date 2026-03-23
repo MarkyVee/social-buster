@@ -1248,6 +1248,17 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 /* ============================================================
+   Platform Checkbox Labels (My Profile)
+   ============================================================ */
+#platform-checkboxes label { user-select: none; }
+#platform-checkboxes label:hover { border-color: #6366f1; background: #f5f3ff; }
+#platform-checkboxes label:has(input:checked) {
+  border-color: #6366f1;
+  background: #eef2ff;
+  box-shadow: 0 0 0 1px #6366f1;
+}
+
+/* ============================================================
    Publishing Queue — Calendar View
    ============================================================ */
 
