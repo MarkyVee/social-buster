@@ -927,19 +927,45 @@ function renderMediaPlaceholder(el) {
   `;
 }
 
-async function renderQueuePlaceholder(el) {
-  const platformIcons = {
-    instagram:'📸', facebook:'👥', tiktok:'🎵',
-    linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️'
-  };
+// ============================================================
+// PUBLISHING QUEUE — List + Calendar views
+// ============================================================
 
+// Module-level state for the queue views
+let queueViewMode = 'list';          // 'list' or 'calendar'
+let queueCalendarMonth = new Date(); // tracks which month the calendar shows
+let queueCachedPosts = [];           // avoid re-fetching when toggling views
+let queueSelectedDay = null;         // which day is expanded in calendar view
+
+const QUEUE_PLATFORM_ICONS = {
+  instagram:'📸', facebook:'👥', tiktok:'🎵',
+  linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️'
+};
+const QUEUE_PLATFORM_COLORS = {
+  instagram: { bg: '#fce7f3', color: '#be185d' },
+  facebook:  { bg: '#dbeafe', color: '#1e40af' },
+  tiktok:    { bg: '#f0fdf4', color: '#166534' },
+  linkedin:  { bg: '#eff6ff', color: '#1e3a5f' },
+  x:         { bg: '#f1f5f9', color: '#0f172a' },
+  threads:   { bg: '#f5f3ff', color: '#6d28d9' },
+  whatsapp:  { bg: '#ecfdf5', color: '#065f46' },
+  telegram:  { bg: '#e0f2fe', color: '#0369a1' }
+};
+
+async function renderQueuePlaceholder(el) {
   el.innerHTML = `
     <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;">
       <div>
         <div class="page-title">Publishing Queue</div>
         <div class="page-subtitle">Posts scheduled for publishing and your recent publish history.</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="navigate('brief')">✏️ New Brief</button>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="queue-view-toggle">
+          <button class="queue-view-btn ${queueViewMode === 'list' ? 'active' : ''}" onclick="switchQueueView('list')">📋 List</button>
+          <button class="queue-view-btn ${queueViewMode === 'calendar' ? 'active' : ''}" onclick="switchQueueView('calendar')">📅 Calendar</button>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="navigate('brief')">✏️ New Brief</button>
+      </div>
     </div>
     <div id="queue-alerts"></div>
     <div id="queue-container">
@@ -948,106 +974,243 @@ async function renderQueuePlaceholder(el) {
   `;
 
   try {
-    const data  = await apiFetch('/publish/queue');
-    const posts = data.posts || [];
-    const container = document.getElementById('queue-container');
-    if (!container) return;
-
-    if (posts.length === 0) {
-      container.innerHTML = `
-        <div class="card" style="text-align:center;padding:48px;">
-          <div style="font-size:40px;margin-bottom:12px;">🗓️</div>
-          <div style="font-weight:600;margin-bottom:8px;">Nothing scheduled yet</div>
-          <p class="text-muted text-sm" style="margin-bottom:20px;">
-            Create a brief, generate posts, then hit Publish Now or Schedule.
-          </p>
-          <button class="btn btn-primary" onclick="navigate('brief')">Create a Brief</button>
-        </div>`;
-      return;
-    }
-
-    // Sort: publishing first, then scheduled (by time), then failed, then published (newest first)
-    const statusOrder = { publishing: 0, scheduled: 1, approved: 2, failed: 3, published: 4 };
-    const sorted = [...posts].sort((a, b) => {
-      const orderDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
-      if (orderDiff !== 0) return orderDiff;
-      // Within the same status, newest first (most recently created/scheduled at top)
-      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-    });
-
-    // Renders a colour-coded status pill
-    const statusBadge = s => {
-      const labels = {
-        scheduled:  { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
-        approved:   { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' }, // legacy
-        publishing: { bg: '#fef9c3', color: '#854d0e', text: 'Publishing…' },
-        failed:     { bg: '#fee2e2', color: '#b91c1c', text: 'Failed' },
-        published:  { bg: '#dcfce7', color: '#166534', text: 'Published' }
-      };
-      const { bg, color, text } = labels[s] || { bg: '#f1f5f9', color: '#475569', text: s };
-      return `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:${bg};color:${color};">${text}</span>`;
-    };
-
-    container.innerHTML = sorted.map(post => {
-      const icon      = platformIcons[post.platform] || '📱';
-      const hook      = (post.hook || '').slice(0, 80);
-
-      // Format the relevant time depending on status
-      const schedTime = post.scheduled_at
-        ? new Date(post.scheduled_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
-        : null;
-      const pubTime   = post.published_at
-        ? new Date(post.published_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
-        : null;
-
-      // Build the time/info line under the hook text
-      let infoLine = '';
-      if (post.status === 'publishing') {
-        infoLine = `<span style="color:#854d0e;">⏳ Publishing now…</span>`;
-      } else if (post.status === 'published' && pubTime) {
-        infoLine = `✅ Published ${pubTime}`;
-      } else if ((post.status === 'scheduled' || post.status === 'approved') && schedTime) {
-        infoLine = `⏰ Sends ${schedTime}`;
-      } else if (post.status === 'failed') {
-        const errMsg = post.error_message ? post.error_message.slice(0, 100) : 'Unknown error';
-        infoLine = `<span style="color:#ef4444;">⚠ ${errMsg}</span>`;
-      }
-
-      // Build the action buttons for this post
-      const canCancel  = ['scheduled', 'approved', 'failed'].includes(post.status);
-      const canRetry   = post.status === 'failed';
-      const canDelete  = ['scheduled', 'approved', 'failed'].includes(post.status);
-
-      return `
-        <div class="card" style="margin-bottom:12px;">
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <span style="font-size:22px;">${icon}</span>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                ${hook || '(no hook)'}
-              </div>
-              <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${infoLine}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-              ${statusBadge(post.status)}
-              ${canRetry
-                ? `<button class="btn btn-secondary btn-xs" onclick="retryQueuePost('${post.id}', '${post.platform}')">Retry</button>`
-                : ''}
-              ${canCancel && !canRetry
-                ? `<button class="btn btn-secondary btn-xs" onclick="cancelQueuePost('${post.id}')">Cancel</button>`
-                : ''}
-              ${canDelete
-                ? `<button class="btn btn-danger btn-xs" onclick="deleteQueuePost('${post.id}')">Delete</button>`
-                : ''}
-            </div>
-          </div>
-        </div>`;
-    }).join('');
-
+    const data = await apiFetch('/publish/queue');
+    queueCachedPosts = data.posts || [];
+    renderQueueActiveView();
   } catch (err) {
     const container = document.getElementById('queue-container');
     if (container) container.innerHTML = `<div class="alert alert-error">${err.message}</div>`;
   }
+}
+
+// Switch between list and calendar without re-fetching
+function switchQueueView(mode) {
+  queueViewMode = mode;
+  queueSelectedDay = null;
+  // Update toggle button styles
+  document.querySelectorAll('.queue-view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent.includes(mode === 'list' ? 'List' : 'Calendar'));
+  });
+  renderQueueActiveView();
+}
+
+// Render whichever view is active
+function renderQueueActiveView() {
+  const container = document.getElementById('queue-container');
+  if (!container) return;
+
+  if (queueCachedPosts.length === 0) {
+    container.innerHTML = `
+      <div class="card" style="text-align:center;padding:48px;">
+        <div style="font-size:40px;margin-bottom:12px;">🗓️</div>
+        <div style="font-weight:600;margin-bottom:8px;">Nothing scheduled yet</div>
+        <p class="text-muted text-sm" style="margin-bottom:20px;">
+          Create a brief, generate posts, then hit Publish Now or Schedule.
+        </p>
+        <button class="btn btn-primary" onclick="navigate('brief')">Create a Brief</button>
+      </div>`;
+    return;
+  }
+
+  if (queueViewMode === 'calendar') {
+    renderQueueCalendar(queueCachedPosts, container);
+  } else {
+    renderQueueList(queueCachedPosts, container);
+  }
+}
+
+// ---- LIST VIEW ----
+function renderQueueList(posts, container) {
+  const statusOrder = { publishing: 0, scheduled: 1, approved: 2, failed: 3, published: 4 };
+  const sorted = [...posts].sort((a, b) => {
+    const orderDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (orderDiff !== 0) return orderDiff;
+    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+  });
+
+  container.innerHTML = sorted.map(post => renderQueuePostCard(post)).join('');
+}
+
+// Shared post card renderer (used by list view and calendar day detail)
+function renderQueuePostCard(post) {
+  const icon = QUEUE_PLATFORM_ICONS[post.platform] || '📱';
+  const hook = (post.hook || '').slice(0, 80);
+
+  const statusBadge = s => {
+    const labels = {
+      scheduled:  { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
+      approved:   { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
+      publishing: { bg: '#fef9c3', color: '#854d0e', text: 'Publishing…' },
+      failed:     { bg: '#fee2e2', color: '#b91c1c', text: 'Failed' },
+      published:  { bg: '#dcfce7', color: '#166534', text: 'Published' }
+    };
+    const { bg, color, text } = labels[s] || { bg: '#f1f5f9', color: '#475569', text: s };
+    return `<span style="font-size:11px;font-weight:700;padding:2px 10px;border-radius:20px;background:${bg};color:${color};">${text}</span>`;
+  };
+
+  const schedTime = post.scheduled_at
+    ? new Date(post.scheduled_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
+    : null;
+  const pubTime = post.published_at
+    ? new Date(post.published_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
+    : null;
+
+  let infoLine = '';
+  if (post.status === 'publishing') {
+    infoLine = `<span style="color:#854d0e;">⏳ Publishing now…</span>`;
+  } else if (post.status === 'published' && pubTime) {
+    infoLine = `✅ Published ${pubTime}`;
+  } else if ((post.status === 'scheduled' || post.status === 'approved') && schedTime) {
+    infoLine = `⏰ Sends ${schedTime}`;
+  } else if (post.status === 'failed') {
+    const errMsg = post.error_message ? post.error_message.slice(0, 100) : 'Unknown error';
+    infoLine = `<span style="color:#ef4444;">⚠ ${errMsg}</span>`;
+  }
+
+  const canCancel = ['scheduled', 'approved', 'failed'].includes(post.status);
+  const canRetry  = post.status === 'failed';
+  const canDelete = ['scheduled', 'approved', 'failed'].includes(post.status);
+
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="font-size:22px;">${icon}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${hook || '(no hook)'}
+          </div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px;">${infoLine}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          ${statusBadge(post.status)}
+          ${canRetry
+            ? `<button class="btn btn-secondary btn-xs" onclick="retryQueuePost('${post.id}', '${post.platform}')">Retry</button>`
+            : ''}
+          ${canCancel && !canRetry
+            ? `<button class="btn btn-secondary btn-xs" onclick="cancelQueuePost('${post.id}')">Cancel</button>`
+            : ''}
+          ${canDelete
+            ? `<button class="btn btn-danger btn-xs" onclick="deleteQueuePost('${post.id}')">Delete</button>`
+            : ''}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---- CALENDAR VIEW ----
+function renderQueueCalendar(posts, container) {
+  const now   = new Date();
+  const year  = queueCalendarMonth.getFullYear();
+  const month = queueCalendarMonth.getMonth();
+
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+
+  // Build a map of date string → posts for this month
+  const postsByDay = {};
+  posts.forEach(post => {
+    const d = post.scheduled_at || post.published_at || post.created_at;
+    if (!d) return;
+    const date = new Date(d);
+    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    if (!postsByDay[key]) postsByDay[key] = [];
+    postsByDay[key].push(post);
+  });
+
+  // Calendar grid calculation
+  const firstDay    = new Date(year, month, 1).getDay(); // 0=Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const prevMonthDays = new Date(year, month, 0).getDate();
+
+  // Day name headers
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Build day cells
+  let cells = '';
+
+  // Previous month trailing days
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const dayNum = prevMonthDays - i;
+    cells += `<div class="queue-cal-day outside"><div class="queue-cal-daynum">${dayNum}</div></div>`;
+  }
+
+  // Current month days
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${year}-${month}-${d}`;
+    const dayPosts = postsByDay[key] || [];
+    const isToday = (now.getFullYear() === year && now.getMonth() === month && now.getDate() === d);
+    const isSelected = (queueSelectedDay === key);
+
+    const maxChips = 3;
+    const chipsHtml = dayPosts.slice(0, maxChips).map(p => {
+      const pc = QUEUE_PLATFORM_COLORS[p.platform] || { bg: '#f1f5f9', color: '#475569' };
+      const statusClass = p.status === 'failed' ? ' status-failed' : p.status === 'published' ? ' status-published' : '';
+      const hookPreview = (p.hook || '(no hook)').slice(0, 30);
+      return `<div class="queue-cal-chip${statusClass}" style="background:${pc.bg};color:${pc.color};" title="${QUEUE_PLATFORM_ICONS[p.platform] || ''} ${hookPreview}">${QUEUE_PLATFORM_ICONS[p.platform] || '📱'} ${hookPreview}</div>`;
+    }).join('');
+
+    const overflowHtml = dayPosts.length > maxChips
+      ? `<div class="queue-cal-overflow">+${dayPosts.length - maxChips} more</div>`
+      : '';
+
+    cells += `
+      <div class="queue-cal-day${isToday ? ' today' : ''}${isSelected ? ' selected' : ''}" onclick="selectQueueDay('${key}')">
+        <div class="queue-cal-daynum">${d}</div>
+        <div class="queue-cal-chips">${chipsHtml}${overflowHtml}</div>
+      </div>`;
+  }
+
+  // Next month leading days (fill to complete the grid row)
+  const totalCells = firstDay + daysInMonth;
+  const remaining = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+  for (let i = 1; i <= remaining; i++) {
+    cells += `<div class="queue-cal-day outside"><div class="queue-cal-daynum">${i}</div></div>`;
+  }
+
+  // Day detail panel (if a day is selected)
+  let detailHtml = '';
+  if (queueSelectedDay && postsByDay[queueSelectedDay]) {
+    const dayPosts = postsByDay[queueSelectedDay];
+    const parts = queueSelectedDay.split('-');
+    const dateLabel = new Date(+parts[0], +parts[1], +parts[2]).toLocaleDateString('en-US', {
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+    });
+
+    detailHtml = `
+      <div class="queue-cal-detail">
+        <div class="queue-cal-detail-header">
+          <h4>${dateLabel} — ${dayPosts.length} post${dayPosts.length !== 1 ? 's' : ''}</h4>
+          <button class="queue-cal-detail-close" onclick="selectQueueDay(null)">✕</button>
+        </div>
+        ${dayPosts.map(p => renderQueuePostCard(p)).join('')}
+      </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="queue-cal-header">
+      <button class="queue-cal-nav" onclick="navigateQueueCalendar(-1)">◀</button>
+      <h3>${monthNames[month]} ${year}</h3>
+      <button class="queue-cal-nav" onclick="navigateQueueCalendar(1)">▶</button>
+    </div>
+    <div class="queue-cal-grid">
+      ${dayNames.map(n => `<div class="queue-cal-dayname">${n}</div>`).join('')}
+      ${cells}
+    </div>
+    ${detailHtml}
+  `;
+}
+
+// Navigate calendar months
+function navigateQueueCalendar(direction) {
+  queueCalendarMonth.setMonth(queueCalendarMonth.getMonth() + direction);
+  queueSelectedDay = null;
+  renderQueueActiveView();
+}
+
+// Select/deselect a day in the calendar
+function selectQueueDay(key) {
+  queueSelectedDay = (queueSelectedDay === key) ? null : key;
+  renderQueueActiveView();
 }
 
 // Cancels a scheduled post and returns it to drafts (user can re-edit and re-schedule)
