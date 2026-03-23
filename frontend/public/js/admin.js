@@ -2385,9 +2385,8 @@ async function loadAdminRevenue() {
   const stripeNotice = d.stripe_connected
     ? ''
     : `<div class="rev-stripe-notice">
-         ⚠️ <strong>Estimated data</strong> — Stripe is not yet connected.
-         MRR and subscriber counts are calculated from your subscriptions table.
-         Connect Stripe to see verified charge, refund, and failed payment data.
+         ℹ️ <strong>Estimated data</strong> — Revenue figures are calculated from your subscriptions table.
+         Once Stripe processes live charges, this will update with verified payment data.
        </div>`;
 
   // --- Core KPI strip ---
