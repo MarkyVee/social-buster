@@ -1037,7 +1037,7 @@ function renderQueueActiveView() {
 
 // ---- LIST VIEW ----
 function renderQueueList(posts, container) {
-  const statusOrder = { publishing: 0, scheduled: 1, approved: 2, failed: 3, published: 4 };
+  const statusOrder = { publishing: 0, scheduled: 1, paused: 2, approved: 3, failed: 4, published: 5 };
   const sorted = [...posts].sort((a, b) => {
     const orderDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
     if (orderDiff !== 0) return orderDiff;
@@ -1057,6 +1057,7 @@ function renderQueuePostCard(post) {
       scheduled:  { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
       approved:   { bg: '#dbeafe', color: '#1e40af', text: 'Scheduled' },
       publishing: { bg: '#fef9c3', color: '#854d0e', text: 'Publishing…' },
+      paused:     { bg: '#fef3c7', color: '#92400e', text: 'Paused' },
       failed:     { bg: '#fee2e2', color: '#b91c1c', text: 'Failed' },
       published:  { bg: '#dcfce7', color: '#166534', text: 'Published' }
     };
@@ -1078,14 +1079,18 @@ function renderQueuePostCard(post) {
     infoLine = `✅ Published ${pubTime}`;
   } else if ((post.status === 'scheduled' || post.status === 'approved') && schedTime) {
     infoLine = `⏰ Sends ${schedTime}`;
+  } else if (post.status === 'paused') {
+    infoLine = `<span style="color:#92400e;">⏸ Paused${schedTime ? ` — was set for ${schedTime}` : ''}</span>`;
   } else if (post.status === 'failed') {
     const errMsg = post.error_message ? post.error_message.slice(0, 100) : 'Unknown error';
     infoLine = `<span style="color:#ef4444;">⚠ ${errMsg}</span>`;
   }
 
-  const canCancel = ['scheduled', 'approved', 'failed'].includes(post.status);
+  const canPause  = ['scheduled', 'approved', 'publishing'].includes(post.status);
+  const canResume = post.status === 'paused';
+  const canCancel = ['scheduled', 'approved', 'failed', 'publishing', 'paused'].includes(post.status);
   const canRetry  = post.status === 'failed';
-  const canDelete = ['scheduled', 'approved', 'failed'].includes(post.status);
+  const canDelete = ['scheduled', 'approved', 'failed', 'paused'].includes(post.status);
 
   return `
     <div class="card" style="margin-bottom:12px;">
@@ -1099,6 +1104,12 @@ function renderQueuePostCard(post) {
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
           ${statusBadge(post.status)}
+          ${canPause
+            ? `<button class="btn btn-secondary btn-xs" onclick="pauseQueuePost('${post.id}')">Pause</button>`
+            : ''}
+          ${canResume
+            ? `<button class="btn btn-secondary btn-xs" onclick="resumeQueuePost('${post.id}')">Resume</button>`
+            : ''}
           ${canRetry
             ? `<button class="btn btn-secondary btn-xs" onclick="retryQueuePost('${post.id}', '${post.platform}')">Retry</button>`
             : ''}
@@ -1230,6 +1241,26 @@ function selectQueueDay(key) {
 }
 
 // Cancels a scheduled post and returns it to drafts (user can re-edit and re-schedule)
+async function pauseQueuePost(postId) {
+  try {
+    await apiFetch(`/posts/${postId}/pause`, { method: 'POST' });
+    showAlert('queue-alerts', 'Post paused — it will not publish until you resume it.', 'success');
+    renderQueuePlaceholder(document.getElementById('main-content-area'));
+  } catch (err) {
+    showAlert('queue-alerts', err.message, 'error');
+  }
+}
+
+async function resumeQueuePost(postId) {
+  try {
+    await apiFetch(`/posts/${postId}/resume`, { method: 'POST' });
+    showAlert('queue-alerts', 'Post resumed — publishing shortly.', 'success');
+    renderQueuePlaceholder(document.getElementById('main-content-area'));
+  } catch (err) {
+    showAlert('queue-alerts', err.message, 'error');
+  }
+}
+
 async function cancelQueuePost(postId) {
   try {
     await apiFetch(`/publish/queue/${postId}`, { method: 'DELETE' });

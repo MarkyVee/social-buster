@@ -288,6 +288,98 @@ router.post('/:id/schedule', standardLimiter, checkLimit('scheduled_queue_size')
 });
 
 // ----------------------------------------------------------------
+// POST /posts/:id/pause
+// Pauses a scheduled or approved post so the publishing worker skips it.
+// The scheduled_at timestamp is preserved so the user can resume later.
+// ----------------------------------------------------------------
+router.post('/:id/pause', standardLimiter, async (req, res) => {
+  try {
+    const { data: post, error: fetchError } = await req.db
+      .from('posts')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (!['scheduled', 'approved', 'publishing'].includes(post.status)) {
+      return res.status(400).json({
+        error: `Cannot pause a post with status "${post.status}". Only scheduled or publishing posts can be paused.`
+      });
+    }
+
+    const { data, error } = await req.db
+      .from('posts')
+      .update({ status: 'paused' })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ message: 'Post paused', post: data });
+
+  } catch (err) {
+    console.error('[Posts] Pause error:', err.message);
+    return res.status(500).json({ error: 'Failed to pause post' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /posts/:id/resume
+// Resumes a paused post by setting it back to scheduled.
+// If the scheduled_at is in the past, the worker picks it up on the next cycle.
+// ----------------------------------------------------------------
+router.post('/:id/resume', standardLimiter, async (req, res) => {
+  try {
+    const { data: post, error: fetchError } = await req.db
+      .from('posts')
+      .select('id, status, scheduled_at')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.status !== 'paused') {
+      return res.status(400).json({
+        error: `Cannot resume a post with status "${post.status}". Only paused posts can be resumed.`
+      });
+    }
+
+    const { data, error } = await req.db
+      .from('posts')
+      .update({ status: 'scheduled' })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    // If the post is due now or in the past, fire an immediate publish scan
+    const scheduledAt = new Date(post.scheduled_at);
+    const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
+    if (scheduledAt <= fiveMinutesFromNow) {
+      try {
+        const { publishQueue } = require('../queues');
+        await publishQueue.add('scan-and-publish', {}, { priority: 1 });
+      } catch (qErr) {
+        console.warn('[Posts] Could not trigger immediate publish scan:', qErr.message);
+      }
+    }
+
+    return res.json({ message: 'Post resumed', post: data });
+
+  } catch (err) {
+    console.error('[Posts] Resume error:', err.message);
+    return res.status(500).json({ error: 'Failed to resume post' });
+  }
+});
+
+// ----------------------------------------------------------------
 // DELETE /posts/:id
 // Delete a draft post. Cannot delete published posts.
 // ----------------------------------------------------------------

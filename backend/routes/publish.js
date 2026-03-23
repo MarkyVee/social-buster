@@ -652,7 +652,7 @@ router.get('/queue', standardLimiter, async (req, res) => {
     const { data, error } = await req.db
       .from('posts')
       .select('id, platform, hook, caption, status, scheduled_at, published_at, error_message, created_at')
-      .or(`status.in.(approved,scheduled,publishing,failed),and(status.eq.published,published_at.gte.${sevenDaysAgo})`)
+      .or(`status.in.(approved,scheduled,publishing,failed,paused),and(status.eq.published,published_at.gte.${sevenDaysAgo})`)
       .order('scheduled_at', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false });
 
@@ -683,7 +683,7 @@ router.delete('/queue/:id', standardLimiter, async (req, res) => {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (!['approved', 'scheduled', 'failed'].includes(post.status)) {
+    if (!['approved', 'scheduled', 'failed', 'publishing', 'paused'].includes(post.status)) {
       return res.status(400).json({
         error: `Cannot cancel a post with status "${post.status}".`
       });
