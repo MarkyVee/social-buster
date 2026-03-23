@@ -317,4 +317,98 @@ function matchTriggerPhrase(commentText, triggers, platform) {
   return null;
 }
 
-module.exports = { runCommentCycle, analyzeSentiment };
+// ----------------------------------------------------------------
+// processRealtimeComment — handles a single comment from a Meta webhook.
+//
+// Called by webhooks.js when Meta sends a real-time feed event.
+// This is the INSTANT path — no polling delay. The 15-minute polling
+// cycle is the safety net that catches anything webhooks miss.
+//
+// Webhook payload gives us: pageId, postId (platform_post_id), comment
+// text, commenter ID, and commenter name. We look up the internal post,
+// load automations + access token, and delegate to processComment().
+//
+// Deduplication is handled by processComment() via platform_comment_id
+// UNIQUE constraint — if the polling cycle also picks up this comment,
+// the duplicate insert is silently ignored.
+// ----------------------------------------------------------------
+async function processRealtimeComment(pageId, platformPostId, commentId, commentText, authorId, authorName, platform) {
+  try {
+    // Find the internal post by platform_post_id
+    const { data: post, error: postErr } = await supabaseAdmin
+      .from('posts')
+      .select('id, user_id, platform, platform_post_id, published_at')
+      .eq('platform_post_id', platformPostId)
+      .eq('status', 'published')
+      .single();
+
+    if (postErr || !post) {
+      // Post not found — might be a post we didn't publish. Ignore silently.
+      return;
+    }
+
+    const userId = post.user_id;
+
+    // Load active DM automations for this user (filtered to this post + globals)
+    const { data: automations } = await supabaseAdmin
+      .from('dm_automations')
+      .select('id, post_id, name, flow_type, trigger_keywords, active')
+      .eq('user_id', userId)
+      .eq('active', true);
+
+    const postAutomations = (automations || []).filter(
+      a => a.post_id === post.id || a.post_id === null
+    );
+
+    // Load legacy trigger phrases (backward compatibility)
+    const { data: legacyTriggers } = await supabaseAdmin
+      .from('trigger_phrases')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('active', true);
+
+    // Get the decrypted access token for this platform
+    const { data: connection } = await supabaseAdmin
+      .from('platform_connections')
+      .select('access_token')
+      .eq('user_id', userId)
+      .eq('platform', post.platform)
+      .single();
+
+    if (!connection) {
+      console.warn(`[CommentAgent] Realtime: No ${post.platform} connection for user ${userId}`);
+      return;
+    }
+
+    let accessToken;
+    try {
+      accessToken = decryptToken(connection.access_token);
+    } catch {
+      console.error(`[CommentAgent] Realtime: Failed to decrypt token for user ${userId}`);
+      return;
+    }
+
+    // Delegate to the same processComment() used by the polling cycle.
+    // Deduplication is built in — duplicate platform_comment_id is silently ignored.
+    await processComment(
+      userId,
+      post,
+      {
+        platformCommentId: commentId,
+        text:              commentText,
+        authorHandle:      authorName || '(unknown)',
+        authorPlatformId:  authorId
+      },
+      postAutomations,
+      legacyTriggers || [],
+      accessToken
+    );
+
+    console.log(`[CommentAgent] Realtime: Processed comment "${commentText.substring(0, 30)}..." on post ${post.id}`);
+
+  } catch (err) {
+    console.error('[CommentAgent] Realtime comment processing error:', err.message);
+  }
+}
+
+module.exports = { runCommentCycle, analyzeSentiment, processRealtimeComment };

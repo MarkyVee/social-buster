@@ -2,18 +2,25 @@
  * routes/webhooks.js
  *
  * Receives incoming webhooks from Meta (Facebook + Instagram).
- * Used for DM automation — when a user replies to our automated DM,
- * Meta sends the reply here so we can advance the conversation.
  *
- * Two endpoints:
+ * Handles TWO types of real-time events:
+ *   1. Feed events (comments) — triggers instant DM automation
+ *   2. Message events (DM replies) — advances multi-step DM conversations
+ *
+ * This is the INSTANT path for DM automation. When someone comments on
+ * a Page post, Meta pushes the comment here within seconds. We match it
+ * against trigger keywords and send the DM immediately — no 15-minute
+ * polling delay. The polling worker is kept as a safety net.
+ *
+ * Endpoints:
  *   GET  /webhooks/meta — verification challenge (one-time setup)
  *   POST /webhooks/meta — incoming message/event payloads
  *
  * Setup steps (one-time, in Meta Developer Portal):
- *   1. Go to your app → Webhooks → Add Subscription
- *   2. Callback URL: https://yourdomain.com/webhooks/meta
- *   3. Verify Token: set META_WEBHOOK_VERIFY_TOKEN in .env (any random string)
- *   4. Subscribe to: messages (for both Page and Instagram)
+ *   1. Go to your app → Webhooks (under the relevant use case)
+ *   2. Callback URL: https://social-buster.com/webhooks/meta
+ *   3. Verify Token: set META_WEBHOOK_VERIFY_TOKEN in .env
+ *   4. Subscribe to: messages (for DM replies) AND feed (for comments)
  *
  * IMPORTANT: This route must be mounted BEFORE express.json() middleware
  * because Meta webhook signature verification needs the raw request body.
@@ -28,6 +35,7 @@ const express  = require('express');
 const crypto   = require('crypto');
 const router   = express.Router();
 const { processIncomingReply } = require('../agents/dmAgent');
+const { processRealtimeComment } = require('../agents/commentAgent');
 
 // ----------------------------------------------------------------
 // GET /webhooks/meta — Meta verification challenge.
@@ -116,6 +124,45 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
 
     // Process each entry
     for (const entry of (body.entry || [])) {
+      const pageId = entry.id;
+
+      // ---- REAL-TIME COMMENTS (feed webhook) ----
+      // Meta sends comment events via entry.changes with field === 'feed'.
+      // This is the instant DM automation path — no polling delay.
+      for (const change of (entry.changes || [])) {
+        if (change.field !== 'feed') continue;
+
+        const val = change.value || {};
+
+        // Only process new comments (not edits, deletes, or other feed events)
+        if (val.item !== 'comment' || val.verb !== 'add') continue;
+
+        const commentText  = val.message;
+        const commentId    = val.comment_id;
+        const authorId     = val.from?.id;
+        const authorName   = val.from?.name;
+        const parentPostId = val.post_id; // Facebook Graph API post ID (pageId_postId format)
+
+        if (!commentText || !commentId || !parentPostId) continue;
+
+        // Don't process our own Page's comments (the Page responding to comments)
+        if (authorId === pageId) continue;
+
+        console.log(`[Webhooks] Realtime ${platform} comment from ${authorName || authorId}: "${commentText.substring(0, 50)}..."`);
+
+        try {
+          await processRealtimeComment(
+            pageId, parentPostId, commentId,
+            commentText, authorId, authorName, platform
+          );
+        } catch (err) {
+          console.error(`[Webhooks] Error processing realtime comment ${commentId}:`, err.message);
+        }
+      }
+
+      // ---- DM REPLIES (messaging webhook) ----
+      // Meta sends message events via entry.messaging.
+      // This handles multi-step DM conversation replies.
       for (const event of (entry.messaging || [])) {
         // Only process actual messages (not reads, deliveries, etc.)
         if (!event.message || !event.message.text) continue;
