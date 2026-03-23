@@ -937,6 +937,22 @@ let queueCalendarMonth = new Date(); // tracks which month the calendar shows
 let queueCachedPosts = [];           // avoid re-fetching when toggling views
 let queueSelectedDay = null;         // which day is expanded in calendar view
 
+// Platform SVG logos (inline, 20px default) — actual brand icons
+function platformLogoSvg(platform, size = 20) {
+  const logos = {
+    instagram: `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"><defs><radialGradient id="ig" cx="30%" cy="107%" r="150%"><stop offset="0%" stop-color="#fdf497"/><stop offset="5%" stop-color="#fdf497"/><stop offset="45%" stop-color="#fd5949"/><stop offset="60%" stop-color="#d6249f"/><stop offset="90%" stop-color="#285AEB"/></radialGradient></defs><rect width="22" height="22" x="1" y="1" rx="6" fill="url(#ig)"/><circle cx="12" cy="12" r="4.5" stroke="#fff" stroke-width="1.8" fill="none"/><circle cx="17.5" cy="6.5" r="1.2" fill="#fff"/></svg>`,
+    facebook: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#1877F2"/><path d="M16.67 15.47l.53-3.47H13.8v-2.25c0-.95.46-1.87 1.95-1.87H17.3V5.01s-1.2-.2-2.35-.2c-2.4 0-3.97 1.45-3.97 4.08V12H7.9v3.47h3.08V24h3.8V15.47h1.89z" fill="#fff"/></svg>`,
+    tiktok: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#010101"/><path d="M16.6 8.2c-.8-.5-1.3-1.3-1.5-2.2h-2.4v10.7c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5 1.1-2.5 2.5-2.5c.3 0 .5 0 .7.1V12c-.2 0-.5-.1-.7-.1-2.5 0-4.6 2-4.6 4.6s2 4.6 4.6 4.6 4.6-2 4.6-4.6V12c.9.7 2 1 3.2 1V10.7c-1 0-1.8-.4-2.4-1v-.5z" fill="#fff"/><path d="M16.6 8.2c.6.4 1.4.7 2.4.7v-.6c-.5 0-1-.1-1.4-.3l-1 .2z" fill="#69C9D0"/><path d="M10.2 19.2c1.4 0 2.5-1.1 2.5-2.5V6h2.4c0-.3-.1-.6-.1-.9h-3.1v10.7c0 1.4-1.1 2.5-2.5 2.5-.4 0-.9-.1-1.2-.3.5.7 1.2 1.2 2 1.2z" fill="#EE1D52"/></svg>`,
+    linkedin: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#0A66C2"/><path d="M7.1 9.8h2.3v7.4H7.1V9.8zm1.1-3.5c.7 0 1.3.6 1.3 1.3s-.6 1.3-1.3 1.3S6.9 8.3 6.9 7.6s.6-1.3 1.3-1.3zm3.2 3.5h2.2v1c.3-.6 1.1-1.2 2.2-1.2 2.4 0 2.8 1.6 2.8 3.6v4.1h-2.3v-3.6c0-.9 0-2-1.2-2s-1.4 1-1.4 2v3.6h-2.3V9.8z" fill="#fff"/></svg>`,
+    x: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#000"/><path d="M13.5 10.8L18.2 5h-1.1l-4.1 4.8L9.5 5H5l5 7.2L5 19h1.1l4.3-5L14.5 19H19l-5.5-8.2zm-1.5 1.8l-.5-.7L6.6 5.9h1.7l3.2 4.6.5.7 4.2 6h-1.7l-3.5-4.6z" fill="#fff"/></svg>`,
+    threads: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#000"/><path d="M16.2 11.4c-.1 0-.2-.1-.3-.1-. 2-1.8-1.2-3-2.8-3.1v-.1c1.3 0 2.6.8 3.2 2.1.3.7.5 1.5.5 2.3 0 2.8-1.5 4.7-4.1 4.7h-.1c-1.6 0-2.8-.7-3.5-1.8-.6-1-.9-2.3-.9-3.8 0-1.5.3-2.8.9-3.8.7-1.1 1.9-1.8 3.5-1.8 1.5 0 2.6.6 3.3 1.6.3.5.6 1 .7 1.6l-1.3.3c-.1-.4-.3-.8-.5-1.1-.5-.7-1.2-1-2.2-1-1.1 0-1.9.5-2.4 1.3-.4.7-.6 1.7-.6 2.9 0 1.2.2 2.2.6 2.9.5.8 1.3 1.3 2.4 1.3 1.7 0 2.7-1.2 2.7-3.2 0-.4 0-.8-.1-1.1-.4.1-.8.1-1.3.1-1 0-1.7-.3-2.2-.8-.4-.4-.7-1-.7-1.7 0-1.4 1-2.3 2.6-2.3.5 0 .9.1 1.3.2z" fill="#fff"/></svg>`,
+    whatsapp: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#25D366"/><path d="M17.5 14.4c-.3-.1-1.6-.8-1.8-.9-.3-.1-.5-.1-.7.1-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.4-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.4.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.3 0-.5-.1-.2-.7-1.6-.9-2.2-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 4.9 4.3.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.6-.7 1.8-1.3.2-.6.2-1.2.2-1.3-.1-.1-.3-.2-.6-.3z" fill="#fff"/></svg>`,
+    telegram: `<svg width="${size}" height="${size}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#2AABEE"/><path d="M5.4 11.9l8.8-3.4c.4-.2.8.1.7.5l-1.5 7c-.1.4-.5.5-.8.3l-2.3-1.7-1.1 1.1c-.1.1-.3.2-.5.1l.2-2.4 4.6-4.2c.2-.2 0-.3-.3-.1L8.5 13l-2.5-.8c-.5-.2-.5-.5.1-.7l-.1-.1-.6.5z" fill="#fff"/></svg>`
+  };
+  return logos[platform] || `<span style="font-size:${size}px;">📱</span>`;
+}
+
+// Emoji fallback icons (used in calendar chips on mobile where SVGs are too small)
 const QUEUE_PLATFORM_ICONS = {
   instagram:'📸', facebook:'👥', tiktok:'🎵',
   linkedin:'💼', x:'𝕏', threads:'🧵', whatsapp:'💬', telegram:'✈️'
@@ -1033,7 +1049,7 @@ function renderQueueList(posts, container) {
 
 // Shared post card renderer (used by list view and calendar day detail)
 function renderQueuePostCard(post) {
-  const icon = QUEUE_PLATFORM_ICONS[post.platform] || '📱';
+  const icon = platformLogoSvg(post.platform, 24);
   const hook = (post.hook || '').slice(0, 80);
 
   const statusBadge = s => {
@@ -1074,7 +1090,7 @@ function renderQueuePostCard(post) {
   return `
     <div class="card" style="margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <span style="font-size:22px;">${icon}</span>
+        <span style="display:flex;align-items:center;flex-shrink:0;">${icon}</span>
         <div style="flex:1;min-width:0;">
           <div style="font-size:13px;font-weight:600;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
             ${hook || '(no hook)'}
@@ -1146,7 +1162,7 @@ function renderQueueCalendar(posts, container) {
       const pc = QUEUE_PLATFORM_COLORS[p.platform] || { bg: '#f1f5f9', color: '#475569' };
       const statusClass = p.status === 'failed' ? ' status-failed' : p.status === 'published' ? ' status-published' : '';
       const hookPreview = (p.hook || '(no hook)').slice(0, 30);
-      return `<div class="queue-cal-chip${statusClass}" style="background:${pc.bg};color:${pc.color};" title="${QUEUE_PLATFORM_ICONS[p.platform] || ''} ${hookPreview}">${QUEUE_PLATFORM_ICONS[p.platform] || '📱'} ${hookPreview}</div>`;
+      return `<div class="queue-cal-chip${statusClass}" style="background:${pc.bg};color:${pc.color};display:flex;align-items:center;gap:4px;" title="${hookPreview}">${platformLogoSvg(p.platform, 12)} ${hookPreview}</div>`;
     }).join('');
 
     const overflowHtml = dayPosts.length > maxChips
