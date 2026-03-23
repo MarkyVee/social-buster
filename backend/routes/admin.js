@@ -457,7 +457,7 @@ router.get('/users', async (req, res) => {
     if (userIds.length > 0) {
       const { data: profileData } = await supabaseAdmin
         .from('user_profiles')
-        .select('user_id, brand_name, industry, geo_region, business_type, onboarding_complete, created_at')
+        .select('user_id, brand_name, industry, geo_region, business_type, onboarding_complete, subscription_tier, created_at')
         .in('user_id', userIds);
       profiles = profileData || [];
     }
@@ -478,6 +478,7 @@ router.get('/users', async (req, res) => {
         industry:            p.industry || null,
         geo_region:          p.geo_region || null,
         business_type:       p.business_type || null,
+        subscription_tier:   p.subscription_tier || 'free_trial',
         onboarding_complete: p.onboarding_complete || false,
         created_at:          p.created_at || u.created_at
       };

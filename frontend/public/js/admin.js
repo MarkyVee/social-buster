@@ -101,7 +101,8 @@ async function loadAdminOverview() {
       apiFetch('/admin/health')
     ]);
 
-    panel.innerHTML = buildOverviewHtml(stats, health);
+    panel.innerHTML = buildOverviewHtml(stats, health)
+      + `<div style="margin-top:20px;"><button class="btn btn-sm" onclick="panel=document.getElementById('admin-tab-overview');if(panel)panel.dataset.loaded='';loadAdminOverview();">🔄 Refresh Overview</button></div>`;
 
   } catch (err) {
     panel.innerHTML = `<div class="admin-error">Failed to load overview: ${escapeAdminHtml(err.message)}</div>`;
@@ -318,15 +319,19 @@ async function loadAdminUsers(page = 1, search = '') {
 function buildUsersTableHtml(users) {
   if (!users.length) return '<div class="admin-muted" style="padding:20px;">No users found.</div>';
 
-  const rows = users.map(u => `
+  const tierColors = { enterprise: '#6366f1', professional: '#0ea5e9', starter: '#16a34a', free_trial: '#64748b', suspended: '#dc2626' };
+  const rows = users.map(u => {
+    const tierColor = tierColors[u.subscription_tier] || '#64748b';
+    return `
     <tr class="admin-user-row" onclick="loadAdminUserDetail('${u.user_id}')">
       <td>${escapeAdminHtml(u.email)}</td>
       <td>${escapeAdminHtml(u.brand_name || '—')}</td>
+      <td><span style="color:${tierColor};font-weight:600;font-size:12px;">${escapeAdminHtml(u.subscription_tier || 'free_trial')}</span></td>
       <td>${escapeAdminHtml(u.industry || '—')}</td>
-      <td>${escapeAdminHtml(u.geo_region || '—')}</td>
       <td>${u.onboarding_complete ? '✅' : '⏳'}</td>
       <td class="admin-muted">${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   return `
     <table class="admin-table admin-users-table">
@@ -334,8 +339,8 @@ function buildUsersTableHtml(users) {
         <tr>
           <th>Email</th>
           <th>Brand</th>
+          <th>Tier</th>
           <th>Industry</th>
-          <th>Region</th>
           <th>Onboarded</th>
           <th>Joined</th>
         </tr>
@@ -416,6 +421,7 @@ function buildUserDetailHtml(data) {
 
       <div class="admin-detail-grid">
         <div><strong>User ID</strong><br/><code class="admin-muted">${p.user_id}</code></div>
+        <div><strong>Current Tier</strong><br/><span style="font-weight:700;color:${p.subscription_tier === 'enterprise' ? '#6366f1' : p.subscription_tier === 'professional' ? '#0ea5e9' : p.subscription_tier === 'starter' ? '#16a34a' : '#64748b'};">${escapeAdminHtml(p.subscription_tier || 'free_trial')}</span></div>
         <div><strong>Region</strong><br/>${escapeAdminHtml(p.geo_region || '—')}</div>
         <div><strong>Business type</strong><br/>${escapeAdminHtml(p.business_type || '—')}</div>
         <div><strong>Joined</strong><br/>${p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</div>
@@ -438,11 +444,11 @@ function buildUserDetailHtml(data) {
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;">
         <select id="admin-tier-select" class="admin-select">
           <option value="">— keep current —</option>
-          <option value="free_trial">free_trial</option>
-          <option value="starter">starter</option>
-          <option value="professional">professional</option>
-          <option value="enterprise">enterprise</option>
-          <option value="suspended">suspended</option>
+          <option value="free_trial" ${p.subscription_tier === 'free_trial' ? 'selected' : ''}>free_trial</option>
+          <option value="starter" ${p.subscription_tier === 'starter' ? 'selected' : ''}>starter</option>
+          <option value="professional" ${p.subscription_tier === 'professional' ? 'selected' : ''}>professional</option>
+          <option value="enterprise" ${p.subscription_tier === 'enterprise' ? 'selected' : ''}>enterprise</option>
+          <option value="suspended" ${p.subscription_tier === 'suspended' ? 'selected' : ''}>suspended</option>
         </select>
         <input id="admin-notes-input" class="admin-input" type="text" placeholder="Admin notes (optional)" style="flex:1;min-width:200px;" value="${escapeAdminHtml(p.admin_notes || '')}" />
         <button class="btn btn-sm btn-primary" onclick="saveAdminUserOverride('${p.user_id}')">Save Override</button>
@@ -912,7 +918,11 @@ function injectAdminStyles() {
       margin-bottom: 24px;
       border-bottom: 2px solid #e2e8f0;
       padding-bottom: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
     }
+    .admin-tabs::-webkit-scrollbar { display: none; }
     .admin-tab {
       background: none;
       border: none;
@@ -924,6 +934,8 @@ function injectAdminStyles() {
       color: #64748b;
       margin-bottom: -2px;
       transition: color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     .admin-tab.active, .admin-tab:hover {
       color: #6366f1;
@@ -2116,7 +2128,10 @@ async function loadAdminLimits() {
     scheduled_queue_size:   'Scheduled queue size',
     comment_monitoring:     'Comment monitoring',
     dm_lead_capture:        'DM & lead capture',
-    intelligence_dashboard: 'Intelligence dashboard'
+    intelligence_dashboard: 'Intelligence dashboard',
+    performance_predictor:  'Performance predictor',
+    pain_point_miner:       'Pain-point miner',
+    brand_voice_tracker:    'Brand voice tracker'
   };
 
   const byFeatureTier = {};
@@ -2131,7 +2146,7 @@ async function loadAdminLimits() {
   ).join('');
 
   // Features that are simple on/off flags (no number input needed)
-  const FLAG_FEATURES = ['comment_monitoring', 'dm_lead_capture', 'intelligence_dashboard'];
+  const FLAG_FEATURES = ['comment_monitoring', 'dm_lead_capture', 'intelligence_dashboard', 'performance_predictor', 'pain_point_miner', 'brand_voice_tracker'];
 
   const bodyRows = FEATURES.map(feature => {
     const isFlag = FLAG_FEATURES.includes(feature);
