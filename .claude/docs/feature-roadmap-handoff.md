@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Full Handoff
 
-> **Last updated:** 2026-03-21 (Tier 1 premium features: Performance Predictor, Pain-Point Miner, Brand Voice Tracker)
+> **Last updated:** 2026-03-23 (Post-polish session: Help section, webhook endpoints, admin fixes, migration verification)
 > **Purpose:** Complete context document so any AI or developer can pick up exactly where we left off.
 > Covers: what's built, what's in progress, what's next, and the full feature roadmap with implementation notes.
 
@@ -22,6 +22,8 @@
 12. [Environment & Deployment](#12-environment--deployment)
 13. [Shared Context Pipeline (Agent Intelligence Layer)](#13-shared-context-pipeline-agent-intelligence-layer)
 14. [Tier 1 Premium Features](#14-tier-1-premium-features-built-2026-03-21)
+15. [Session Log: 2026-03-22/23](#15-session-log-2026-03-22--2026-03-23-polish--production-readiness)
+16. [Exact Pickup Point — "What's Next"](#16-exact-pickup-point--whats-next)
 
 ---
 
@@ -106,6 +108,13 @@
 - **Platform checkbox cap:** Profile page fetches `GET /billing/my-limits` and limits "Preferred Platforms" checkboxes to the user's `platforms_connected` cap. Exceeding shows upgrade prompt.
 - **Feature descriptions (FEATURE_INFO):** 7 features with icon, name, and marketing description shown in upgrade modals so locked features sell themselves.
 
+### Help & Documentation
+- **Help & Tutorials page** — Route `#help`, 8 collapsible topic sections with live search
+- **Topics covered:** Getting Started, Briefs & AI Generation, Media Library, Publishing, DM Automation, Intelligence, Settings & Billing, Troubleshooting
+- **Video tutorials** — Placeholder banner ready for YouTube/Drive video embeds
+- **Contact support** — Links to in-app Messages system
+- **In-app messaging** — User-to-admin messaging via Messages page (replaces Tawk.to)
+
 ### Auth & Token Refresh
 - **JWT-aware proactive refresh** — checks token expiry before every API call, refreshes if within 5 minutes of expiring
 - **Shared refresh lock** — `refreshTokenOnce()` with subscriber queue prevents race conditions when multiple requests hit 401 simultaneously
@@ -132,18 +141,20 @@
 
 ## 3. What's In Progress
 
-### Stripe Billing — FULLY WORKING (as of 2026-03-21)
-- **Working:** Subscribe (Stripe Checkout for free→paid), change plan (paid→paid with proration), cancel at period end, downgrade to free (immediate), Stripe customer portal
-- **Working:** Webhook receives events correctly, `STRIPE_WEBHOOK_SECRET` confirmed working in Coolify
-- **Working:** Plan cards UI, upgrade/downgrade/cancel buttons with loading states and global toast notifications
-- **Working:** Tier limit enforcement on all routes with frontend upgrade prompts
-- **Working:** Admin tier override — changing a user's tier in Admin Dashboard takes effect immediately everywhere
-- **Prior fixes (this session):**
-  - Webhook `cancel_at_period_end` race condition (commit `5fa5553`)
-  - Global toast system for billing notifications (commit `ad2a1f1`)
-  - Toggle logic inversion — OFF now blocks instead of allowing unlimited (commit `96032bf`)
-  - Admin tier override not reflected in `/auth/me` and `/billing/status` (commit `3c8bf40`)
-  - Platform checkbox enforcement on profile page (commit `2607fe8`)
+### DM Automation — NEEDS LIVE TESTING (as of 2026-03-23)
+- **Code complete:** Comment ingestion, trigger matching, DM sending (Facebook Messenger + Instagram), multi-step conversations, lead collection, CSV export
+- **Meta webhook registered:** `https://social-buster.com/webhooks/meta` registered and verified in Meta Developer Portal
+- **Deauthorize + data deletion endpoints:** Live at `/webhooks/meta/deauthorize` and `/webhooks/meta/data-deletion`
+- **Blocker: `instagram_manage_messages` permission** — Not visible in Meta's "Manage messaging & content on Instagram" use case. May need additional product setup or a different approach. `pages_messaging` IS completed and working.
+- **Test user setup in progress:** Attempting to create a test user via Meta Developer Portal. Meta-generated test users weren't available for Instagram invite. A real person was invited but the invitation didn't go through. Alternative approach: test with the admin account directly (admin has all permissions).
+- **Next step:** Publish a real Facebook post through Social Buster, set up a DM automation with a trigger keyword, have someone comment with the trigger, verify the full flow works end-to-end.
+
+### Stripe Billing — FULLY WORKING (completed 2026-03-21)
+- Subscribe, change plan, cancel, downgrade, Stripe customer portal — all working
+- Webhook receiving events, `STRIPE_WEBHOOK_SECRET` confirmed in Coolify
+- Plan cards UI, upgrade/downgrade/cancel with loading states and global toasts
+- Tier limit enforcement on all routes with frontend upgrade prompts
+- Admin tier override — takes effect immediately everywhere
 
 ---
 
@@ -151,23 +162,28 @@
 
 These are non-feature items that need to be done for production readiness:
 
-| Item | Priority | Notes |
-|------|----------|-------|
-| **Meta App Review** | HIGH | `pages_messaging`, `pages_read_engagement`, `instagram_manage_messages` scopes needed for production DM automation |
-| **Meta webhook registration** | HIGH | Register `https://yourdomain.com/webhooks/meta` in Meta Developer Portal for multi-step DM replies |
-| **Privacy Policy page** | HIGH | Required before Meta App Review. Page exists at `/privacy.html` but may need content review |
-| **Tier limit enforcement** | DONE | `checkLimit` wired on all routes. Frontend upgrade prompts with feature descriptions. Platform checkbox cap on profile. Admin toggle semantics fixed (OFF=blocked). |
-| **Stripe end-to-end test** | DONE | Subscribe, upgrade, downgrade, cancel all tested and working. Webhook confirmed receiving events. Admin tier override working. |
-| **LinkedIn OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
-| **TikTok OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
-| **X (Twitter) OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
-| **YouTube OAuth** | MEDIUM | Stub exists, needs credentials + OAuth flow |
-| **Threads OAuth** | MEDIUM | Scaffolded but redirect URIs are localhost — need real domain |
-| **Single session enforcement** | LOW | Prevent account sharing via `active_session_id` on `user_profiles` |
-| **Help section** | LOW | Written docs + video tutorials |
-| **Tawk.to widget** | LOW | User-to-admin messaging |
-| **WhatsApp** | LOW | 8th platform via WhatsApp Business API |
-| **Email sender name** | LOW | Change from "Social Buster" to user's brand name |
+| Item | Priority | Status | Notes |
+|------|----------|--------|-------|
+| **DM automation live test** | HIGH | IN PROGRESS | Code complete. Need to publish a real Facebook post, set up trigger keyword, have someone comment, verify DM arrives. See Section 3 for full status. |
+| **Meta App Review** | HIGH | BLOCKED | `pages_messaging` completed. `instagram_manage_messages` not showing in Meta portal — may need additional product setup. Needed for production DM automation with non-test users. |
+| **Meta webhook registration** | DONE | ✅ | Registered and verified at `https://social-buster.com/webhooks/meta` |
+| **Deauthorize + data deletion** | DONE | ✅ | Endpoints live at `/webhooks/meta/deauthorize` and `/webhooks/meta/data-deletion`. Threads versions also exist at `/publish/oauth/threads/deauthorize` and `/publish/oauth/threads/data-deletion`. |
+| **Privacy Policy page** | DONE | ✅ | Page exists at `/privacy.html`. May need content review before Meta submission. |
+| **Help section** | DONE | ✅ | 8 collapsible topic sections with live search. Video tutorials placeholder ready. Route: `#help` |
+| **Single session enforcement** | DONE | ✅ | `active_session_id` on `user_profiles`, checked in auth middleware. Migration run. |
+| **Tier limit enforcement** | DONE | ✅ | `checkLimit` wired on all routes. Frontend upgrade prompts. Admin toggle semantics fixed. |
+| **Stripe billing** | DONE | ✅ | Full end-to-end working. Plans table with Stripe Price IDs. Admin tier override. |
+| **All SQL migrations** | DONE | ✅ | All 7 migration files confirmed run in Supabase (verified 2026-03-23). |
+| **In-app messaging** | DONE | ✅ | User-to-admin messaging system built (replaces Tawk.to). Route: `#messages` |
+| **Admin dashboard** | DONE | ✅ | Polished: tier visibility, color-coded badges, responsive tabs, refresh button, corrected Stripe notice. |
+| **Custom logo** | DONE | ✅ | Logo image at `/images/logo.png` replaces lightning bolt in sidebar + auth screens. |
+| **Threads OAuth** | DONE | ✅ | Working in production. Redirect URI uses `FRONTEND_URL`. Registered in Meta Developer Portal. |
+| **LinkedIn OAuth** | DEFERRED | — | Backend code exists. Needs developer app credentials + `.env` vars. |
+| **TikTok OAuth** | DEFERRED | — | Developer app partially created (Client Key: `aw2gse4bqptbbh9n`). Backend code exists. User deferred setup. |
+| **X (Twitter) OAuth** | DEFERRED | — | Backend code exists. Needs developer app credentials. |
+| **YouTube OAuth** | DEFERRED | — | Backend code exists. Needs developer app credentials. |
+| **WhatsApp** | DEFERRED | — | Use case visible in Meta portal ("Connect with customers through WhatsApp"). Backend code exists. |
+| **Email sender name** | LOW | — | Change from "Social Buster" to user's brand name in outgoing emails. Minor cosmetic. |
 
 ---
 
@@ -523,7 +539,7 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 7. **FFmpeg is background-only** — Never call from route handlers. CPU-intensive ops run in BullMQ workers.
 8. **`process_status` concurrent guard** — Uses `.in(['pending', 'failed'])`. Don't change to plain `.eq()`.
 9. **OAuth redirect URIs must match exactly** — Google and Meta reject mismatches. Localhost ≠ production.
-10. **Threads OAuth URIs are localhost** — Need real domain before Threads works in production.
+10. **Threads OAuth is working** — Uses `FRONTEND_URL` fallback (not hardcoded localhost). Redirect URI registered in Meta Developer Portal. Fixed 2026-03-22.
 11. **Facebook error 506** — "Duplicate content." Normal during testing. Change content or wait.
 12. **No axios without timeout** — All platform API calls need `timeout: 30_000`.
 13. **Stale post recovery window: 2-3 minutes max** — Not 5. Legitimate publishes take ≤105s.
@@ -550,6 +566,10 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 34. **`why_this_works` is NOT stored in the database** — It's returned from the LLM alongside hook/caption/cta but only attached to the API response (same pattern as `media_recommendation`). If you need to persist it, add a column to `posts` first.
 35. **Context cache TTL is 1 hour** — `agent_context:{userId}` in Redis. Agents on faster schedules (comments every 15min) may produce stale context. This is intentional — rebuilding context on every agent run would multiply DB queries. If freshness matters, pass `skipCache: true` to `buildContext()`.
 36. **New video_segments columns require migration** — `hook_potential`, `audience_fit`, `use_cases`, `text_overlay_opportunity` were added in `migration_enriched_video_tags.sql`. All are optional — existing segments work without them. Run the migration in Supabase SQL Editor before deploying code that writes to these columns.
+42. **NEVER modify Facebook Login OAuth redirect URIs** — These control Facebook AND Instagram OAuth. Adding/removing/changing any URI risks breaking both platforms. Threads and other platforms get their OWN use case in Meta — they do NOT go in Facebook Login redirect URIs. This almost caused a multi-day outage during Threads OAuth setup.
+43. **Threads OAuth requires `https://threads.net` (no www)** — Using `www.threads.net` causes error 4476002. The redirect URI uses `FRONTEND_URL` fallback so it works in both dev and production without hardcoding.
+44. **Browser cookies can mask OAuth fixes** — After a failed Threads OAuth attempt, cookies for `threads.net` cached the error state. Clearing cache wasn't enough — had to clear cookies specifically via `chrome://settings/content/all` → search "threads" → delete. Always test OAuth fixes in incognito first.
+45. **`instagram_manage_messages` may not appear in Meta portal** — As of 2026-03-23, this permission doesn't show under "Manage messaging & content on Instagram" use case. May require additional product setup or only becomes available during App Review. `pages_messaging` (for Facebook DMs) IS available and completed.
 
 ---
 
@@ -584,12 +604,13 @@ These are hard-won lessons. Every item here caused a real bug or hours of debugg
 | Platform | OAuth | Text | Image | Video | Comments | DMs | Status |
 |----------|-------|------|-------|-------|----------|-----|--------|
 | Facebook | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | **Fully working** |
-| Instagram | ✅ (via FB) | ✅ | ✅ | ✅ (Reels) | ✅ | ✅ | **Working, needs App Review** |
-| TikTok | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Stub only |
-| LinkedIn | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Stub only |
-| X (Twitter) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Stub only |
-| Threads | Scaffolded | ❌ | ❌ | ❌ | ❌ | ❌ | Redirect URIs need real domain |
-| YouTube | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Stub only |
+| Instagram | ✅ (via FB) | ✅ | ✅ | ✅ (Reels) | ✅ | ⚠️ | **Working. DMs need `instagram_manage_messages` — not yet available in Meta portal** |
+| Threads | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | **OAuth working in production.** Publishing API not yet implemented. |
+| TikTok | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Developer app partially created. Backend code exists. Deferred. |
+| LinkedIn | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Backend code exists. Needs credentials. Deferred. |
+| X (Twitter) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Backend code exists. Needs credentials. Deferred. |
+| YouTube | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Backend code exists. Needs credentials. Deferred. |
+| WhatsApp | ❌ | — | — | — | — | ❌ | Use case visible in Meta portal. Backend code exists. Deferred. |
 
 ---
 
@@ -925,3 +946,107 @@ All three Tier 1 features are fully wired into the existing tier limits system:
 - `backend/data/migration_tier1_limits.sql` — SQL migration for existing deployments (already run)
 
 **Admin controls:** Admin can change any tier's access in the Limits tab of the admin dashboard. Changes take effect immediately (Redis cache is busted on save).
+
+---
+
+## 15. Session Log: 2026-03-22 / 2026-03-23 (Polish & Production Readiness)
+
+### Commits This Session
+```
+4d02e67 — Fix Threads OAuth URL: threads.net → www.threads.net
+78504bc — Revert Threads OAuth URL to canonical https://threads.net (no www)
+1cc94fa — Remove Threads OAuth debug logging
+fc523da — Replace lightning bolt emoji with custom logo image
+e80ab42 — Fix server startup log to show actual FRONTEND_URL
+22b2c9e — Add subscription_tier column to user_profiles
+afc4050 — Polish admin dashboard: tier visibility, labels, responsive tabs
+0dc1690 — Add Meta deauthorize and data-deletion webhook endpoints
+dbc8055 — Add Help & Tutorials page with searchable documentation
+f5e292c — Fix misleading Stripe notice in admin revenue tab
+```
+
+### What Was Done
+
+1. **Threads OAuth fixed** — URL format issue (`threads.net` vs `www.threads.net`). Root cause was browser cookies for threads.net caching a failed OAuth attempt. Fix: clear cookies for threads.net specifically. OAuth now works in production.
+
+2. **Custom logo** — Replaced ⚡ lightning bolt emoji with `/images/logo.png` in 3 locations: sidebar, login screen, register screen. CSS added for proper sizing and alignment.
+
+3. **Server log fix** — `server.js` was logging hardcoded `Frontend: http://localhost:3000` in production. Changed to use `process.env.FRONTEND_URL`.
+
+4. **Admin tier override** — Added `subscription_tier` column to `user_profiles` (migration run). Admin dashboard updated to show tier badges in user list, display current tier in user detail, pre-select in override dropdown.
+
+5. **Admin dashboard polish** — 6 UX improvements: fixed missing FEATURE_LABELS (3 premium features), added FLAG_FEATURES for premium toggles, tier column in users table with color-coded badges, current tier in user detail, pre-selected dropdown, refresh button on Overview tab, horizontally scrollable tabs for mobile.
+
+6. **Meta deauthorize + data deletion endpoints** — Built `POST /webhooks/meta/deauthorize` and `GET|POST /webhooks/meta/data-deletion` to match URLs already registered in Meta Developer Portal.
+
+7. **Help & Tutorials page** — Full help section at `#help` route with 8 collapsible topic sections (Getting Started, Briefs, Media, Publishing, DM Automation, Intelligence, Settings, Troubleshooting), live search filtering, video tutorials placeholder, contact support link.
+
+8. **Stripe notice fix** — Admin revenue tab said "Stripe is not yet connected" which was misleading. Changed to accurate "Estimated data" message.
+
+9. **Migration verification** — Confirmed all 7 SQL migration files have been run in Supabase production.
+
+10. **Meta webhook registration** — Registered and verified `https://social-buster.com/webhooks/meta` in Meta Developer Portal.
+
+### Challenges & Solutions
+
+| Challenge | Solution | Lesson |
+|-----------|----------|--------|
+| Threads OAuth error 4476002 "No app ID was sent" | Reverted URL to `https://threads.net` (no www) + cleared browser cookies for threads.net. Works in incognito immediately — regular browser needed cookie clearing. | Threads is sensitive to URL format. Browser cookie caching can mask the real fix. Always test in incognito first. |
+| Almost added Threads callback to Facebook Login redirect URIs | User caught this before it happened. Created permanent feedback memory: NEVER modify Facebook Login OAuth redirect URIs. | Facebook Login redirect URIs control Facebook AND Instagram OAuth. Modifying them risks breaking working platforms that took days to set up. |
+| `instagram_manage_messages` not visible in Meta portal | Under "Manage messaging & content on Instagram" use case, only shows basic permissions. The permission may need the Messenger product added, or may only appear during App Review submission. Still investigating. | Meta's Developer Portal UI doesn't always show all permissions upfront. Some require specific product additions or only appear in App Review. |
+| Test user invitation not going through | Meta-generated test users weren't available for Instagram. Real person invitation via Instagram didn't arrive. Alternative: test with admin account directly since admin has all permissions. | Meta test user system is unreliable for Instagram-specific testing. Admin account testing is the most reliable path. |
+
+### CRITICAL: Facebook Login OAuth Warning
+
+**NEVER modify the Facebook Login redirect URIs in Meta Developer Portal.** These control the OAuth flow for BOTH Facebook AND Instagram. The current working URIs are:
+- `https://social-buster.com/publish/oauth/meta/callback`
+- (possibly localhost variant for dev)
+
+Adding, removing, or changing ANY URI in this list risks breaking Facebook and Instagram OAuth, which took days of debugging to get working. If a new platform (like Threads) needs a callback, it gets its OWN product/use case in Meta — it does NOT go in the Facebook Login redirect URIs.
+
+---
+
+## 16. Exact Pickup Point — "What's Next"
+
+When the user says "what's next", here is the priority order:
+
+### Priority 1: DM Automation Live Test
+**Status:** Code is 100% complete. Infrastructure is ready (webhook registered, endpoints built). Just needs an actual end-to-end test.
+
+**Steps:**
+1. Publish a real Facebook post through Social Buster to the connected Page
+2. Go to DM Automations → create new automation on that post
+3. Add trigger keyword (e.g., "info")
+4. Write a DM message
+5. Activate the automation
+6. Have someone (or yourself from another account/incognito) comment "info" on the post
+7. Wait for comment worker (runs every 15 min) OR manually trigger
+8. Verify the DM is sent to the commenter
+
+**Known blockers:**
+- `instagram_manage_messages` permission not showing in Meta portal — Facebook DMs should work, Instagram DMs may not until this is resolved
+- Test user invitation didn't go through — may need to test with admin's own account or find another approach
+
+### Priority 2: Meta App Review
+**Status:** Cannot submit until DM automation is tested and working. Need `pages_messaging` (completed) and `instagram_manage_messages` (not yet available in portal) approved for production use with non-test users.
+
+**What Meta requires for App Review:**
+- Working demo of the feature
+- Privacy Policy URL (exists at `/privacy.html`)
+- Deauthorize callback URL (exists at `/webhooks/meta/deauthorize`)
+- Data deletion callback URL (exists at `/webhooks/meta/data-deletion`)
+- Human agent escalation pathway (required for messaging features)
+
+### Priority 3: Platform OAuth Setup (Deferred)
+User explicitly said "I'm not going to do TikTok right now. Or any others." Resume when user is ready.
+- TikTok: Developer app partially created (Client Key: `aw2gse4bqptbbh9n`)
+- LinkedIn, X, YouTube: Need developer apps created
+
+### Priority 4: Premium Feature Roadmap
+8 premium features designed, 3 already built (Tier 1). See Section 5 for full roadmap. Tier 2 features (Trend Forecaster, Algorithm-Aware Tuning, Content Fatigue Detector, Competitor Shadow Mode) are next when user is ready to build new features.
+
+### Lower Priority (Nice to Have)
+- Video tutorial content for Help page (placeholder exists)
+- Email sender name customization (minor cosmetic)
+- Dropbox/Box media integrations (stubs exist, no SDK code)
+- "Coming soon" labels in platform connections UI — could be updated since backend code exists for some
