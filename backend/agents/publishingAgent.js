@@ -32,7 +32,6 @@ const {
   downloadToTemp,
   probeVideo,
   trimVideo,
-  resizeImageIfNeeded,
   cleanupTemp,
   PLATFORM_LIMITS
 } = require('../services/ffmpegService');
@@ -208,6 +207,8 @@ async function publishPost(post) {
     // For images: download locally so we can upload via multipart form data.
     // URL-based upload (/photos?url=) is unreliable — Facebook may reject Supabase
     // URLs depending on size, headers, or CDN behaviour. Multipart is always reliable.
+    // NOTE: Images are already optimized (resized to < 4 MB) at attach time by
+    // mediaProcessAgent — no resize needed here. Just download for multipart upload.
     if (mediaItem.file_type === 'image') {
       try {
         const extension = (mediaItem.filename?.split('.').pop() || 'jpg').toLowerCase();
@@ -215,12 +216,8 @@ async function publishPost(post) {
         const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
         tempFilePaths.push(downloadedPath);
 
-        // Resize if the image exceeds the platform's size limit
-        const resizedPath = await resizeImageIfNeeded(downloadedPath, post.platform);
-        if (resizedPath !== downloadedPath) tempFilePaths.push(resizedPath);
-
-        post.media_local_path = resizedPath;
-        console.log(`[PublishingAgent]    Image ready → ${resizedPath}`);
+        post.media_local_path = downloadedPath;
+        console.log(`[PublishingAgent]    Image ready → ${downloadedPath}`);
       } catch (imgErr) {
         // Non-fatal: fall back to URL-based upload if download fails.
         console.warn(`[PublishingAgent]    Image download failed, falling back to URL: ${imgErr.message}`);

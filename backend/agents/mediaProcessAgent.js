@@ -35,7 +35,11 @@ const { v4: uuidv4 } = require('uuid');
 
 const { supabaseAdmin }           = require('../services/supabaseService');
 const { downloadGoogleDriveFile } = require('../services/googleDriveService');
-const { cleanupTemp }             = require('../services/ffmpegService');
+const { cleanupTemp, resizeImageIfNeeded } = require('../services/ffmpegService');
+
+// Universal image size cap — use the most restrictive platform limit (Facebook 4 MB)
+// so the processed image is safe to publish on ANY platform without further resizing.
+const UNIVERSAL_IMAGE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 // Supabase Storage bucket that holds all pre-processed user media.
 // Must be created manually in the Supabase dashboard and set to PUBLIC.
@@ -139,14 +143,25 @@ async function resolveProcessedUrl(item) {
     console.log(`[MediaProcess] Downloading ${item.file_type} from Google Drive...`);
     const tempPath = await downloadGoogleDriveFile(item.user_id, item.cloud_url, extension);
 
+    // Track all temp files for cleanup
+    const tempFiles = [tempPath];
+
     try {
+      // Optimize images before uploading — resize if they exceed the universal
+      // size cap (4 MB = Facebook's limit, the most restrictive platform).
+      // This means the processed_url in Supabase is always ready for ANY platform.
+      let uploadPath = tempPath;
+      if (item.file_type === 'image') {
+        uploadPath = await optimizeImage(tempPath, tempFiles);
+      }
+
       console.log(`[MediaProcess] Uploading to Supabase Storage (bucket: ${BUCKET})...`);
-      const publicUrl = await uploadToSupabase(tempPath, item.user_id, extension, contentType);
+      const publicUrl = await uploadToSupabase(uploadPath, item.user_id, extension, contentType);
       console.log(`[MediaProcess] Upload complete: ${publicUrl}`);
       return publicUrl;
     } finally {
-      // Always clean up the temp file — whether upload succeeded or threw
-      cleanupTemp(tempPath);
+      // Always clean up ALL temp files — whether upload succeeded or threw
+      tempFiles.forEach(f => cleanupTemp(f));
     }
   }
 
@@ -155,6 +170,37 @@ async function resolveProcessedUrl(item) {
   // If they aren't, publish will fail loudly with a real error message.
   console.log(`[MediaProcess] Provider '${item.cloud_provider}' — using cloud_url directly`);
   return item.cloud_url;
+}
+
+// ----------------------------------------------------------------
+// optimizeImage — resizes an image if it exceeds the universal size cap.
+// Uses the ffmpegService resizeImageIfNeeded function with 'facebook' as
+// the target (most restrictive: 4 MB). If the image is already small
+// enough, returns the original path unchanged.
+//
+// tempFiles — array to push any new temp file paths to, so the caller
+// can clean them all up in its finally block.
+// ----------------------------------------------------------------
+async function optimizeImage(imagePath, tempFiles) {
+  const fileSizeBytes = fs.statSync(imagePath).size;
+
+  if (fileSizeBytes <= UNIVERSAL_IMAGE_LIMIT_BYTES) {
+    console.log(`[MediaProcess] Image is ${Math.round(fileSizeBytes / 1024)}KB — within limits, no resize needed`);
+    return imagePath;
+  }
+
+  console.log(`[MediaProcess] Image is ${Math.round(fileSizeBytes / 1024)}KB — exceeds ${Math.round(UNIVERSAL_IMAGE_LIMIT_BYTES / 1024)}KB universal limit, resizing...`);
+
+  // resizeImageIfNeeded uses 'facebook' as the target since it's the strictest (4 MB)
+  const resizedPath = await resizeImageIfNeeded(imagePath, 'facebook');
+
+  if (resizedPath !== imagePath) {
+    tempFiles.push(resizedPath);
+    const newSize = fs.statSync(resizedPath).size;
+    console.log(`[MediaProcess] Image optimized: ${Math.round(fileSizeBytes / 1024)}KB → ${Math.round(newSize / 1024)}KB`);
+  }
+
+  return resizedPath;
 }
 
 // ----------------------------------------------------------------

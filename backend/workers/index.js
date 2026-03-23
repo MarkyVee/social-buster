@@ -311,6 +311,45 @@ async function seedPendingMediaProcessing() {
     if (seededCount > 0) {
       console.log(`[Workers] Seeded ${seededCount} pending media processing job(s)`);
     }
+
+    // Also re-queue any 'ready' images from Google Drive that were uploaded before
+    // the image optimization feature was added. These may be oversized (e.g. 13 MB)
+    // and will hang at publish time. The media process agent now resizes on copy,
+    // so resetting them to 'pending' lets the agent re-download and optimize.
+    const { data: oversizedCandidates } = await supabaseAdmin
+      .from('media_items')
+      .select('id')
+      .eq('process_status', 'ready')
+      .eq('file_type', 'image')
+      .eq('cloud_provider', 'google_drive');
+
+    if (oversizedCandidates && oversizedCandidates.length > 0) {
+      let requeued = 0;
+      for (const item of oversizedCandidates) {
+        const jobId = `reprocess-image-${item.id}`;
+        try {
+          const existing = await mediaProcessQueue.getJob(jobId);
+          if (existing) continue; // already queued from a previous startup
+
+          // Reset to pending so processMediaItem picks it up
+          await supabaseAdmin
+            .from('media_items')
+            .update({ process_status: 'pending' })
+            .eq('id', item.id);
+
+          await mediaProcessQueue.add(
+            'process-media-item',
+            { mediaItemId: item.id },
+            { jobId, removeOnComplete: true }
+          );
+          requeued++;
+        } catch (_) { /* non-fatal */ }
+      }
+      if (requeued > 0) {
+        console.log(`[Workers] Re-queued ${requeued} Google Drive image(s) for optimization`);
+      }
+    }
+
   } catch (err) {
     // Non-fatal — media processing still triggers on-demand when media is attached
     console.error('[Workers] Failed to seed pending media processing jobs:', err.message);
