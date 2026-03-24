@@ -52,17 +52,31 @@ const OPT_OUT_PHRASES = ['stop', 'unsubscribe', 'opt out', 'cancel', 'leave me a
 //   accessToken    — decrypted Page Access Token
 // ----------------------------------------------------------------
 async function startConversation(userId, automation, comment, platform, accessToken) {
-  // Guard: don't DM the same person twice for the same automation
+  // Guard: don't DM the same person twice for the same automation.
+  // BUT: if a previous attempt FAILED (conversation exists but DM never sent),
+  // delete the stale row and allow a retry. This prevents failed attempts from
+  // permanently blocking future DMs to the same person.
   const { data: existing } = await supabaseAdmin
     .from('dm_conversations')
-    .select('id')
+    .select('id, status')
     .eq('automation_id', automation.id)
     .eq('platform_user_id', comment.authorPlatformId)
     .single();
 
   if (existing) {
-    console.log(`[DMAgent] Skipping — already DM'd ${comment.authorHandle} for automation ${automation.id}`);
-    return;
+    // Allow retry if the previous conversation failed or errored out.
+    // "completed", "active", "expired", "opted_out" are legitimate end states — skip these.
+    // "failed" means the DM was never delivered — delete the stale row and retry.
+    if (existing.status === 'failed') {
+      console.log(`[DMAgent] Previous DM to ${comment.authorHandle} failed — deleting stale conversation ${existing.id} and retrying`);
+      await supabaseAdmin
+        .from('dm_conversations')
+        .delete()
+        .eq('id', existing.id);
+    } else {
+      console.log(`[DMAgent] Skipping — already DM'd ${comment.authorHandle} for automation ${automation.id} (status: ${existing.status})`);
+      return;
+    }
   }
 
   // Load steps for this automation (ordered by step_order)

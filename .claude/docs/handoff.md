@@ -1,7 +1,7 @@
 # Social Buster — Developer Handoff
 
-**Last updated:** 2026-03-21
-**Status:** Core platform (Phases 1–8) built and deployed on Coolify. Publishing working for Facebook (text/image/video) and Instagram (image/video). DM automation system fully built. **Stripe billing partially working — upgrade from free works, but plan changes, cancel, and downgrade are broken. This is the #1 active bug.**
+**Last updated:** 2026-03-24
+**Status:** Core platform (Phases 1–8) built and deployed on Coolify. Publishing working for Facebook (text/image/video) and Instagram (image/video). Stripe billing fully working. DM automation code complete — awaiting first successful end-to-end test with a non-admin commenter.
 
 ---
 
@@ -529,21 +529,93 @@ NODE_ENV=production
 
 ---
 
+## Session Log: 2026-03-24 — DM Automation Debugging (Continued)
+
+### Context
+Picking up from commit `ff7d431` (Private Replies API). The full DM pipeline was built but the actual DM delivery had never succeeded. This session focused on diagnosing and fixing the Private Replies failure.
+
+### What We Tested
+1. Published a new Facebook image post to "World Wide Treasure Hunt" Page — **published successfully** (post `913edea9`, platform post ID `101465745099191_1234583128882396`)
+2. Mark Vidano commented "Hi" on the post — webhook fired, trigger matched, DM conversation created
+3. DM delivery failed 3x with: `Facebook Private Reply error 100 subcode=33: Object with ID '1234583128882396_1296422082444210' does not exist, cannot be loaded due to missing permissions`
+4. Health check auto-discarded the failed DM job after retries exhausted
+5. Second comment from "World Wide Treasure Hunt" (the Page itself) — webhook fired but no DM triggered (different trigger or Page self-comment filtering)
+
+### Root Cause Found: Missing `pages_read_user_content` Permission
+The Private Replies API needs to READ the comment before replying to it. Our Page token had `pages_read_engagement` (reads Page-published content) but NOT `pages_read_user_content` (reads user-generated content like comments on Page posts).
+
+**Proof:** In Graph API Explorer:
+- With `pages_read_engagement` only → `GET /1234583128882396_1296422082444210` → error 200 "Missing Permissions"
+- With `pages_read_user_content` added → same GET → returned full comment data (from: Mark Vidano, message: "Hi")
+
+### Fixes Applied (commit `90847b2`)
+1. **Added `pages_read_user_content` to OAuth scopes** in `routes/publish.js` — so new Page tokens include this permission
+2. **Added diagnostic logging to `sendPrivateReply()`** in `messagingService.js` — before attempting Private Reply, does a GET on the comment to distinguish "can't read" (permissions) from "can read but can't reply" (unsupported operation). This diagnostic info will be in Coolify logs for future debugging.
+
+### Why Admin Self-Test Didn't Work
+Mark Vidano is the admin of ALL test Pages (Get Me Hip, World Wide Treasure Hunt, etc.). Facebook's Private Replies API cannot send a DM from a Page to that Page's own admin — it's "messaging yourself." This is not a bug in our code; it's a Meta platform limitation.
+
+**For testing:** Need a real person with a completely different Facebook account (not an admin/developer/tester on the Social Buster app) to comment on a published post with the trigger keyword.
+
+### Current State of DM Automation (as of commit `90847b2`)
+| Step | Status |
+|------|--------|
+| Webhook delivery (Meta → our server) | **WORKING** — comments arrive in real-time |
+| Comment processing + trigger matching | **WORKING** — keywords match, comments saved to DB |
+| DM conversation creation | **WORKING** — `dm_conversations` records created correctly |
+| Deduplication | **WORKING** — same person won't get DM'd twice for same automation |
+| Private Replies API call | **DEPLOYED, AWAITING TEST** — `pages_read_user_content` added, needs reconnect + non-admin commenter |
+| Multi-step follow-up (steps 2+) | **NOT YET TESTED** — requires user to reply to private reply, giving us their PSID for Send API |
+| Comment polling (15-min backup) | **PARTIALLY WORKING** — `pages_read_engagement` errors for some posts (needs App Review for Standard Access) |
+
+### Next Steps (in order)
+1. **Reconnect Facebook in Social Buster** — disconnect + reconnect to get fresh token with `pages_read_user_content`
+2. **Publish a simple test post** (text only is fine)
+3. **Have a non-admin friend comment** with the trigger keyword
+4. **Check Coolify logs** — the diagnostic logging will show whether the comment is readable and whether Private Replies succeeds
+5. If Private Replies works → DM automation is confirmed end-to-end
+6. Submit for Meta App Review (`pages_messaging`, `pages_read_user_content`, `pages_read_engagement`)
+
+### Files Modified This Session
+- `backend/routes/publish.js` — Added `pages_read_user_content` to OAuth scopes
+- `backend/services/messagingService.js` — Added diagnostic GET before Private Reply attempt
+
+### Key Commits
+- `90847b2` — Add pages_read_user_content OAuth scope + diagnostic logging for Private Replies
+
+### Meta Permission Reference (What Each One Does)
+| Permission | What It Reads | Status |
+|-----------|--------------|--------|
+| `pages_read_engagement` | Content posted BY the Page (posts, photos, videos), follower data, PSID | Ready for testing |
+| `pages_read_user_content` | Content posted BY USERS on the Page (comments, ratings, reviews) | Ready for testing |
+| `pages_manage_posts` | Create/edit/delete Page posts | Ready for testing |
+| `pages_manage_metadata` | Subscribe Page to webhooks, update Page settings | Ready for testing |
+| `pages_messaging` | Send/receive DMs via Messenger Platform + Private Replies | Ready for testing |
+
+"Ready for testing" = works for app admins/developers/testers. Standard Access (via App Review) needed for all users.
+
+---
+
 ## What's Pending (In Priority Order)
 
-1. **FIX: Stripe billing plan change/cancel/downgrade** — #1 priority, see Active Bug section above
-2. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions, vmarkyv may have duplicates
-3. **Tier limit enforcement** — `tier_limits` table is seeded but no middleware actually checks limits yet
-4. **Meta App Review** — required for `pages_messaging` and `pages_read_engagement` in production
-5. **Meta webhook registration** — register URL in Meta Developer Portal for multi-step DM replies
-6. **Remove diagnostic logging** — billing debug logs should be removed once billing is fixed
-7. **Privacy Policy page** — exists at `/privacy.html` but may need updates for Meta review
-8. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube
-9. **Threads OAuth redirect URI** — update to real domain
-10. **Help section** — written docs + video tutorials
-11. **Tawk.to messaging widget** — replace current messages system
-12. **Single session enforcement** — prevent account sharing
-13. **WhatsApp** — 8th platform via WhatsApp Business API (future)
+1. **DM automation end-to-end test** — needs non-admin commenter, code is deployed and ready
+2. **Meta App Review** — required for `pages_messaging`, `pages_read_user_content`, `pages_read_engagement` at Standard Access for non-admin users
+3. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions from debugging
+4. **Admin override bug** — `admin_notes` column missing on `user_profiles` (fix: `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`)
+5. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube (backend code exists, needs developer app credentials)
+6. **Anti-cloning / IP protection** — investigate code obfuscation, server-side secrets, architecture choices to prevent copying
+7. **WhatsApp** — 8th platform via WhatsApp Business API (future)
+8. **Remove diagnostic logging** — DM + billing debug logs should be cleaned up once everything is confirmed working
+
+**Already completed (remove from active tracking):**
+- ~~Stripe billing~~ — fully working (subscribe, upgrade, downgrade, cancel)
+- ~~Tier limit enforcement~~ — `checkLimit` wired on all routes, frontend upgrade prompts
+- ~~Meta webhook registration~~ — registered and verified
+- ~~Privacy Policy page~~ — exists at `/privacy.html`
+- ~~Help section~~ — 8 topic sections with search
+- ~~Threads OAuth~~ — working in production
+- ~~Single session enforcement~~ — active_session_id implemented
+- ~~Tawk.to~~ — replaced by in-app messaging system
 
 ---
 

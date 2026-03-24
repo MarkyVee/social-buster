@@ -131,8 +131,23 @@ worker.on('completed', (job) => {
   }
 });
 
-worker.on('failed', (job, err) => {
+worker.on('failed', async (job, err) => {
   console.error(`[DMWorker] Job ${job?.id} failed: ${err.message}`);
+
+  // Mark the conversation as 'failed' so the dedup guard in dmAgent.js
+  // allows a retry on the next comment from this person.
+  // Without this, a failed DM permanently blocks future attempts.
+  if (job?.name === 'send-dm' && job?.data?.conversationId) {
+    try {
+      await supabaseAdmin
+        .from('dm_conversations')
+        .update({ status: 'failed' })
+        .eq('id', job.data.conversationId);
+      console.log(`[DMWorker] Marked conversation ${job.data.conversationId} as failed`);
+    } catch (updateErr) {
+      console.error(`[DMWorker] Could not update conversation status: ${updateErr.message}`);
+    }
+  }
 });
 
 module.exports = worker;
