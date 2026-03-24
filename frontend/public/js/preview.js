@@ -1714,10 +1714,11 @@ function renderAutomationForm(postId, existing) {
   const panel = document.getElementById(`automation-panel-${postId}`);
   if (!panel) return;
 
-  const keywords = existing?.trigger_keywords || [];
-  const flowType = existing?.flow_type || 'single';
-  const steps    = existing?.steps || [{ message_template: '', collects_field: null }];
-  const name     = existing?.name || '';
+  const keywords    = existing?.trigger_keywords || [];
+  const flowType    = existing?.flow_type || 'single';
+  const steps       = existing?.steps || [{ message_template: '', collects_field: null }];
+  const name        = existing?.name || '';
+  const resourceUrl = existing?.resource_url || '';
 
   panel.innerHTML = `
     <div class="automation-panel" style="border-top:1px solid var(--border);padding:12px 0;margin-top:8px;">
@@ -1766,6 +1767,15 @@ function renderAutomationForm(postId, existing) {
             Lead Capture — ask questions to collect info
           </label>
         </div>
+      </div>
+
+      <div class="post-field" style="margin-bottom:8px;">
+        <div class="post-field-label">Resource URL</div>
+        <div class="text-muted text-sm" style="margin-bottom:4px;">
+          Link to the file you want to deliver (Google Drive, Dropbox, website, etc.). This gets appended to the final DM automatically.
+        </div>
+        <input type="text" class="form-control form-control-sm" id="auto-resource-url-${postId}"
+               value="${escapeHtml(resourceUrl)}" placeholder="https://drive.google.com/file/d/..." />
       </div>
 
       <div id="auto-steps-${postId}">
@@ -1934,12 +1944,14 @@ async function saveAutomation(postId, existingId) {
   }
 
   const name = document.getElementById(`auto-name-${postId}`)?.value?.trim() || null;
+  const resourceUrl = document.getElementById(`auto-resource-url-${postId}`)?.value?.trim() || null;
 
   const payload = {
     post_id: postId,
     name,
     flow_type: flowType,
     trigger_keywords: keywords,
+    resource_url: resourceUrl,
     steps
   };
 

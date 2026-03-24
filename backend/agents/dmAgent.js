@@ -122,15 +122,23 @@ async function startConversation(userId, automation, comment, platform, accessTo
 
   // Prepare the first message (replace placeholders)
   const firstStep = steps[0];
-  const messageText = replacePlaceholders(firstStep.message_template, {
+  const isFinalStep = automation.flow_type === 'single' || steps.length === 1;
+  let messageText = replacePlaceholders(firstStep.message_template, {
     commenter_name: comment.authorHandle || 'there'
   });
 
+  // Append the resource URL to the final step's message (if one is configured).
+  // For single-message flows, this is the only message. For multi-step flows,
+  // the resource URL is appended in processIncomingReply() on the last step.
+  if (isFinalStep && automation.resource_url) {
+    messageText += `\n\n${automation.resource_url}`;
+  }
+
   // Queue the DM for sending (rate-limited via dmWorker)
-  // Step 1 uses Private Replies API (comment ID), not Send API (PSID).
+  // Step 1 uses Messenger Send API with comment_id as recipient.
   // The feed webhook gives us the commenter's Facebook user ID, but the
-  // Messenger Send API needs a PSID which we don't have yet. Private Replies
-  // takes the comment ID directly — this is how ManyChat et al. work.
+  // Messenger Send API needs a PSID which we don't have yet. comment_id
+  // as recipient handles this — this is how ManyChat et al. work.
   await dmQueue.add('send-dm', {
     conversationId: conversation.id,
     userId,
@@ -139,7 +147,7 @@ async function startConversation(userId, automation, comment, platform, accessTo
     commentId:      comment.platformCommentId,  // for Private Replies API
     messageText,
     stepOrder:      1,
-    isFinalStep:    automation.flow_type === 'single' || steps.length === 1
+    isFinalStep
   }, {
     jobId: `dm-${conversation.id}-step-1`,
     removeOnComplete: true
@@ -253,7 +261,22 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     collectedData.forEach(d => { placeholders[d.field_name] = d.field_value; });
   }
 
-  const nextMessage = replacePlaceholders(nextStep.message_template, placeholders);
+  let nextMessage = replacePlaceholders(nextStep.message_template, placeholders);
+
+  // Append resource URL to the final step's message (if configured on the automation).
+  // For multi-step flows, the resource is delivered after all info has been collected.
+  const isLastStep = nextStepOrder >= steps.length;
+  if (isLastStep) {
+    // Load the automation to check for resource_url
+    const { data: auto } = await supabaseAdmin
+      .from('dm_automations')
+      .select('resource_url')
+      .eq('id', conversation.automation_id)
+      .single();
+    if (auto?.resource_url) {
+      nextMessage += `\n\n${auto.resource_url}`;
+    }
+  }
 
   // Update conversation state
   const now = new Date().toISOString();

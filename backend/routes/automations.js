@@ -272,7 +272,7 @@ router.get('/:id/leads', async (req, res) => {
 // ----------------------------------------------------------------
 router.post('/', checkLimit('comment_monitoring'), async (req, res) => {
   try {
-    const { post_id, name, flow_type, trigger_keywords, steps } = req.body;
+    const { post_id, name, flow_type, trigger_keywords, steps, resource_url } = req.body;
 
     // Validate required fields
     if (!trigger_keywords || !Array.isArray(trigger_keywords) || trigger_keywords.length === 0) {
@@ -307,6 +307,7 @@ router.post('/', checkLimit('comment_monitoring'), async (req, res) => {
         name:             name || null,
         flow_type,
         trigger_keywords,
+        resource_url:     resource_url || null,
         active:           true
       })
       .select()
@@ -345,7 +346,7 @@ router.post('/', checkLimit('comment_monitoring'), async (req, res) => {
 // ----------------------------------------------------------------
 router.put('/:id', async (req, res) => {
   try {
-    const { name, flow_type, trigger_keywords, steps, active } = req.body;
+    const { name, flow_type, trigger_keywords, steps, active, resource_url } = req.body;
 
     // Verify ownership
     const { data: existing } = await req.db
@@ -364,6 +365,7 @@ router.put('/:id', async (req, res) => {
     if (flow_type !== undefined)        updateData.flow_type = flow_type;
     if (trigger_keywords !== undefined) updateData.trigger_keywords = trigger_keywords;
     if (active !== undefined)           updateData.active = active;
+    if (resource_url !== undefined)     updateData.resource_url = resource_url;
 
     const { data: automation, error: updateError } = await supabaseAdmin
       .from('dm_automations')
