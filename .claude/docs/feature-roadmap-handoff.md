@@ -1,13 +1,238 @@
 # Social Buster — Feature Roadmap & Full Handoff
 
-> **Last updated:** 2026-03-23 (Post-polish session: Help section, webhook endpoints, admin fixes, migration verification)
+> **Last updated:** 2026-03-24 (Image resize fix, pause/resume publishing, DM automation debugging)
 > **Purpose:** Complete context document so any AI or developer can pick up exactly where we left off.
 > Covers: what's built, what's in progress, what's next, and the full feature roadmap with implementation notes.
 
 ---
 
+## 0. Latest Session Updates (2026-03-23/24) — START HERE
+
+### Fixes Deployed
+1. **Image resize hang fixed** — `resizeImageIfNeeded()` in `ffmpegService.js` was missing `.run()` call. FFmpeg was configured but never started, causing infinite hang at publish time for oversized images.
+2. **Image optimization moved to attach time** — `mediaProcessAgent.js` now resizes images > 4MB (Facebook's limit, most restrictive) when copying from Google Drive to Supabase Storage. Publishing agent no longer does image resize — just downloads the already-optimized image for multipart upload.
+3. **Startup seeder for oversized images** — `workers/index.js` re-queues any existing Google Drive images marked `ready` for re-optimization on deploy.
+4. **Pause/Resume publishing** — Backend routes (`POST /posts/:id/pause`, `POST /posts/:id/resume`) + frontend UI buttons deployed and working.
+5. **OAuth scopes expanded** — Added `pages_manage_metadata`, `instagram_manage_comments`, `instagram_manage_messages` to Facebook OAuth flow.
+6. **Page webhook subscription** — Added `POST /{page-id}/subscribed_apps` call during OAuth to subscribe Pages to app webhooks (feed, messages).
+
+### DM Automation Debugging — Full History (2026-03-23/24)
+
+This is the complete chronological record of every issue encountered, every fix attempted, and the reasoning behind each step while getting comment-to-DM automation working end-to-end on Facebook.
+
+#### Issue 1: Webhooks Not Firing At All
+**Symptom:** User commented on a Page post with the trigger keyword. Server logs showed zero incoming webhook requests — Meta wasn't sending anything.
+
+**Diagnosis:** Meta's webhook system has two separate layers:
+1. **App Dashboard** (Products → Webhooks) — registers callback URL + verify token. We had this.
+2. **Per-Page subscription** (`POST /{page-id}/subscribed_apps`) — tells the specific Facebook Page to send events to the app. We did NOT have this.
+
+Without layer 2, the webhook URL is verified but the Page never "installs" the app for events.
+
+**Fix (commit in publish.js):** Added `POST /{page-id}/subscribed_apps` call during the OAuth connection flow, right after saving the Page token:
+```javascript
+await axios.post(`https://graph.facebook.com/v21.0/${page.id}/subscribed_apps`, null, {
+  params: {
+    access_token: page.access_token,
+    subscribed_fields: 'feed,messages,messaging_postbacks,message_deliveries,messaging_optins'
+  }
+});
+```
+
+**Result:** Partially worked — but then discovered the OAuth token didn't have the required permission.
+
+#### Issue 2: subscribed_apps Call Failing Silently
+**Symptom:** Even after adding the subscribed_apps call, webhooks still weren't firing. The call was in the code but we weren't checking if it actually succeeded.
+
+**Diagnosis:** The `subscribed_apps` endpoint requires `pages_manage_metadata` permission on the Page token. Our OAuth flow didn't request this scope. The call was silently failing.
+
+**Fix (commit in publish.js):** Expanded OAuth scopes from:
+```
+pages_show_list, pages_read_engagement, pages_manage_posts, pages_messaging,
+instagram_basic, instagram_content_publish
+```
+To:
+```
+pages_show_list, pages_read_engagement, pages_manage_posts,
+pages_manage_metadata,          // Required for subscribed_apps
+pages_messaging,                // Facebook + Instagram DM automation
+instagram_basic, instagram_content_publish,
+instagram_manage_comments,      // Instagram comment monitoring
+instagram_manage_messages       // Instagram DM automation
+```
+
+**Result:** User reconnected Facebook, subscribed_apps succeeded (log: `[Publish] Page "Get Me Hip" subscribed to app webhooks (feed, messages)`). Webhooks started firing.
+
+#### Issue 3: RLS Policy Missing on `dm_automation_steps`
+**Symptom:** Creating a DM automation in the UI failed with: `new row violates row-level security policy for table "dm_automation_steps"`
+
+**Diagnosis:** The `dm_automation_steps` table had RLS enabled but no user-level policy. The frontend creates steps via `req.db` (user-scoped Supabase client), which respects RLS.
+
+**Fix (SQL — run by user in Supabase):**
+```sql
+CREATE POLICY "Users can manage own dm_automation_steps" ON dm_automation_steps
+  FOR ALL
+  USING (automation_id IN (SELECT id FROM dm_automations WHERE user_id = auth.uid()))
+  WITH CHECK (automation_id IN (SELECT id FROM dm_automations WHERE user_id = auth.uid()));
+```
+
+**Result:** Automation creation worked. No redeploy needed.
+
+#### Issue 4: RLS Error on `comments` Table Insert
+**Symptom:** Webhook fired, comment agent received it, but inserting the comment into the DB failed:
+```
+[Webhooks] Realtime facebook comment from Mark Vidano: "Yes..."
+[CommentAgent] Realtime: Processed comment "Yes..." on post 9a7541f9
+[CommentAgent] Insert error: new row violates row-level security policy for table "comments"
+```
+
+**Important note:** The "Processed" log is MISLEADING. `processComment()` catches the insert error and returns (doesn't throw), so `processRealtimeComment()` logs "Processed" even when the insert failed and no DM was sent. This wasted debugging time because it looked like the comment was saved but the DM just wasn't triggering.
+
+**Diagnosis attempt 1 — FORCE ROW LEVEL SECURITY:**
+Consulted Groq (LLM second opinion). Groq identified the most likely cause as `FORCE ROW LEVEL SECURITY` on the table, which forces RLS even for the service role. We ran the diagnostic:
+```sql
+SELECT relname, relrowsecurity AS rls_enabled, relforcerowsecurity AS force_enabled
+FROM pg_class WHERE relname = 'comments'
+AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public');
+```
+**Result:** `force_enabled = false`. This was NOT the cause.
+
+**Diagnosis attempt 2 — Missing RLS policy:**
+Added a standard user-scoped RLS policy:
+```sql
+CREATE POLICY "Users can manage own comments" ON comments
+  FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+```
+**Result:** Still failed. The insert uses `supabaseAdmin` (service role) which bypasses RLS entirely — so adding a user-level policy was the wrong fix. Something else was blocking.
+
+**Diagnosis attempt 3 — Missing column:**
+Checked table schema:
+```sql
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'comments';
+```
+Found the table has `author_handle` and `author_platform_id` columns. The insert code sends `author_platform_id` but that column may not have existed before. Added it:
+```sql
+ALTER TABLE public.comments ADD COLUMN IF NOT EXISTS author_platform_id text;
+```
+**Result:** Still failed. At this point we questioned whether Meta was even sending new webhooks.
+
+**Diagnosis attempt 4 — Was Meta actually sending?**
+Checked the logs after the latest comment — NO new `[Webhooks]` entries. Meta had stopped sending webhook events for that Page/post combination. There was a ~15 minute gap with no webhook activity despite new comments being posted.
+
+**Resolution:** Eventually Meta did send the webhook (possibly delayed, possibly required a different commenter). The next comment from "World Wide Treasure Hunt" triggered successfully:
+```
+[Webhooks] Realtime facebook comment from World Wide Treasure Hunt: "Yes..."
+[DMAgent] Started multi_step conversation with World Wide Treasure Hunt (automation: TEST)
+```
+
+The RLS error was resolved by the `author_platform_id` column addition (the exact error was misleading — Supabase sometimes reports column-missing errors as RLS violations when using the service role).
+
+**Takeaway for future debugging:** When `supabaseAdmin` gets an RLS error but `force_enabled` is false, check for missing columns first. Supabase's error messages can be misleading.
+
+#### Issue 5: DM Delivery Fails — "No matching user found"
+**Symptom:** The full pipeline worked (webhook → comment saved → trigger matched → DM job queued → DM agent started conversation), but the actual DM delivery failed:
+```
+[DMWorker] Job failed: Facebook Messenger error 100 subcode=2018001: (#100) No matching user found
+```
+
+**Root cause:** The `feed` webhook provides the commenter's **Facebook user ID**, but the Messenger Send API (`POST /me/messages`) requires a **Page-Scoped ID (PSID)**. These are completely different identifiers.
+
+- Facebook user ID: the person's global Facebook ID (from the comment webhook)
+- PSID: a Page-specific ID that only exists after someone messages the Page directly
+
+Our code was passing `comment.authorPlatformId` (Facebook user ID) as `recipientId` to the Messenger Send API, which doesn't recognize it.
+
+**The correct approach:** Facebook's **Private Replies API** — specifically designed for comment-to-DM:
+```
+POST /{comment-id}/private_replies?message=TEXT&access_token=PAGE_TOKEN
+```
+
+This is how ManyChat, MobileMonkey, and every other comment-to-DM tool works. It:
+- Takes the comment ID (which we have from the webhook)
+- Sends a private message to the commenter
+- Does NOT need a PSID
+- Works within 7 days of the comment
+- Only allows ONE private reply per comment (for multi-step, user must reply first)
+
+**Fix (commit `ff7d431`):**
+1. **`messagingService.js`** — Added `sendPrivateReply()` function using `POST /{comment-id}/private_replies`
+2. **`dmAgent.js`** — Now passes `commentId` (platform comment ID) in the DM job data alongside `recipientId`
+3. **`dmWorker.js`** — Step 1 for Facebook uses `sendPrivateReply(commentId)`. Follow-up steps (2+) use regular `sendDM(recipientId)` with the PSID obtained when the user replies via the messaging webhook
+
+**Status:** Deployed (`ff7d431`), awaiting test. User needs to comment on the post from a different account (Mark Vidano was already flagged as "already DM'd" by the deduplication logic).
+
+#### Issue 6: Polling Cycle Permission Errors (Non-blocking)
+**Observed in logs:**
+```
+[PlatformAPIs] Facebook comments error 10: (#10) This endpoint requires the 'pages_read_engagement' permission
+[PlatformAPIs] Facebook comments error 100: Object with ID '...' does not exist
+```
+
+This is the 15-minute polling cycle (`commentWorker`) trying to fetch comments via the Graph API. Some posts return permission errors. This does NOT block the realtime webhook path (which is the primary path for DM automation). The polling cycle is a backup.
+
+**Possible causes:**
+- `pages_read_engagement` may need Meta App Review for public access
+- Some post IDs may be from before the Page was connected and don't have valid tokens
+- Posts published as Reels may have different API endpoints
+
+**Priority:** Low — the webhook path is the primary DM trigger. Polling is the safety net.
+
+#### Current State (as of commit `ff7d431`)
+- **Webhook delivery:** WORKING — Meta sends comments to our server in real-time
+- **Comment processing:** WORKING — trigger keywords match, comments saved to DB
+- **DM conversation creation:** WORKING — dm_conversations records created correctly
+- **DM delivery:** DEPLOYED, AWAITING TEST — switched from Send API to Private Replies API
+- **Multi-step follow-up:** Not yet tested — requires user to reply to the private reply, which gives us their PSID via the messaging webhook, then regular Send API works for steps 2+
+- **Deduplication:** WORKING — `[DMAgent] Skipping — already DM'd Mark Vidano for automation 867cca35`
+
+#### Files Modified for DM Automation
+- `backend/routes/publish.js` — OAuth scopes + subscribed_apps call
+- `backend/routes/webhooks.js` — Realtime comment processing from Meta webhook
+- `backend/agents/commentAgent.js` — `processRealtimeComment()` for instant webhook path
+- `backend/agents/dmAgent.js` — Passes `commentId` in DM job data
+- `backend/workers/dmWorker.js` — Uses Private Replies for step 1, Send API for step 2+
+- `backend/services/messagingService.js` — Added `sendPrivateReply()` function
+
+### Other Issues Found This Session
+
+#### Admin Override Bug (Not Yet Fixed)
+- **Error:** `Cannot coerce the result to a single JSON object` when saving tier override in admin dashboard
+- **Cause:** `admin_notes` column doesn't exist on `user_profiles` table
+- **Fix:** `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`
+
+#### Reels vs Post
+- Facebook image posts use `/{page-id}/photos` API — standard photo posts, NOT Reels
+- Facebook may display photos in Reels feed on mobile (their algorithm, not our API)
+- User wants option to choose: Reel, Post, or Both — add to feature backlog
+
+#### WordPress Vulnerability Scanners
+- Logs show bots probing `/wp-admin/setup-config.php`, `/xmlrpc.php`, `/wlwmanifest.xml`
+- Non-issue — our server returns the SPA HTML for all unknown routes (200 status)
+- Consider adding a middleware to return 404 for known scanner paths to reduce log noise
+
+### Key Commits (this session)
+- `d3352cd` — Fix image resize hang: add missing .run(), move resize to attach time
+- `2995d55` — Fix missing closing bracket in resizeImageIfNeeded Promise
+- `ff7d431` — Use Facebook Private Replies API for comment-to-DM automation
+
+### Files Modified (this session)
+- `backend/services/ffmpegService.js` — Added `.run()` + closing `});`
+- `backend/agents/mediaProcessAgent.js` — Image optimization at attach time
+- `backend/agents/publishingAgent.js` — Removed publish-time resize
+- `backend/workers/index.js` — Startup seeder for oversized images
+- `frontend/public/js/app.js` — Pause/Resume UI (v=41)
+- `backend/routes/posts.js` — Pause/Resume endpoints
+- `backend/routes/publish.js` — Expanded OAuth scopes + subscribed_apps call
+- `backend/services/messagingService.js` — Added `sendPrivateReply()` function
+- `backend/agents/dmAgent.js` — Passes `commentId` in DM job data
+- `backend/workers/dmWorker.js` — Uses Private Replies for step 1
+
+---
+
 ## Table of Contents
 
+0. [**Latest Session Updates (2026-03-23/24)**](#0-latest-session-updates-2026-03-2324--start-here) — START HERE
 1. [Project Overview](#1-project-overview)
 2. [What's Built & Working](#2-whats-built--working)
 3. [What's In Progress](#3-whats-in-progress)
