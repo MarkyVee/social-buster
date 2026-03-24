@@ -665,3 +665,158 @@ Use this checklist whenever DM automation fails on any platform:
 - `90847b2` — Fix: Add `pages_read_user_content` OAuth scope + diagnostic logging
 - `111f87f` — Fix: Dedup guard allows retries when previous attempt failed
 - `e4d59da` — **THE FIX:** Switch from deprecated `/{comment_id}/private_replies` to modern `/{page_id}/messages` with `recipient.comment_id`
+- `f0418cb` — Fix multi-step DM: store PSID so reply matching works
+- `7f453a2` — Add diagnostic logging for PSID mismatch debugging
+- `af36598` — Fix reply matching: `.maybeSingle()` + left join + debug query
+
+---
+
+### Continued Debugging: Multi-Step DM Flow (2026-03-24, Part 2)
+
+After the single-message DM was confirmed working (Issue 5 fix), we moved on to testing the **multi-step DM flow** — where the system sends a first message, waits for a reply, collects data (name, email, etc.), and then delivers a resource URL. This uncovered 3 more issues.
+
+#### Issue 6: PSID mismatch — multi-step reply not matched to conversation
+
+- **Symptom:** Sharon received the first DM (step 1) successfully. She replied "Sharon Testing..." in Messenger. The webhook delivered her reply correctly (`[Webhooks] Incoming facebook DM from 26205767595698410`). But `processIncomingReply()` found no matching active conversation.
+- **Root cause:** Facebook uses **two different IDs** for the same person:
+  - **Facebook User ID** — what the feed webhook gives us in the `from.id` field when someone comments on a post. This is the commenter's public profile ID.
+  - **PSID (Page-Scoped ID)** — what the Messenger webhook gives us in the `sender.id` field when someone sends a DM to the Page. This is a Page-specific ID that only works within Messenger context.
+  These are **completely different numbers** for the same person. When `startConversation()` created the `dm_conversations` row, it stored the commenter's Facebook User ID (from the comment webhook) as `platform_user_id`. But when Sharon replied via Messenger, the incoming webhook had her PSID. The lookup `WHERE platform_user_id = {PSID}` found nothing because the stored value was her Facebook User ID.
+- **How we diagnosed:** Compared the `platform_user_id` stored on the conversation with the `sender.id` from the Messenger webhook — they were different numbers for the same person (Sharon).
+- **Fix (commit `f0418cb`):** When step 1 sends a Private Reply via `POST /{page_id}/messages`, the API response includes `recipient_id` — this is the commenter's PSID. We now store this PSID back on the `dm_conversations` row, overwriting the original Facebook User ID. This way, when the Messenger reply webhook arrives with `sender.id = {PSID}`, the lookup matches.
+  ```javascript
+  // In dmWorker.js — after successful sendPrivateReply():
+  if (result.recipientId) {
+    updateData.platform_user_id = result.recipientId;  // Store PSID for reply matching
+  }
+  ```
+- **What we tried that didn't immediately confirm the fix:** After deploying the PSID storage code, we tested again. The DM sent successfully and the log showed `[DMWorker] Storing PSID 26205767595698410 on conversation ...`. Sharon replied. But the reply STILL wasn't matched — which led us to Issue 7.
+- **Lesson for future platforms:** Platform IDs are NOT universal. The same person can have different IDs in different API contexts (feed vs messaging, public vs page-scoped). Always check what ID format each webhook/API returns, and make sure your lookup uses the same ID format as the incoming event.
+
+#### Issue 7: Supabase `.single()` throws error on zero results instead of returning null
+
+- **Symptom:** After fixing the PSID storage (Issue 6), Sharon's reply webhook arrived with the correct PSID. But the log showed: `[DMAgent] Supabase query error for sender 26205767595698410: Cannot coerce the result to a single JSON object`
+- **Root cause:** The `processIncomingReply()` function used `.single()` at the end of the Supabase query:
+  ```javascript
+  const { data: conversation, error } = await supabaseAdmin
+    .from('dm_conversations')
+    .select('*, dm_automations!inner(id, user_id, flow_type)')
+    .eq('platform_user_id', senderPlatformId)
+    .eq('status', 'active')
+    .limit(1)
+    .single();  // ← THIS THROWS when 0 rows match
+  ```
+  Supabase's `.single()` method throws an error (sets `error`) when the query returns 0 rows. It's designed for cases where you EXPECT exactly 1 row. But in our case, getting 0 rows is a normal outcome (the person might be sending a regular DM, not replying to an automation). The error was caught by the `if (error)` check and the function returned early — never reaching the `if (!conversation)` check that would have logged the real reason.
+- **What we tried first:** Added diagnostic logging to split the `if (error || !conversation)` into two separate checks. This revealed the `.single()` error was masking the real issue.
+- **Fix (commit `af36598`):**
+  1. Changed `.single()` to `.maybeSingle()` — this returns `{ data: null, error: null }` when 0 rows match, instead of throwing.
+  2. Changed `dm_automations!inner(...)` to `dm_automations(...)` — removed the inner join. An `!inner` join excludes the entire row if the joined table has no match. A left join (default) keeps the conversation row even if the automation FK has an issue.
+  3. Added a debug query: when no active conversation is found, we now query ALL conversations for that PSID regardless of status, and log them. This immediately reveals whether the issue is "wrong PSID" vs "wrong status" vs "row doesn't exist."
+  ```javascript
+  // Debug query when no active conversation found:
+  const { data: anyConv } = await supabaseAdmin
+    .from('dm_conversations')
+    .select('id, status, platform_user_id')
+    .eq('platform_user_id', senderPlatformId)
+    .limit(5);
+  console.log(`[DMAgent] No active conversation for PSID ${senderPlatformId}. All conversations for this PSID: ${JSON.stringify(anyConv || [])}`);
+  ```
+- **What the debug query revealed:** `[{"id":"752055c0-...","status":"completed","platform_user_id":"26205767595698410"}]` — The conversation existed and had the correct PSID, but its status was `"completed"` not `"active"`. The PSID storage was working. The `.maybeSingle()` fix was correct. But the conversation was already finished — which led us to Issue 8.
+- **Lesson for future platforms:** Never use `.single()` in Supabase for lookups that might legitimately return 0 rows. Always use `.maybeSingle()`. And when debugging "not found" issues, always add a secondary query that checks ALL states — it instantly tells you whether the ID is wrong or the filter is wrong.
+
+#### Issue 8: Multi-step automation with only 1 step = instant completion
+
+- **Symptom:** The debug query from Issue 7 showed the conversation had `status: "completed"` even though Sharon hadn't replied yet. The conversation was marked completed immediately after step 1 sent.
+- **Root cause:** In `startConversation()`, the `isFinalStep` flag is set like this:
+  ```javascript
+  const isFinalStep = automation.flow_type === 'single' || steps.length === 1;
+  ```
+  The automation "test get pic" had `flow_type: 'multi_step'` but only **1 step** defined in the `dm_automation_steps` table. With `steps.length === 1`, `isFinalStep` was `true`. The job was queued with `isFinalStep: true`, so `dmWorker` marked the conversation `'completed'` right after sending step 1. When Sharon replied, the lookup for `status: 'active'` found nothing — the conversation was already done.
+- **What we tried that didn't work:**
+  1. First test after `.maybeSingle()` fix: Sharon commented "Hi" on the old post. But the dedup guard blocked it: `[DMAgent] Skipping — already DM'd Sharon Vidano for automation ... (status: completed)` — we forgot to delete the old conversation row.
+  2. Also, Facebook only allows **one private reply per comment**. Sharon's "Hi" on the old post had already received a DM, so even if the dedup guard allowed it, the API would reject a second private reply to the same comment.
+- **Fix:** The user edited the automation in the app to add a **second step** (the first step asks for name, the second step delivers the resource). Then:
+  1. Deleted Sharon's stale conversation: `DELETE FROM dm_conversations WHERE author_handle ILIKE '%sharon%';`
+  2. Published a **new** Facebook post (important — can't reuse old comments that already got a private reply)
+  3. Sharon commented "Hi" on the new post
+  4. **Result: FULL MULTI-STEP FLOW WORKED END-TO-END** ✅
+- **Lesson for future platforms:** `flow_type` alone doesn't determine behavior — the actual number of steps matters. If someone creates a "multi_step" automation with only 1 step, the system correctly treats it as a single message (because there IS only 1 step). This is actually correct behavior, but it's confusing during testing. The frontend could add a warning: "Multi-step flows require at least 2 steps."
+
+### Full Working Multi-Step Flow (CONFIRMED 2026-03-24)
+
+```
+1. User creates automation: trigger="Hi", flow_type="multi_step", 2 steps
+   Step 1: "What's your name?" (collects: name)
+   Step 2: "Thanks {{name}}!" (resource URL appended automatically)
+
+2. User publishes Facebook post with automation attached
+
+3. Sharon comments "Hi" on the post
+   → Meta webhook fires to /webhooks/meta
+   → commentAgent matches trigger keyword "Hi"
+   → dmAgent.startConversation() creates dm_conversations row (status: active, step: 1)
+   → Queues DM job to dmQueue
+
+4. dmWorker picks up job
+   → Decrypts Page Access Token from platform_connections
+   → Calls sendPrivateReply(token, commentId, "What's your name?", pageId)
+   → API returns recipient_id (Sharon's PSID)
+   → Stores PSID on dm_conversations.platform_user_id
+   → Sharon receives "What's your name?" in Messenger ✅
+
+5. Sharon replies "Sharon" in Messenger
+   → Meta webhook fires with sender.id = Sharon's PSID
+   → webhooks.js routes to dmAgent.processIncomingReply()
+   → Looks up dm_conversations WHERE platform_user_id = PSID AND status = 'active'
+   → Match found! Stores "Sharon" in dm_collected_data (field: name)
+   → Advances to step 2, queues next DM
+
+6. dmWorker sends step 2
+   → "Thanks Sharon!" + resource URL appended
+   → Marks conversation status: 'completed'
+   → Sharon receives final message with resource link ✅
+```
+
+### Important Constraints Discovered During Testing
+
+1. **One private reply per comment** — Facebook only allows ONE private reply per comment, ever. If a DM was already sent for a comment (even a failed one that was retried), you cannot send another private reply to that same comment. You must have the person comment again (on the same or different post).
+
+2. **Dedup guard must be cleared between retests** — During development, always `DELETE FROM dm_conversations WHERE author_handle ILIKE '%testuser%'` before retesting. The dedup guard prevents the same person from getting DM'd twice for the same automation, which is correct for production but blocks retesting.
+
+3. **Must use a NEW post for each retest cycle** — Because of the one-private-reply-per-comment rule, retesting requires: (a) delete old conversation rows, (b) publish a new post, (c) have the tester comment on the NEW post. Commenting on the old post with the same trigger keyword won't work if that comment already received a private reply.
+
+4. **Multi-step requires ≥2 steps in the database** — Setting `flow_type: 'multi_step'` alone doesn't make it multi-step. You need at least 2 rows in `dm_automation_steps`. With only 1 step, `isFinalStep` is `true` and the conversation completes immediately.
+
+5. **Facebook User ID ≠ PSID** — The feed webhook gives a Facebook User ID; the Messenger webhook gives a PSID. These are different numbers for the same person. The Private Reply API response `recipient_id` bridges this gap — it returns the PSID which we store for future reply matching.
+
+### Updated Key Files in the DM Pipeline
+
+| File | Role | What Changed |
+|------|------|-------------|
+| `backend/routes/webhooks.js` | Receives Meta webhooks, verifies signature, routes to commentAgent or dmAgent | No changes |
+| `backend/agents/commentAgent.js` | Processes comments, matches trigger keywords, calls startConversation() | No changes |
+| `backend/agents/dmAgent.js` | Conversation state machine — creates rows, queues DM jobs, handles replies | Fixed: `.maybeSingle()`, left join, debug query for PSID lookup, split error logging |
+| `backend/workers/dmWorker.js` | Picks up DM jobs, decrypts tokens, calls messagingService, marks failures | Fixed: stores PSID from API response, logs missing recipientId, logs update errors |
+| `backend/services/messagingService.js` | Calls Meta Graph API — sendPrivateReply() + sendDM() + rate limiting | Fixed: full response logging for debugging |
+| `backend/routes/publish.js` | Facebook OAuth scopes (where permissions are requested) | No changes |
+| `backend/routes/automations.js` | CRUD for DM automations + leads export | Added: resource_url field on create/update |
+| `frontend/public/js/preview.js` | Automation panel in post editor | Added: resource URL input field |
+
+### Updated Key Commits (complete list)
+- `ff7d431` — Initial: Use Facebook Private Replies API (old deprecated endpoint)
+- `90847b2` — Fix: Add `pages_read_user_content` OAuth scope + diagnostic logging
+- `111f87f` — Fix: Dedup guard allows retries when previous attempt failed
+- `e4d59da` — **THE FIX (single-message):** Switch from deprecated endpoint to modern `/{page_id}/messages`
+- `b6b57ae` — Fix: Resource URL delivery after final multi-step DM collection
+- `9cba92e` — Add resource URL delivery to DM automations (DB + backend + frontend)
+- `f0418cb` — Fix: Store PSID from Private Reply response for multi-step reply matching
+- `7f453a2` — Add diagnostic logging for PSID mismatch debugging
+- `af36598` — **THE FIX (multi-step):** `.maybeSingle()` + left join + debug query
+
+### What's Still Pending for DM Automation
+
+1. **Instagram DM testing** — Facebook is confirmed working. Instagram uses a different API path (`POST /me/messages` with IGSID instead of PSID). Needs end-to-end test with an Instagram post + separate account commenting.
+2. **Meta App Review** — `pages_messaging` and `instagram_manage_messages` scopes need App Review approval for non-admin users. Currently works in "Ready for testing" mode (app admins/developers only + their test audience).
+3. **Remove diagnostic logging** — Once Instagram is also confirmed, remove the verbose `FULL RESPONSE` and debug query logs to reduce log noise in production.
+4. **Frontend improvement** — Add a warning when creating a "multi_step" automation with only 1 step: "Multi-step flows require at least 2 steps to work correctly."
+5. **Comment polling fallback** — `pages_read_engagement` returns error 10 for comment polling (needs Standard Access via App Review). Realtime webhooks work, but the 15-minute polling backup does not yet.
