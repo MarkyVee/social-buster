@@ -121,26 +121,34 @@ async function sendFacebookDM(accessToken, recipientPSID, messageText) {
 //   - Requires pages_messaging permission
 //   - In dev mode, recipient must be an app Tester
 // ----------------------------------------------------------------
-async function sendPrivateReply(accessToken, commentId, messageText, pageId) {
+async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId) {
   // Diagnostic: try to read the comment first to distinguish
-  // "can't see it" (permissions) vs "can see it but can't reply" (unsupported)
+  // "can't see it" (permissions) vs "can see it but can't reply" (unsupported).
+  // Works for both Facebook and Instagram comments — Graph API uses the same
+  // GET /{comment_id} pattern. Field names differ: Facebook uses 'message',
+  // Instagram uses 'text'. We request both to handle either platform.
   try {
     const checkRes = await axios.get(
       `${API_BASE}/${commentId}`,
-      { params: { access_token: accessToken, fields: 'id,message,from' }, timeout: TIMEOUT }
+      { params: { access_token: accessToken, fields: 'id,text,message,from,username' }, timeout: TIMEOUT }
     );
-    console.log(`[MessagingService] Comment ${commentId} readable — from: ${checkRes.data.from?.name || 'unknown'}, text: "${(checkRes.data.message || '').substring(0, 50)}"`);
+    const authorName = checkRes.data.from?.name || checkRes.data.from?.username || checkRes.data.username || 'unknown';
+    const commentBody = checkRes.data.message || checkRes.data.text || '';
+    console.log(`[MessagingService] Comment ${commentId} readable — from: ${authorName}, text: "${commentBody.substring(0, 50)}"`);
   } catch (checkErr) {
     const fb = checkErr.response?.data?.error;
     console.error(`[MessagingService] Cannot read comment ${commentId} — error ${fb?.code} subcode=${fb?.error_subcode}: ${fb?.message || checkErr.message}`);
-    console.error(`[MessagingService] This means the Page token lacks permission to see this comment. Check pages_read_user_content access level.`);
+    console.error(`[MessagingService] Token may lack permission to see this comment. Check pages_read_user_content / instagram_manage_comments access.`);
   }
 
   try {
-    // Use the Messenger Send API with comment_id as recipient.
-    // This is the modern replacement for the deprecated /{comment-id}/private_replies endpoint.
+    // Use the Send API with comment_id as recipient.
+    // Works for both Facebook Pages and Instagram Business Accounts:
+    //   Facebook:  POST /{page_id}/messages
+    //   Instagram: POST /{ig_user_id}/messages
+    // Both use: { recipient: { comment_id }, message: { text } }
     const res = await axios.post(
-      `${API_BASE}/${pageId}/messages`,
+      `${API_BASE}/${pageOrIgId}/messages`,
       {
         recipient: { comment_id: commentId },
         message:   { text: messageText }
@@ -152,7 +160,7 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageId) {
     );
 
     console.log(`[MessagingService] Private reply FULL RESPONSE: ${JSON.stringify(res.data)}`);
-    console.log(`[MessagingService] Private reply sent to comment ${commentId} via Page ${pageId} — recipientId=${res.data.recipient_id}`);
+    console.log(`[MessagingService] Private reply sent to comment ${commentId} via ${pageOrIgId} — recipientId=${res.data.recipient_id}`);
     return { success: true, messageId: res.data.message_id || res.data.id || 'sent', recipientId: res.data.recipient_id };
 
   } catch (err) {
@@ -160,7 +168,7 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageId) {
     if (fbErr) {
       const sub = fbErr.error_subcode ? ` subcode=${fbErr.error_subcode}` : '';
       const msg = fbErr.error_user_msg || fbErr.message;
-      throw new Error(`Facebook Private Reply error ${fbErr.code}${sub}: ${msg}`);
+      throw new Error(`Private Reply error ${fbErr.code}${sub}: ${msg}`);
     }
     throw err;
   }

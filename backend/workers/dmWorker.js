@@ -75,12 +75,17 @@ async function processSendDM(job) {
     throw new Error(`Failed to decrypt ${platform} token for user ${userId}: ${err.message}`);
   }
 
-  // Step 1 for Facebook: use Messenger Send API with comment_id as recipient.
-  // This sends a DM to the commenter without needing their PSID.
-  // Follow-up steps (2+) use the regular Send API with the PSID obtained
-  // from the user's reply via the messaging webhook.
+  // Step 1 for Facebook AND Instagram: use the Private Reply pattern
+  // (POST /{page_or_ig_id}/messages with recipient.comment_id).
+  // This sends a DM to the commenter without needing their PSID/IGSID.
+  // Follow-up steps (2+) use the regular Send API with the PSID/IGSID
+  // obtained from the user's reply via the messaging webhook.
+  //
+  // Both platforms use the same API pattern — the only difference is the
+  // ID in the URL: Facebook Page ID vs Instagram Business Account ID.
+  // Both are stored in platform_connections.platform_user_id.
   let result;
-  if (platform === 'facebook' && stepOrder === 1 && commentId) {
+  if (stepOrder === 1 && commentId) {
     result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id);
   } else {
     result = await sendDM(platform, accessToken, recipientId, messageText, userId);

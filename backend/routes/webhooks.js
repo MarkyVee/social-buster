@@ -126,37 +126,68 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
     for (const entry of (body.entry || [])) {
       const pageId = entry.id;
 
-      // ---- REAL-TIME COMMENTS (feed webhook) ----
-      // Meta sends comment events via entry.changes with field === 'feed'.
-      // This is the instant DM automation path — no polling delay.
+      // ---- REAL-TIME COMMENTS (feed + comments webhooks) ----
+      // Facebook sends comment events via entry.changes with field === 'feed'.
+      // Instagram sends comment events via entry.changes with field === 'comments'.
+      // Both are handled here for instant DM automation — no polling delay.
       for (const change of (entry.changes || [])) {
-        if (change.field !== 'feed') continue;
+        // Facebook: field === 'feed', Instagram: field === 'comments'
+        if (change.field !== 'feed' && change.field !== 'comments') continue;
 
         const val = change.value || {};
 
-        // Only process new comments (not edits, deletes, or other feed events)
-        if (val.item !== 'comment' || val.verb !== 'add') continue;
+        // ---- Facebook feed events ----
+        // Structure: val.item === 'comment', val.verb === 'add'
+        // Fields: val.message, val.comment_id, val.from.id, val.from.name, val.post_id
+        if (change.field === 'feed') {
+          if (val.item !== 'comment' || val.verb !== 'add') continue;
 
-        const commentText  = val.message;
-        const commentId    = val.comment_id;
-        const authorId     = val.from?.id;
-        const authorName   = val.from?.name;
-        const parentPostId = val.post_id; // Facebook Graph API post ID (pageId_postId format)
+          const commentText  = val.message;
+          const commentId    = val.comment_id;
+          const authorId     = val.from?.id;
+          const authorName   = val.from?.name;
+          const parentPostId = val.post_id;
 
-        if (!commentText || !commentId || !parentPostId) continue;
+          if (!commentText || !commentId || !parentPostId) continue;
+          if (authorId === pageId) continue;
 
-        // Don't process our own Page's comments (the Page responding to comments)
-        if (authorId === pageId) continue;
+          console.log(`[Webhooks] Realtime facebook comment from ${authorName || authorId}: "${commentText.substring(0, 50)}..."`);
 
-        console.log(`[Webhooks] Realtime ${platform} comment from ${authorName || authorId}: "${commentText.substring(0, 50)}..."`);
+          try {
+            await processRealtimeComment(
+              pageId, parentPostId, commentId,
+              commentText, authorId, authorName, 'facebook'
+            );
+          } catch (err) {
+            console.error(`[Webhooks] Error processing realtime comment ${commentId}:`, err.message);
+          }
+          continue;
+        }
 
-        try {
-          await processRealtimeComment(
-            pageId, parentPostId, commentId,
-            commentText, authorId, authorName, platform
-          );
-        } catch (err) {
-          console.error(`[Webhooks] Error processing realtime comment ${commentId}:`, err.message);
+        // ---- Instagram comment events ----
+        // Structure: val.id (comment ID), val.text, val.from.id, val.from.username
+        // val.media.id (the IG media ID that was commented on)
+        if (change.field === 'comments') {
+          const commentText  = val.text;
+          const commentId    = val.id;
+          const authorId     = val.from?.id;
+          const authorName   = val.from?.username;
+          const mediaId      = val.media?.id;  // Instagram media ID
+
+          if (!commentText || !commentId || !mediaId) continue;
+          if (authorId === pageId) continue;
+
+          console.log(`[Webhooks] Realtime instagram comment from ${authorName || authorId}: "${commentText.substring(0, 50)}..."`);
+
+          try {
+            await processRealtimeComment(
+              pageId, mediaId, commentId,
+              commentText, authorId, authorName, 'instagram'
+            );
+          } catch (err) {
+            console.error(`[Webhooks] Error processing realtime IG comment ${commentId}:`, err.message);
+          }
+          continue;
         }
       }
 
