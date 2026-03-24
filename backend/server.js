@@ -345,6 +345,34 @@ async function runHealthCheck(mode = 'full') {
         if (error) { issues.push(`Database: ${error.message}`); bump('degraded'); }
       } catch (e) { issues.push(`Database unreachable: ${e.message}`); bump('critical'); }
 
+      // RLS policy check — find tables with Row Level Security enabled but NO policy.
+      // These tables silently reject all inserts/updates even from supabaseAdmin,
+      // causing data loss with no error message. This has bitten us multiple times
+      // (dm_conversations, dm_collected_data). Catch it on deploy, not after a user reports it.
+      try {
+        const { data: unprotected } = await supabaseAdmin.rpc('check_rls_policies');
+        if (unprotected && unprotected.length > 0) {
+          const tableList = unprotected.map(t => t.table_name).join(', ');
+          issues.push(`RLS WITHOUT POLICY: ${tableList} — inserts will silently fail! Run CREATE POLICY for each.`);
+          bump('critical');
+          console.error(`[HEALTH CRITICAL] Tables with RLS enabled but NO policy: ${tableList}`);
+        }
+      } catch (e) {
+        // If the RPC doesn't exist yet, fall back to a direct query
+        try {
+          const { data: unprotected } = await supabaseAdmin
+            .from('pg_class')
+            .select('relname')
+            .eq('relrowsecurity', true)
+            .eq('relkind', 'r');
+          // This fallback may not work due to pg_class access restrictions — that's ok,
+          // the RPC approach is the reliable one. Log but don't fail the health check.
+          if (unprotected && unprotected.length > 0) {
+            console.warn(`[HEALTH] RLS policy check fallback returned ${unprotected.length} table(s) — create the check_rls_policies RPC for accurate results`);
+          }
+        } catch { /* RLS check not available — non-fatal */ }
+      }
+
       // Critical env vars — missing ones mean features are completely broken
       const criticalVars = [
         'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY',
