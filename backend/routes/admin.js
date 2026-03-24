@@ -106,7 +106,8 @@ router.get('/health', async (req, res) => {
     workers:        {},
     queues:         {},
     env_vars:       {},
-    external_apis:  {}
+    external_apis:  {},
+    rls_issues:     []          // Tables with RLS enabled but no policy
   };
 
   const axios = require('axios');
@@ -333,6 +334,21 @@ router.get('/health', async (req, res) => {
   health.external_apis.meta_webhook = process.env.META_WEBHOOK_VERIFY_TOKEN
     ? 'configured'
     : 'not configured (DM reply handling disabled)';
+
+  // ---- RLS policy check ----
+  // Find tables that have Row Level Security ON but no policy defined.
+  // Without a policy, ALL writes are silently rejected — even from supabaseAdmin.
+  // This has caused real data loss bugs (dm_conversations, dm_collected_data).
+  try {
+    const { data: unprotected } = await supabaseAdmin.rpc('check_rls_policies');
+    if (unprotected && unprotected.length > 0) {
+      health.rls_issues = unprotected.map(t => t.table_name);
+      health.status = 'critical';
+    }
+  } catch (e) {
+    // RPC not created yet — non-fatal, just note it
+    health.rls_issues = null; // null = check not available (RPC missing)
+  }
 
   // ---- Final status determination ----
   // 'critical' = platform is fully down (Redis gone, DB gone, or required env vars missing)
@@ -1282,6 +1298,103 @@ router.put('/plans/:id', async (req, res) => {
   } catch (err) {
     console.error('[Admin] Plan update error:', err.message);
     return res.status(500).json({ error: 'Failed to update plan' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/rls-check
+//
+// Returns tables that have Row Level Security enabled but NO policy.
+// These tables silently reject all writes — including from supabaseAdmin.
+// This is a critical data loss risk. The check calls the check_rls_policies()
+// Supabase RPC function (see migration_rls_health_check.sql).
+// ----------------------------------------------------------------
+router.get('/rls-check', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.rpc('check_rls_policies');
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      tables: (data || []).map(t => t.table_name),
+      count: (data || []).length,
+      status: (data || []).length === 0 ? 'ok' : 'critical'
+    });
+  } catch (err) {
+    // If the RPC function doesn't exist, tell the admin to run the migration
+    return res.status(500).json({
+      error: 'RLS check failed — the check_rls_policies() function may not exist yet. ' +
+             'Run migration_rls_health_check.sql in Supabase SQL Editor first.',
+      detail: err.message
+    });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/rls-fix
+//
+// Creates a standard RLS policy for a table that has RLS enabled
+// but no policy. The policy allows users to read/write their own rows
+// using the standard pattern: user_id = auth.uid()
+//
+// Body: { table: "table_name" }
+//
+// SAFETY: Only creates a policy — never disables RLS or drops anything.
+// The table name is validated to be alphanumeric + underscores only.
+// ----------------------------------------------------------------
+router.post('/rls-fix', async (req, res) => {
+  try {
+    const tableName = (req.body.table || '').trim();
+
+    // Validate table name — only alphanumeric + underscores to prevent SQL injection
+    if (!tableName || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      return res.status(400).json({ error: 'Invalid table name. Only letters, numbers, and underscores allowed.' });
+    }
+
+    // Verify this table actually has RLS enabled and no policy (don't blindly create policies)
+    const { data: rlsCheck } = await supabaseAdmin.rpc('check_rls_policies');
+    const needsFix = (rlsCheck || []).some(t => t.table_name === tableName);
+    if (!needsFix) {
+      return res.status(400).json({
+        error: `Table "${tableName}" either doesn't exist, doesn't have RLS enabled, or already has a policy.`
+      });
+    }
+
+    // Create the standard user_id = auth.uid() policy
+    // This is the same pattern used on every other table in the project.
+    const policyName = `Users can manage own ${tableName}`;
+    const sql = `
+      CREATE POLICY "${policyName}"
+      ON ${tableName}
+      FOR ALL
+      USING (user_id = auth.uid())
+      WITH CHECK (user_id = auth.uid());
+    `;
+
+    const { error: sqlError } = await supabaseAdmin.rpc('exec_sql', { sql });
+
+    // If the exec_sql RPC doesn't exist, tell the admin to run it manually
+    if (sqlError) {
+      // Return the SQL so the admin can run it manually in Supabase SQL Editor
+      return res.status(200).json({
+        fixed: false,
+        message: `Auto-fix not available (exec_sql RPC not installed). Run this SQL manually in Supabase SQL Editor:`,
+        sql: sql.trim(),
+        table: tableName
+      });
+    }
+
+    console.log(`[Admin] RLS policy created for "${tableName}" by ${req.user.email}`);
+
+    return res.json({
+      fixed: true,
+      message: `RLS policy created for "${tableName}". Writes should now work.`,
+      table: tableName,
+      policy: policyName
+    });
+
+  } catch (err) {
+    console.error('[Admin] RLS fix error:', err.message);
+    return res.status(500).json({ error: `Failed to fix RLS: ${err.message}` });
   }
 });
 

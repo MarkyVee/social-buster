@@ -233,6 +233,9 @@ function buildOverviewHtml(stats, health) {
       </table>
     </div>
 
+    <!-- RLS Security Check -->
+    ${buildRlsSectionHtml(health.rls_issues)}
+
     <!-- Environment variable audit -->
     <div class="admin-section-title" style="margin-top:28px;">
       Environment Variables
@@ -246,6 +249,108 @@ function buildOverviewHtml(stats, health) {
         <tbody>${envRows || '<tr><td colspan="4" style="color:#6b7280;">No data</td></tr>'}</tbody>
       </table>
     </div>`;
+}
+
+// ----------------------------------------------------------------
+// RLS Security Check — shows tables with RLS enabled but no policy.
+// These tables silently reject all writes, causing data loss.
+// ----------------------------------------------------------------
+function buildRlsSectionHtml(rlsIssues) {
+  // null = RPC not installed yet
+  if (rlsIssues === null) {
+    return `
+      <div class="admin-section-title" style="margin-top:28px;">
+        RLS Security
+        <span style="margin-left:8px;font-size:12px;color:#d97706;">⚠️ check not available</span>
+      </div>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0;">
+        The <code>check_rls_policies()</code> function hasn't been created yet.
+        Run <code>migration_rls_health_check.sql</code> in Supabase SQL Editor to enable this check.
+      </p>`;
+  }
+
+  // No issues — all good
+  if (!rlsIssues || rlsIssues.length === 0) {
+    return `
+      <div class="admin-section-title" style="margin-top:28px;">
+        RLS Security
+        <span style="margin-left:8px;font-size:12px;color:#16a34a;">✅ all tables have policies</span>
+      </div>
+      <p style="font-size:13px;color:#6b7280;margin:4px 0 0;">
+        Every table with Row Level Security enabled has at least one policy. No action needed.
+      </p>`;
+  }
+
+  // Issues found — show table with fix buttons
+  const rows = rlsIssues.map(table => `
+    <tr id="rls-row-${escapeAdminHtml(table)}">
+      <td><code>${escapeAdminHtml(table)}</code></td>
+      <td style="color:#dc2626;font-weight:700;">❌ RLS ON — no policy</td>
+      <td>All writes silently rejected (data loss)</td>
+      <td>
+        <button class="btn btn-sm" style="background:#dc2626;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;"
+                onclick="fixRlsTable('${escapeAdminHtml(table)}')">
+          🔧 Fix Now
+        </button>
+      </td>
+    </tr>`).join('');
+
+  return `
+    <div class="admin-section-title" style="margin-top:28px;">
+      RLS Security
+      <span style="margin-left:8px;font-size:12px;color:#dc2626;font-weight:700;">🚨 ${rlsIssues.length} table(s) at risk</span>
+    </div>
+    <p style="font-size:13px;color:#dc2626;margin:4px 0 8px;">
+      These tables have Row Level Security enabled but <strong>no policy</strong>.
+      All inserts and updates are silently rejected — even from the service role.
+      Click "Fix Now" to create a standard <code>user_id = auth.uid()</code> policy.
+    </p>
+    <div class="admin-table-wrap">
+      <table class="admin-table">
+        <thead><tr><th>Table</th><th>Status</th><th>Impact</th><th>Action</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// Fix a table's missing RLS policy from the admin dashboard.
+// Calls POST /admin/rls-fix with the table name.
+// If auto-fix isn't available (no exec_sql RPC), shows the SQL to run manually.
+async function fixRlsTable(tableName) {
+  if (!confirm(`Create an RLS policy for "${tableName}"?\n\nThis will add: user_id = auth.uid() for all operations.`)) return;
+
+  const row = document.getElementById(`rls-row-${tableName}`);
+  const btn = row?.querySelector('button');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fixing…'; }
+
+  try {
+    const result = await apiFetch('/admin/rls-fix', {
+      method: 'POST',
+      body: JSON.stringify({ table: tableName })
+    });
+
+    if (result.fixed) {
+      // Auto-fix worked — update the row to show success
+      if (row) {
+        row.innerHTML = `
+          <td><code>${escapeAdminHtml(tableName)}</code></td>
+          <td style="color:#16a34a;font-weight:700;">✅ Policy created</td>
+          <td>${escapeAdminHtml(result.policy)}</td>
+          <td>Fixed!</td>`;
+      }
+    } else {
+      // Auto-fix not available — show the SQL to run manually
+      alert(
+        `Auto-fix not available.\n\n` +
+        `Copy and run this SQL in Supabase SQL Editor:\n\n` +
+        result.sql
+      );
+      if (btn) { btn.disabled = false; btn.textContent = '🔧 Fix Now'; }
+    }
+  } catch (err) {
+    alert(`Fix failed: ${err.message}`);
+    if (btn) { btn.disabled = false; btn.textContent = '🔧 Fix Now'; }
+  }
 }
 
 function adminKpi(label, value, extraClass, tooltip) {
