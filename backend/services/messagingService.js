@@ -151,8 +151,8 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageId) {
       }
     );
 
-    console.log(`[MessagingService] Private reply sent to comment ${commentId} via Page ${pageId}`);
-    return { success: true, messageId: res.data.message_id || res.data.id || 'sent' };
+    console.log(`[MessagingService] Private reply sent to comment ${commentId} via Page ${pageId} — recipientId=${res.data.recipient_id}`);
+    return { success: true, messageId: res.data.message_id || res.data.id || 'sent', recipientId: res.data.recipient_id };
 
   } catch (err) {
     const fbErr = err.response?.data?.error;

@@ -90,6 +90,15 @@ async function processSendDM(job) {
   const now = new Date().toISOString();
   const updateData = { last_message_at: now };
 
+  // When step 1 sends a Private Reply, the API returns the recipient's PSID.
+  // Store it so processIncomingReply() can match the user's reply to this conversation.
+  // The feed webhook gives us the commenter's user ID, but Messenger replies come
+  // from their PSID (Page-Scoped ID) — these are different IDs.
+  if (result.recipientId) {
+    updateData.platform_user_id = result.recipientId;
+    console.log(`[DMWorker] Updated conversation ${conversationId} with PSID ${result.recipientId}`);
+  }
+
   if (isFinalStep) {
     updateData.status = 'completed';
   }
