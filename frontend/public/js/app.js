@@ -736,7 +736,7 @@ function startUnreadBadgePoller() {
 // VIEWS — placeholder renderers (will be filled in per phase)
 // ============================================================
 
-function renderDashboard(el) {
+async function renderDashboard(el) {
   const brandName = App.user?.profile?.brand_name || 'your brand';
   const status    = getProfileCompletionStatus();
 
@@ -752,6 +752,7 @@ function renderDashboard(el) {
     </div>
   ` : '';
 
+  // Render the shell immediately with loading placeholders, then fetch data
   el.innerHTML = `
     <div class="page-header">
       <div class="page-title">Dashboard</div>
@@ -763,34 +764,93 @@ function renderDashboard(el) {
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-label">Posts Published</div>
-        <div class="stat-value">—</div>
+        <div class="stat-value" id="dash-published">—</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Posts Scheduled</div>
-        <div class="stat-value">—</div>
+        <div class="stat-value" id="dash-scheduled">—</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Comments Monitored</div>
-        <div class="stat-value">—</div>
+        <div class="stat-label">DM Conversations</div>
+        <div class="stat-value" id="dash-conversations">—</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Leads Captured</div>
-        <div class="stat-value">—</div>
+        <div class="stat-value" id="dash-leads">—</div>
       </div>
     </div>
 
+    <div id="dash-recent-posts" style="margin-bottom:24px;"></div>
+
     <div class="card">
       <div class="card-header">
-        <div class="card-title">Get Started</div>
+        <div class="card-title">Quick Actions</div>
       </div>
-      <p class="text-muted text-sm" style="margin-bottom:16px;">
-        Create your first content brief and let the AI generate platform-optimised posts for you.
-      </p>
-      <button class="btn btn-primary" onclick="navigate('brief')">
-        ✏️ Create New Brief
-      </button>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="navigate('brief')">Create New Brief</button>
+        <button class="btn btn-secondary" onclick="navigate('queue')">Publishing Queue</button>
+        <button class="btn btn-secondary" onclick="navigate('media')">Media Library</button>
+      </div>
     </div>
   `;
+
+  // Fetch stats in parallel — don't block the page render
+  try {
+    const [postsRes, dmStatsRes] = await Promise.all([
+      apiFetch('/posts'),
+      apiFetch('/automations/stats').catch(() => null)
+    ]);
+
+    const posts = postsRes?.posts || [];
+    const publishedCount = posts.filter(p => p.status === 'published').length;
+    const scheduledCount = posts.filter(p => ['scheduled', 'approved'].includes(p.status)).length;
+
+    // Update stat cards with real numbers
+    const publishedEl = document.getElementById('dash-published');
+    const scheduledEl = document.getElementById('dash-scheduled');
+    const convsEl     = document.getElementById('dash-conversations');
+    const leadsEl     = document.getElementById('dash-leads');
+
+    if (publishedEl) publishedEl.textContent = publishedCount;
+    if (scheduledEl) scheduledEl.textContent = scheduledCount;
+    if (convsEl)     convsEl.textContent = dmStatsRes?.conversations?.total ?? '—';
+    if (leadsEl)     leadsEl.textContent = dmStatsRes?.total_leads ?? '—';
+
+    // Show recent published posts (last 5)
+    const recentContainer = document.getElementById('dash-recent-posts');
+    if (recentContainer) {
+      const recentPublished = posts
+        .filter(p => p.status === 'published')
+        .sort((a, b) => new Date(b.published_at || b.created_at) - new Date(a.published_at || a.created_at))
+        .slice(0, 5);
+
+      if (recentPublished.length > 0) {
+        recentContainer.innerHTML = `
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Recent Posts</div>
+            </div>
+            ${recentPublished.map(post => {
+              const icon = platformLogoSvg(post.platform, 20);
+              const hook = (post.hook || '(no hook)').slice(0, 60);
+              const pubDate = post.published_at
+                ? new Date(post.published_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
+                : '';
+              return `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;">
+                  <span style="display:flex;align-items:center;flex-shrink:0;">${icon}</span>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:500;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${hook}</div>
+                    <div style="font-size:11px;color:#94a3b8;">${pubDate}</div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>`;
+      }
+    }
+  } catch (err) {
+    console.error('[Dashboard] Failed to load stats:', err.message);
+  }
 }
 
 async function renderPostsPlaceholder(el) {
@@ -1044,11 +1104,20 @@ function renderQueueList(posts, container) {
     return new Date(b.created_at || 0) - new Date(a.created_at || 0);
   });
 
-  container.innerHTML = sorted.map(post => renderQueuePostCard(post)).join('');
+  // Count how many posts are ahead in the queue (for ETA calculation).
+  // The publish worker processes posts every 60 seconds, ~1 post per cycle.
+  const pendingPosts = sorted.filter(p => ['scheduled', 'approved', 'publishing'].includes(p.status));
+
+  container.innerHTML = sorted.map(post => {
+    const queuePos = pendingPosts.indexOf(post);
+    return renderQueuePostCard(post, queuePos >= 0 ? queuePos : -1, pendingPosts.length);
+  }).join('');
 }
 
 // Shared post card renderer (used by list view and calendar day detail)
-function renderQueuePostCard(post) {
+// queuePosition: 0-based index in the pending queue (-1 if not pending)
+// totalPending: total number of posts ahead + this one
+function renderQueuePostCard(post, queuePosition, totalPending) {
   const icon = platformLogoSvg(post.platform, 24);
   const hook = (post.hook || '').slice(0, 80);
 
@@ -1078,7 +1147,20 @@ function renderQueuePostCard(post) {
   } else if (post.status === 'published' && pubTime) {
     infoLine = `✅ Published ${pubTime}`;
   } else if ((post.status === 'scheduled' || post.status === 'approved') && schedTime) {
-    infoLine = `⏰ Sends ${schedTime}`;
+    // Show ETA based on queue position (publish worker runs every 60s, ~1 post per cycle)
+    let eta = '';
+    if (queuePosition >= 0) {
+      const schedDate = new Date(post.scheduled_at);
+      const now = new Date();
+      if (schedDate <= now || (schedDate - now) < 5 * 60 * 1000) {
+        // Post is due now or within 5 min — show queue-based ETA
+        const estMinutes = queuePosition + 1; // ~1 min per post ahead
+        eta = estMinutes <= 1
+          ? ' — publishing within 1 min'
+          : ` — est. ~${estMinutes} min (${queuePosition} ahead)`;
+      }
+    }
+    infoLine = `⏰ Sends ${schedTime}${eta}`;
   } else if (post.status === 'paused') {
     infoLine = `<span style="color:#92400e;">⏸ Paused${schedTime ? ` — was set for ${schedTime}` : ''}</span>`;
   } else if (post.status === 'failed') {

@@ -1943,6 +1943,14 @@ async function saveAutomation(postId, existingId) {
     return;
   }
 
+  // Multi-step flows need at least 2 steps to work correctly.
+  // With only 1 step, the conversation completes immediately after step 1
+  // and there's no chance to collect a reply or deliver a resource URL.
+  if (flowType === 'multi_step' && steps.length < 2) {
+    alert('Lead Capture flows require at least 2 steps (e.g. Step 1 asks a question, Step 2 sends a response). Please add another step.');
+    return;
+  }
+
   const name = document.getElementById(`auto-name-${postId}`)?.value?.trim() || null;
   const resourceUrl = document.getElementById(`auto-resource-url-${postId}`)?.value?.trim() || null;
 
