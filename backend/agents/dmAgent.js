@@ -237,7 +237,36 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
   const isFinalStep   = !nextStep;
 
   if (isFinalStep) {
-    // All steps done — mark completed
+    // All steps done — check if there's a resource URL to deliver before completing.
+    // This handles the case where the last step collects info (e.g., name) and
+    // the user expects a resource link to be sent after providing that info.
+    const { data: auto } = await supabaseAdmin
+      .from('dm_automations')
+      .select('resource_url')
+      .eq('id', conversation.automation_id)
+      .single();
+
+    if (auto?.resource_url) {
+      // Send the resource as a final delivery DM
+      const deliveryMessage = `Thanks! Here's what you requested:\n\n${auto.resource_url}`;
+
+      await dmQueue.add('send-dm', {
+        conversationId: conversation.id,
+        userId:         conversation.user_id,
+        platform,
+        recipientId:    senderPlatformId,
+        messageText:    deliveryMessage,
+        stepOrder:      conversation.current_step + 1,
+        isFinalStep:    true
+      }, {
+        jobId: `dm-${conversation.id}-delivery`,
+        removeOnComplete: true
+      });
+
+      console.log(`[DMAgent] Queued resource delivery for conversation ${conversation.id}`);
+    }
+
+    // Mark conversation completed
     await supabaseAdmin
       .from('dm_conversations')
       .update({
