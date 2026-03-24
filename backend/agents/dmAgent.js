@@ -177,8 +177,12 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     .limit(1)
     .single();
 
-  if (error || !conversation) {
-    // No active conversation — this is a normal DM, not part of an automation
+  if (error) {
+    console.error(`[DMAgent] Supabase query error for sender ${senderPlatformId}: ${error.message || JSON.stringify(error)}`);
+    return;
+  }
+  if (!conversation) {
+    console.log(`[DMAgent] No active conversation found for PSID ${senderPlatformId} on ${platform} — may be a normal DM, not an automation reply`);
     return;
   }
 

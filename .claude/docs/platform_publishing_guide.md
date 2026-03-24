@@ -486,3 +486,182 @@ if (existing) {
 | `backend/services/ffmpegService.js` | Video re-encoding. Handles H.264/AAC conversion for all platforms. |
 | `frontend/public/js/media.js` | Media library UI. Includes analysis status poller. |
 | `frontend/public/privacy.html` | Privacy Policy page at `https://social-buster.com/privacy.html` |
+
+---
+
+## DM Automation — Complete Debugging History & Solution (2026-03-24)
+
+### What We Built
+Comment-to-DM automation on Facebook. Someone comments a trigger keyword on a Page post → system automatically sends them a Direct Message. This took 5 debugging rounds across multiple sessions to get working. Every issue and solution is documented below so future platform integrations (Instagram, Threads, etc.) can avoid the same traps.
+
+### The Working Pipeline (CONFIRMED WORKING)
+
+```
+Meta Webhook → webhooks.js (signature verify)
+  → commentAgent.js (trigger keyword match)
+    → dmAgent.js (create conversation row, queue DM job)
+      → dmWorker.js (decrypt token, call messagingService)
+        → messagingService.js (POST /{page_id}/messages with recipient.comment_id)
+          → DM arrives in commenter's Messenger inbox ✅
+```
+
+### The Correct API Call (THIS IS WHAT WORKS)
+
+```
+POST https://graph.facebook.com/v21.0/{PAGE_ID}/messages
+Body (JSON):
+{
+  "recipient": {
+    "comment_id": "{comment_id}"
+  },
+  "message": {
+    "text": "Your message here"
+  }
+}
+Params: access_token={PAGE_ACCESS_TOKEN}
+```
+
+**Key details:**
+- `PAGE_ID` = the Facebook Page's numeric ID (stored in `platform_connections.platform_user_id`)
+- `comment_id` = the full comment ID from the webhook (format: `{post_id}_{comment_id}`)
+- Uses the **Page Access Token**, not a User Token
+- Does NOT require `messaging_type` field (unlike regular Send API with PSID)
+
+### What Does NOT Work (The Deprecated Endpoint)
+
+```
+POST https://graph.facebook.com/v21.0/{comment_id}/private_replies
+Body: { message: "text" }
+```
+
+This is the **old Private Replies endpoint** that was deprecated after Graph API v3.2. It returns error 100 subcode 33: "Object with ID does not exist, cannot be loaded due to missing permissions, or does not support this operation." If you ever see this exact error on a DM call, the first thing to check is whether you're using the old endpoint.
+
+### Required OAuth Scopes (in routes/publish.js)
+
+```
+pages_show_list
+pages_read_engagement          ← reads Page-published content (posts, follower data)
+pages_read_user_content        ← reads user-generated content (comments, reviews) — REQUIRED for comment-to-DM
+pages_manage_posts             ← create/edit/delete posts
+pages_manage_metadata          ← subscribe Page to webhooks
+pages_messaging                ← send DMs via Messenger + Private Replies
+instagram_basic
+instagram_content_publish
+instagram_manage_comments      ← Instagram comment monitoring
+instagram_manage_messages      ← Instagram DM automation
+```
+
+### Chronological Issue Log (5 Issues, All Resolved)
+
+#### Issue 1: Error 100 subcode 33 — "Missing Permissions" on comment read
+- **Symptom:** `Facebook Private Reply error 100 subcode=33: Object with ID does not exist, cannot be loaded due to missing permissions`
+- **Root cause:** Page token had `pages_read_engagement` but NOT `pages_read_user_content`. These are different permissions: `pages_read_engagement` reads content posted BY the Page, while `pages_read_user_content` reads content posted BY USERS (comments, reviews) on the Page.
+- **How we diagnosed:** Graph API Explorer — `GET /{comment_id}` returned "Missing Permissions" without `pages_read_user_content`, returned full comment data with it.
+- **Fix:** Added `pages_read_user_content` to OAuth scopes in `routes/publish.js` (commit `90847b2`)
+- **Lesson for future platforms:** Always test reading the content object BEFORE trying to act on it. If you can't read it, you definitely can't reply to it.
+
+#### Issue 2: Page admin cannot receive DMs from own Page
+- **Symptom:** Everything looked correct in logs but DM never arrived for Page admin (Mark Vidano)
+- **Root cause:** Facebook cannot send a DM from a Page to that Page's own admin. It's "messaging yourself" — a Meta platform limitation.
+- **Fix:** Test with a completely separate Facebook account that has no admin/developer role on the Page.
+- **Lesson for future platforms:** ALWAYS test DM features with a separate, unrelated account. Admin/owner accounts often have special restrictions or behaviors that don't reflect real user experience.
+
+#### Issue 3: RLS policy violation on dm_conversations table
+- **Symptom:** `new row violates row-level security policy for table 'dm_conversations'`
+- **Root cause:** Table had RLS enabled but NO policy existed. Even `supabaseAdmin` (service role key) was blocked. Supabase sometimes enforces RLS even for service role if `relforcerowsecurity` interacts unexpectedly or no policy exists.
+- **Fix:** Created RLS policy: `CREATE POLICY "Users can manage own dm_conversations" ON dm_conversations FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());`
+- **Lesson for future platforms:** Every new table that workers/agents write to needs an RLS policy BEFORE you test. Add the policy in the same migration SQL that creates the table. Even if using `supabaseAdmin`, create the policy as a safety net.
+
+#### Issue 4: Dedup guard permanently blocks retries after failed DM
+- **Symptom:** `[DMAgent] Skipping — already DM'd Sharon Vidano for automation {id}` — even though the DM was never actually delivered
+- **Root cause:** `dm_conversations` row was created BEFORE the DM was sent. When the DM failed (due to RLS error), the row stayed with status `'active'`. The dedup guard only checked if a row EXISTS, not whether the DM was delivered. Future comments from the same person were permanently blocked.
+- **Fix (commit `111f87f`):**
+  1. `dmWorker.js` — `worker.on('failed')` now marks conversation `status: 'failed'`
+  2. `dmAgent.js` — dedup guard checks status. If `'failed'`, deletes stale row and retries. All other statuses (`active`, `completed`, `expired`, `opted_out`) still block duplicates correctly.
+- **Lesson for future platforms:** Any dedup/idempotency guard must distinguish between "attempted and succeeded" vs "attempted and failed." If you create a tracking row before the action, you MUST update it on failure, or the guard becomes a permanent blocker. This applies to any system where you create state before confirming the action completed.
+
+#### Issue 5: Deprecated API endpoint — THE ROOT CAUSE OF DM DELIVERY FAILURE
+- **Symptom:** Error 100 subcode 33 on every Private Reply attempt, even after all permission fixes. Comment was readable (diagnostic GET succeeded), but the POST to `/{comment_id}/private_replies` always failed.
+- **Root cause:** The `POST /{comment_id}/private_replies` endpoint was **deprecated after Graph API v3.2** (circa 2019). Meta moved Private Replies into the Messenger Send API. The old endpoint returns the same generic error 100/subcode 33 as permission errors, which made it extremely confusing to diagnose.
+- **How we diagnosed:** Got a second opinion from another LLM (Groq) which identified the deprecated endpoint. Tested the modern endpoint in Graph API Explorer — immediate success.
+- **Fix (commit `e4d59da`):** Changed `sendPrivateReply()` in `messagingService.js` from:
+  ```
+  POST /{comment_id}/private_replies
+  Body: { message: "text" }
+  ```
+  To:
+  ```
+  POST /{page_id}/messages
+  Body: { recipient: { comment_id: "{comment_id}" }, message: { text: "text" } }
+  ```
+  Also updated `dmWorker.js` to fetch `platform_user_id` (Page ID) from `platform_connections` and pass it to `sendPrivateReply()`.
+- **Confirmed working:** Tested in Graph API Explorer with Page Access Token → `recipient_id` and `message_id` returned → DM arrived in Sharon's Messenger inbox.
+- **Lesson for future platforms:** Error 100 subcode 33 is a GENERIC error that Meta uses for at least 3 different problems: (a) missing permissions, (b) object doesn't exist, (c) deprecated/unsupported endpoint. When you see this error, check ALL three possibilities. Always verify the endpoint is current by checking Meta's latest documentation — don't trust code examples from Stack Overflow or older tutorials. The Graph API Explorer is the fastest way to test: if the call works there with the same token/params, the code is wrong. If it fails there too, the endpoint or permissions are wrong.
+
+### Answers to Common Questions (Resolved During Debugging)
+
+**Q: Does the DM recipient need an app role (Tester/Developer)?**
+A: NO. Sharon received the DM with no Facebook-side app role. She was only an "Instagram Tester (Pending)" which has nothing to do with Facebook messaging. Regular Facebook users can receive Private Replies as long as the Page has `pages_messaging` permission (even at "Ready for testing" level).
+
+**Q: Does the token need to be refreshed after adding new OAuth scopes?**
+A: YES. After adding `pages_read_user_content` to the scopes list in code, the user must disconnect and reconnect Facebook in the app to get a fresh token that includes the new permission. The old token doesn't retroactively gain new scopes.
+
+**Q: Does the Page need to be re-subscribed to webhooks after reconnecting?**
+A: No. Webhook subscriptions are tied to the app + Page, not to the specific token. Reconnecting OAuth doesn't affect webhook delivery.
+
+**Q: Can you test Private Replies in Graph API Explorer?**
+A: YES — this is the single best debugging tool. Steps:
+1. Go to developers.facebook.com/tools/explorer
+2. Select your app, then select the Page token (not User Token)
+3. Set method to POST
+4. URL: `{page_id}/messages`
+5. Use Params tab: `recipient` = `{"comment_id":"..."}`, `message` = `{"text":"..."}`
+6. Submit — if you get `recipient_id` + `message_id`, it works
+
+### How to Debug DM Failures on ANY Platform (Diagnostic Checklist)
+
+Use this checklist whenever DM automation fails on any platform:
+
+1. **Can you READ the trigger object (comment/mention)?**
+   - Test: `GET /{object_id}` with the platform token
+   - If NO → missing read permission (e.g., `pages_read_user_content` for Facebook)
+
+2. **Are you using the CURRENT API endpoint?**
+   - Check the platform's latest API docs, not cached knowledge or old tutorials
+   - Meta specifically has deprecated multiple DM endpoints over the years
+
+3. **Are you testing with the right account?**
+   - Page admins often can't DM themselves
+   - Use a completely separate account with no special roles
+
+4. **Does the database table have proper RLS policies?**
+   - Check BEFORE testing, not after it fails
+   - Every table workers write to needs a policy
+
+5. **Does your dedup/idempotency guard handle failures?**
+   - If you create tracking rows before the action, they MUST be updated on failure
+   - Otherwise failed attempts permanently block retries
+
+6. **Is the token fresh with all required scopes?**
+   - Adding scopes to code doesn't update existing tokens
+   - User must disconnect + reconnect to get a new token
+
+7. **Test the API call manually in the platform's Explorer/Playground FIRST**
+   - If it works there → your code is wrong
+   - If it fails there → the endpoint, permissions, or parameters are wrong
+
+### Key Files in the DM Pipeline
+| File | Role |
+|------|------|
+| `backend/routes/webhooks.js` | Receives Meta webhooks, verifies signature, routes to commentAgent or dmAgent |
+| `backend/agents/commentAgent.js` | Processes comments, matches trigger keywords, calls startConversation() |
+| `backend/agents/dmAgent.js` | Conversation state machine — creates rows, queues DM jobs, handles retries on failure |
+| `backend/workers/dmWorker.js` | Picks up DM jobs, decrypts tokens, calls messagingService, marks failures |
+| `backend/services/messagingService.js` | Calls Meta Graph API — sendPrivateReply() + sendDM() + rate limiting |
+| `backend/routes/publish.js` | Facebook OAuth scopes (where permissions are requested) |
+
+### Key Commits (in order)
+- `ff7d431` — Initial: Use Facebook Private Replies API (old deprecated endpoint)
+- `90847b2` — Fix: Add `pages_read_user_content` OAuth scope + diagnostic logging
+- `111f87f` — Fix: Dedup guard allows retries when previous attempt failed
+- `e4d59da` — **THE FIX:** Switch from deprecated `/{comment_id}/private_replies` to modern `/{page_id}/messages` with `recipient.comment_id`

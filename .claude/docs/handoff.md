@@ -529,83 +529,100 @@ NODE_ENV=production
 
 ---
 
-## Session Log: 2026-03-24 — DM Automation Debugging (Continued)
+## Session Log: 2026-03-24 — DM Automation Debugging (RESOLVED)
 
-### Context
-Picking up from commit `ff7d431` (Private Replies API). The full DM pipeline was built but the actual DM delivery had never succeeded. This session focused on diagnosing and fixing the Private Replies failure.
+### Outcome
+**DM automation is WORKING.** Confirmed via Graph API Explorer manual test — Sharon Vidano received a DM in Messenger from World Wide Treasure Hunt Page. Automated pipeline awaiting final end-to-end confirmation (Sharon comments with trigger keyword → DM arrives automatically).
 
-### What We Tested
-1. Published a new Facebook image post to "World Wide Treasure Hunt" Page — **published successfully** (post `913edea9`, platform post ID `101465745099191_1234583128882396`)
-2. Mark Vidano commented "Hi" on the post — webhook fired, trigger matched, DM conversation created
-3. DM delivery failed 3x with: `Facebook Private Reply error 100 subcode=33: Object with ID '1234583128882396_1296422082444210' does not exist, cannot be loaded due to missing permissions`
-4. Health check auto-discarded the failed DM job after retries exhausted
-5. Second comment from "World Wide Treasure Hunt" (the Page itself) — webhook fired but no DM triggered (different trigger or Page self-comment filtering)
+### The Working Pipeline
 
-### Root Cause Found: Missing `pages_read_user_content` Permission
-The Private Replies API needs to READ the comment before replying to it. Our Page token had `pages_read_engagement` (reads Page-published content) but NOT `pages_read_user_content` (reads user-generated content like comments on Page posts).
+```
+Meta Webhook → webhooks.js (signature verify)
+  → commentAgent.js (trigger keyword match)
+    → dmAgent.js (create conversation row, queue DM job)
+      → dmWorker.js (decrypt token, call messagingService)
+        → messagingService.js (POST /{page_id}/messages with recipient.comment_id)
+          → DM arrives in commenter's Messenger inbox ✅
+```
 
-**Proof:** In Graph API Explorer:
-- With `pages_read_engagement` only → `GET /1234583128882396_1296422082444210` → error 200 "Missing Permissions"
-- With `pages_read_user_content` added → same GET → returned full comment data (from: Mark Vidano, message: "Hi")
+### The Correct API Call
 
-### Fixes Applied (commit `90847b2`)
-1. **Added `pages_read_user_content` to OAuth scopes** in `routes/publish.js` — so new Page tokens include this permission
-2. **Added diagnostic logging to `sendPrivateReply()`** in `messagingService.js` — before attempting Private Reply, does a GET on the comment to distinguish "can't read" (permissions) from "can read but can't reply" (unsupported operation). This diagnostic info will be in Coolify logs for future debugging.
+```
+POST https://graph.facebook.com/v21.0/{PAGE_ID}/messages
+Body: { "recipient": { "comment_id": "{comment_id}" }, "message": { "text": "..." } }
+Params: access_token={PAGE_ACCESS_TOKEN}
+```
 
-### Why Admin Self-Test Didn't Work
-Mark Vidano is the admin of ALL test Pages (Get Me Hip, World Wide Treasure Hunt, etc.). Facebook's Private Replies API cannot send a DM from a Page to that Page's own admin — it's "messaging yourself." This is not a bug in our code; it's a Meta platform limitation.
+**NOT** the old deprecated endpoint: `POST /{comment_id}/private_replies` — this was the root cause.
 
-**For testing:** Need a real person with a completely different Facebook account (not an admin/developer/tester on the Social Buster app) to comment on a published post with the trigger keyword.
+### 5 Issues Found and Fixed (Chronological)
 
-### Current State of DM Automation (as of commit `90847b2`)
+#### Issue 1: Missing `pages_read_user_content` permission
+- **Error:** `error 100 subcode=33: Object with ID does not exist, cannot be loaded due to missing permissions`
+- **Fix:** Added `pages_read_user_content` to OAuth scopes (commit `90847b2`)
+
+#### Issue 2: Page admin cannot DM themselves
+- **Symptom:** DM never arrived for Mark Vidano (Page admin)
+- **Fix:** Meta platform limitation — must test with a separate, non-admin account
+
+#### Issue 3: Missing RLS policy on `dm_conversations`
+- **Error:** `new row violates row-level security policy for table 'dm_conversations'`
+- **Fix:** Created RLS policy in Supabase SQL
+
+#### Issue 4: Failed DMs permanently block retries
+- **Error:** `Skipping — already DM'd Sharon Vidano` (but DM was never delivered)
+- **Fix:** Dedup guard now checks conversation status; failed attempts allow retry (commit `111f87f`)
+
+#### Issue 5: DEPRECATED API ENDPOINT (the root cause of DM delivery failure)
+- **Error:** Same error 100/subcode 33 on every attempt, even after permission fixes
+- **Root cause:** `POST /{comment_id}/private_replies` was deprecated after Graph API v3.2. Meta moved Private Replies into the Messenger Send API.
+- **Fix:** Switched to `POST /{page_id}/messages` with `recipient.comment_id` (commit `e4d59da`)
+- **Confirmed:** Manual test in Graph API Explorer returned `recipient_id` + `message_id`, Sharon received the DM
+
+### Resolved Questions
+- **Recipients do NOT need app roles** — Sharon got the DM with no Facebook Tester role
+- **Token refresh IS needed** after adding scopes — user must disconnect + reconnect
+- **Webhook subscriptions survive** token refresh — no re-subscribe needed
+
+### Current State of DM Automation (as of commit `e4d59da`)
 | Step | Status |
 |------|--------|
-| Webhook delivery (Meta → our server) | **WORKING** — comments arrive in real-time |
-| Comment processing + trigger matching | **WORKING** — keywords match, comments saved to DB |
-| DM conversation creation | **WORKING** — `dm_conversations` records created correctly |
-| Deduplication | **WORKING** — same person won't get DM'd twice for same automation |
-| Private Replies API call | **DEPLOYED, AWAITING TEST** — `pages_read_user_content` added, needs reconnect + non-admin commenter |
-| Multi-step follow-up (steps 2+) | **NOT YET TESTED** — requires user to reply to private reply, giving us their PSID for Send API |
-| Comment polling (15-min backup) | **PARTIALLY WORKING** — `pages_read_engagement` errors for some posts (needs App Review for Standard Access) |
+| Webhook delivery (Meta → our server) | **WORKING** |
+| Comment processing + trigger matching | **WORKING** |
+| DM conversation creation | **WORKING** |
+| Deduplication + auto-recovery on failure | **WORKING** |
+| DM delivery via Messenger Send API | **CONFIRMED WORKING** (manual test) |
+| Full automated pipeline (comment → DM) | **AWAITING FINAL TEST** — Sharon to comment with trigger keyword |
+| Multi-step follow-up (steps 2+) | **NOT YET TESTED** |
+| Comment polling (15-min backup) | **PARTIALLY WORKING** — needs App Review for Standard Access |
 
-### Next Steps (in order)
-1. **Reconnect Facebook in Social Buster** — disconnect + reconnect to get fresh token with `pages_read_user_content`
-2. **Publish a simple test post** (text only is fine)
-3. **Have a non-admin friend comment** with the trigger keyword
-4. **Check Coolify logs** — the diagnostic logging will show whether the comment is readable and whether Private Replies succeeds
-5. If Private Replies works → DM automation is confirmed end-to-end
-6. Submit for Meta App Review (`pages_messaging`, `pages_read_user_content`, `pages_read_engagement`)
-
-### Files Modified This Session
+### Files Modified Across All DM Sessions
 - `backend/routes/publish.js` — Added `pages_read_user_content` to OAuth scopes
-- `backend/services/messagingService.js` — Added diagnostic GET before Private Reply attempt
+- `backend/services/messagingService.js` — Switched to modern `/{page_id}/messages` endpoint + diagnostic logging
+- `backend/agents/dmAgent.js` — Dedup guard allows retries on failed conversations
+- `backend/workers/dmWorker.js` — Marks conversation `'failed'` on job failure + fetches `platform_user_id` for Page ID
 
 ### Key Commits
-- `90847b2` — Add pages_read_user_content OAuth scope + diagnostic logging for Private Replies
+- `ff7d431` — Initial Private Replies implementation (old deprecated endpoint)
+- `90847b2` — Add `pages_read_user_content` OAuth scope + diagnostic logging
+- `111f87f` — Fix dedup guard: allow retries when previous attempt failed
+- `e4d59da` — **THE FIX:** Switch to modern `/{page_id}/messages` with `recipient.comment_id`
 
-### Meta Permission Reference (What Each One Does)
-| Permission | What It Reads | Status |
-|-----------|--------------|--------|
-| `pages_read_engagement` | Content posted BY the Page (posts, photos, videos), follower data, PSID | Ready for testing |
-| `pages_read_user_content` | Content posted BY USERS on the Page (comments, ratings, reviews) | Ready for testing |
-| `pages_manage_posts` | Create/edit/delete Page posts | Ready for testing |
-| `pages_manage_metadata` | Subscribe Page to webhooks, update Page settings | Ready for testing |
-| `pages_messaging` | Send/receive DMs via Messenger Platform + Private Replies | Ready for testing |
-
-"Ready for testing" = works for app admins/developers/testers. Standard Access (via App Review) needed for all users.
+### Full debugging guide with lessons learned: see `platform_publishing_guide.md` → "DM Automation — Complete Debugging History & Solution"
 
 ---
 
 ## What's Pending (In Priority Order)
 
-1. **DM automation end-to-end test** — needs non-admin commenter, code is deployed and ready
-2. **Meta App Review** — required for `pages_messaging`, `pages_read_user_content`, `pages_read_engagement` at Standard Access for non-admin users
-3. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions from debugging
-4. **Admin override bug** — `admin_notes` column missing on `user_profiles` (fix: `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`)
-5. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube (backend code exists, needs developer app credentials)
-6. **Anti-cloning / IP protection** — investigate code obfuscation, server-side secrets, architecture choices to prevent copying
-7. **WhatsApp** — 8th platform via WhatsApp Business API (future)
-8. **Remove diagnostic logging** — DM + billing debug logs should be cleaned up once everything is confirmed working
+1. **DM automation final end-to-end test** — API confirmed working manually. Need Sharon to comment with trigger keyword to confirm full automated pipeline.
+2. **Dashboard health check** — posts not showing on dashboard, needs investigation
+3. **Meta App Review** — required for `pages_messaging`, `pages_read_user_content`, `pages_read_engagement` at Standard Access for all users
+4. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions from debugging
+5. **Admin override bug** — `admin_notes` column missing on `user_profiles` (fix: `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`)
+6. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube (backend code exists, needs developer app credentials)
+7. **Anti-cloning / IP protection** — investigate code obfuscation, server-side secrets, architecture choices to prevent copying
+8. **WhatsApp** — 8th platform via WhatsApp Business API (future)
+9. **Remove diagnostic logging** — DM + billing debug logs should be cleaned up once everything is confirmed working
 
 **Already completed (remove from active tracking):**
 - ~~Stripe billing~~ — fully working (subscribe, upgrade, downgrade, cancel)
@@ -616,6 +633,7 @@ Mark Vidano is the admin of ALL test Pages (Get Me Hip, World Wide Treasure Hunt
 - ~~Threads OAuth~~ — working in production
 - ~~Single session enforcement~~ — active_session_id implemented
 - ~~Tawk.to~~ — replaced by in-app messaging system
+- ~~DM automation API endpoint~~ — confirmed working (manual test 2026-03-24)
 
 ---
 

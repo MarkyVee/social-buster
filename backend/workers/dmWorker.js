@@ -96,17 +96,23 @@ async function processSendDM(job) {
   // from their PSID (Page-Scoped ID) — these are different IDs.
   if (result.recipientId) {
     updateData.platform_user_id = result.recipientId;
-    console.log(`[DMWorker] Updated conversation ${conversationId} with PSID ${result.recipientId}`);
+    console.log(`[DMWorker] Storing PSID ${result.recipientId} on conversation ${conversationId}`);
+  } else {
+    console.warn(`[DMWorker] No recipientId in send result for conversation ${conversationId} — full result: ${JSON.stringify(result)}`);
   }
 
   if (isFinalStep) {
     updateData.status = 'completed';
   }
 
-  await supabaseAdmin
+  const { error: convUpdateError } = await supabaseAdmin
     .from('dm_conversations')
     .update(updateData)
     .eq('id', conversationId);
+
+  if (convUpdateError) {
+    console.error(`[DMWorker] Failed to update conversation ${conversationId}: ${convUpdateError.message}`);
+  }
 
   // If this is for a single-message flow, also mark dm_sent on the original comment
   if (isFinalStep && stepOrder === 1) {
