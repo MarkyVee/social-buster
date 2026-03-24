@@ -608,6 +608,12 @@ textarea { resize: vertical; min-height: 80px; }
   border-radius: var(--radius-lg);
   padding: var(--space-5) var(--space-6);
   box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.stat-card[onclick]:hover {
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0,0,0,.1));
 }
 
 .stat-label {

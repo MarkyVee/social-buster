@@ -762,19 +762,19 @@ async function renderDashboard(el) {
     ${profileBanner}
 
     <div class="stats-grid">
-      <div class="stat-card">
+      <div class="stat-card" onclick="navigate('posts')" style="cursor:pointer;" title="View generated posts">
         <div class="stat-label">Posts Published</div>
         <div class="stat-value" id="dash-published">—</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" onclick="navigate('queue')" style="cursor:pointer;" title="View publishing queue">
         <div class="stat-label">Posts Scheduled</div>
         <div class="stat-value" id="dash-scheduled">—</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="View DM automations">
         <div class="stat-label">DM Conversations</div>
         <div class="stat-value" id="dash-conversations">—</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="View collected leads">
         <div class="stat-label">Leads Captured</div>
         <div class="stat-value" id="dash-leads">—</div>
       </div>
