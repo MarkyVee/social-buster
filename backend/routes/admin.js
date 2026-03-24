@@ -1304,6 +1304,161 @@ router.put('/plans/:id', async (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// GET /admin/drilldown/:type
+//
+// Returns the full list behind a KPI card so the admin can see who/what
+// makes up the count. User-based types return user rows; content-based
+// types return content rows with the user who created them.
+//
+// Supported types:
+//   dau, mau, new_today, new_7d, total_users,
+//   briefs_7d, posts_published, posts_7d
+// ----------------------------------------------------------------
+router.get('/drilldown/:type', async (req, res) => {
+  try {
+    const type = req.params.type;
+    const now           = new Date();
+    const todayStart    = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const sevenDaysAgo  = new Date(Date.now() - 7  * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Helper: given an array of user_ids, fetch their profile info
+    async function enrichUsers(userIds) {
+      if (!userIds.length) return [];
+      const { data: profiles } = await supabaseAdmin
+        .from('user_profiles')
+        .select('user_id, email, brand_name, industry, created_at')
+        .in('user_id', userIds);
+      return profiles || [];
+    }
+
+    let label, mode, items;
+
+    switch (type) {
+      // ---- User-based drill-downs ----
+      case 'dau': {
+        label = 'Daily Active Users (generated a brief today)';
+        mode  = 'users';
+        const { data: rows } = await supabaseAdmin
+          .from('briefs').select('user_id').gte('created_at', todayStart).limit(1000);
+        const uniqueIds = [...new Set((rows || []).map(r => r.user_id))];
+        items = await enrichUsers(uniqueIds);
+        break;
+      }
+      case 'mau': {
+        label = 'Monthly Active Users (generated a brief in last 30 days)';
+        mode  = 'users';
+        const { data: rows } = await supabaseAdmin
+          .from('briefs').select('user_id').gte('created_at', thirtyDaysAgo).limit(5000);
+        const uniqueIds = [...new Set((rows || []).map(r => r.user_id))];
+        items = await enrichUsers(uniqueIds);
+        break;
+      }
+      case 'new_today': {
+        label = 'New Users Today';
+        mode  = 'users';
+        const { data: rows } = await supabaseAdmin
+          .from('user_profiles')
+          .select('user_id, email, brand_name, industry, created_at')
+          .gte('created_at', todayStart);
+        items = rows || [];
+        break;
+      }
+      case 'new_7d': {
+        label = 'New Users (Last 7 Days)';
+        mode  = 'users';
+        const { data: rows } = await supabaseAdmin
+          .from('user_profiles')
+          .select('user_id, email, brand_name, industry, created_at')
+          .gte('created_at', sevenDaysAgo);
+        items = rows || [];
+        break;
+      }
+      case 'total_users': {
+        label = 'All Registered Users';
+        mode  = 'users';
+        const { data: rows } = await supabaseAdmin
+          .from('user_profiles')
+          .select('user_id, email, brand_name, industry, created_at')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        items = rows || [];
+        break;
+      }
+
+      // ---- Content-based drill-downs (with user info) ----
+      case 'briefs_7d': {
+        label = 'Briefs Submitted (Last 7 Days)';
+        mode  = 'content';
+        const { data: rows } = await supabaseAdmin
+          .from('briefs')
+          .select('id, user_id, topic, post_type, created_at')
+          .gte('created_at', sevenDaysAgo)
+          .order('created_at', { ascending: false })
+          .limit(200);
+        const userIds = [...new Set((rows || []).map(r => r.user_id))];
+        const profiles = await enrichUsers(userIds);
+        const profileMap = Object.fromEntries(profiles.map(p => [p.user_id, p]));
+        items = (rows || []).map(r => ({
+          ...r,
+          email:      profileMap[r.user_id]?.email || '—',
+          brand_name: profileMap[r.user_id]?.brand_name || '—'
+        }));
+        break;
+      }
+      case 'posts_published': {
+        label = 'All Published Posts';
+        mode  = 'content';
+        const { data: rows } = await supabaseAdmin
+          .from('posts')
+          .select('id, user_id, platform, hook, published_at')
+          .eq('status', 'published')
+          .order('published_at', { ascending: false })
+          .limit(200);
+        const userIds = [...new Set((rows || []).map(r => r.user_id))];
+        const profiles = await enrichUsers(userIds);
+        const profileMap = Object.fromEntries(profiles.map(p => [p.user_id, p]));
+        items = (rows || []).map(r => ({
+          ...r,
+          email:      profileMap[r.user_id]?.email || '—',
+          brand_name: profileMap[r.user_id]?.brand_name || '—'
+        }));
+        break;
+      }
+      case 'posts_7d': {
+        label = 'Posts Published (Last 7 Days)';
+        mode  = 'content';
+        const { data: rows } = await supabaseAdmin
+          .from('posts')
+          .select('id, user_id, platform, hook, published_at')
+          .eq('status', 'published')
+          .gte('published_at', sevenDaysAgo)
+          .order('published_at', { ascending: false })
+          .limit(200);
+        const userIds = [...new Set((rows || []).map(r => r.user_id))];
+        const profiles = await enrichUsers(userIds);
+        const profileMap = Object.fromEntries(profiles.map(p => [p.user_id, p]));
+        items = (rows || []).map(r => ({
+          ...r,
+          email:      profileMap[r.user_id]?.email || '—',
+          brand_name: profileMap[r.user_id]?.brand_name || '—'
+        }));
+        break;
+      }
+
+      default:
+        return res.status(400).json({ error: `Unknown drilldown type: ${type}` });
+    }
+
+    return res.json({ type, label, mode, items, count: items.length });
+
+  } catch (err) {
+    console.error('[Admin] Drilldown error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch drilldown data' });
+  }
+});
+
+// ----------------------------------------------------------------
 // GET /admin/rls-check
 //
 // Returns tables that have Row Level Security enabled but NO policy.

@@ -187,19 +187,19 @@ function buildOverviewHtml(stats, health) {
     <!-- KPI cards — row 1: activity -->
     <div class="admin-section-title" style="margin-top:20px;">Activity</div>
     <div class="admin-kpi-grid">
-      ${adminKpi('🟢 DAU',              stats.dau,               '', 'Users who generated a brief today')}
-      ${adminKpi('📅 MAU',              stats.mau,               '', 'Users who generated a brief in last 30 days')}
-      ${adminKpi('📝 Briefs (7d)',       stats.briefs_7d,         '', 'Briefs submitted in the last 7 days')}
-      ${adminKpi('✅ Posts Published',   stats.total_posts,       '', 'All-time published posts')}
-      ${adminKpi('📈 Posts (7d)',        stats.recent_posts_7d,   '', 'Posts published in the last 7 days')}
+      ${adminKpi('🟢 DAU',              stats.dau,               '', 'Users who generated a brief today',         'dau')}
+      ${adminKpi('📅 MAU',              stats.mau,               '', 'Users who generated a brief in last 30 days','mau')}
+      ${adminKpi('📝 Briefs (7d)',       stats.briefs_7d,         '', 'Briefs submitted in the last 7 days',      'briefs_7d')}
+      ${adminKpi('✅ Posts Published',   stats.total_posts,       '', 'All-time published posts',                 'posts_published')}
+      ${adminKpi('📈 Posts (7d)',        stats.recent_posts_7d,   '', 'Posts published in the last 7 days',       'posts_7d')}
     </div>
 
     <!-- KPI cards — row 2: users & health -->
     <div class="admin-section-title" style="margin-top:20px;">Users &amp; Health</div>
     <div class="admin-kpi-grid">
-      ${adminKpi('👤 Total Users',       stats.total_users,       '', 'Registered user profiles')}
-      ${adminKpi('🆕 New Today',         stats.new_users_today,   '', 'New signups since midnight UTC')}
-      ${adminKpi('🆕 New (7d)',          stats.new_users_7d,      '', 'New signups in the last 7 days')}
+      ${adminKpi('👤 Total Users',       stats.total_users,       '', 'Registered user profiles',    'total_users')}
+      ${adminKpi('🆕 New Today',         stats.new_users_today,   '', 'New signups since midnight UTC','new_today')}
+      ${adminKpi('🆕 New (7d)',          stats.new_users_7d,      '', 'New signups in the last 7 days','new_7d')}
       ${adminKpi('📊 Metric Records',    stats.total_metrics,     '', 'Total post_metrics rows')}
       ${adminKpi('❌ Failed Jobs',       stats.total_failed_jobs, stats.total_failed_jobs > 0 ? 'kpi-alert' : '', 'Failed BullMQ jobs — needs attention')}
     </div>
@@ -353,13 +353,187 @@ async function fixRlsTable(tableName) {
   }
 }
 
-function adminKpi(label, value, extraClass, tooltip) {
+function adminKpi(label, value, extraClass, tooltip, drilldownType) {
   const tip = tooltip ? ` title="${escapeAdminHtml(tooltip)}"` : '';
+  const click = drilldownType
+    ? ` onclick="openKpiDrilldown('${drilldownType}')" style="cursor:pointer;"`
+    : '';
   return `
-    <div class="admin-kpi ${extraClass}"${tip}>
+    <div class="admin-kpi ${extraClass}"${tip}${click}>
       <div class="admin-kpi-value">${value ?? '—'}</div>
       <div class="admin-kpi-label">${label}</div>
     </div>`;
+}
+
+// ================================================================
+// KPI DRILL-DOWN OVERLAY
+// ================================================================
+
+// Opens a full-screen overlay showing the detailed list behind a KPI card.
+// Users can select rows and create an email group from the selection.
+async function openKpiDrilldown(type) {
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'admin-drilldown-overlay';
+  overlay.innerHTML = `
+    <div class="admin-drilldown-panel">
+      <div class="admin-drilldown-header">
+        <span>Loading…</span>
+        <button class="admin-drilldown-close" onclick="closeDrilldown()">&times;</button>
+      </div>
+      <div class="admin-drilldown-body">
+        <div class="admin-loading"><div class="spinner spinner-sm"></div> Fetching data…</div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Close when clicking the dark backdrop (not the panel itself)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeDrilldown();
+  });
+
+  try {
+    const data = await apiFetch(`/admin/drilldown/${type}`);
+    const header = overlay.querySelector('.admin-drilldown-header span');
+    header.textContent = `${data.label} (${data.count})`;
+
+    const body = overlay.querySelector('.admin-drilldown-body');
+
+    if (data.count === 0) {
+      body.innerHTML = '<p style="color:#6b7280;text-align:center;padding:40px 0;">No results.</p>';
+      return;
+    }
+
+    // Build rows based on mode
+    let rowsHtml = '';
+    if (data.mode === 'users') {
+      rowsHtml = data.items.map(u => `
+        <div class="admin-drilldown-row">
+          <input type="checkbox" class="drilldown-cb" data-user-id="${u.user_id}" />
+          <label>
+            <strong>${escapeAdminHtml(u.email || '—')}</strong>
+            <span style="color:#6b7280;margin-left:8px;">${escapeAdminHtml(u.brand_name || '')}${u.industry ? ' · ' + escapeAdminHtml(u.industry) : ''}</span>
+          </label>
+          <span style="color:#9ca3af;font-size:11px;white-space:nowrap;">${u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</span>
+        </div>`).join('');
+    } else {
+      // Content mode — show content info + user
+      rowsHtml = data.items.map(item => {
+        const contentLabel = item.topic || item.hook || item.platform || '—';
+        const dateStr = item.published_at || item.created_at;
+        return `
+          <div class="admin-drilldown-row">
+            <input type="checkbox" class="drilldown-cb" data-user-id="${item.user_id}" />
+            <label style="flex:1;">
+              <span style="display:block;font-weight:600;font-size:13px;">${escapeAdminHtml(contentLabel)}</span>
+              <span style="color:#6b7280;font-size:12px;">${escapeAdminHtml(item.email || '—')}${item.brand_name && item.brand_name !== '—' ? ' · ' + escapeAdminHtml(item.brand_name) : ''}${item.platform ? ' · ' + escapeAdminHtml(item.platform) : ''}</span>
+            </label>
+            <span style="color:#9ca3af;font-size:11px;white-space:nowrap;">${dateStr ? new Date(dateStr).toLocaleDateString() : ''}</span>
+          </div>`;
+      }).join('');
+    }
+
+    body.innerHTML = `
+      <div class="admin-drilldown-select-all">
+        <label><input type="checkbox" id="drilldown-select-all" onchange="toggleDrilldownSelectAll(this)" /> Select All</label>
+        <span id="drilldown-selected-count" style="margin-left:12px;font-size:12px;color:#6b7280;">0 selected</span>
+      </div>
+      ${rowsHtml}`;
+
+    // Add change listeners to individual checkboxes
+    body.querySelectorAll('.drilldown-cb').forEach(cb => {
+      cb.addEventListener('change', updateDrilldownSelectionCount);
+    });
+
+    // Add footer with Create Group button
+    const panel = overlay.querySelector('.admin-drilldown-panel');
+    const footer = document.createElement('div');
+    footer.className = 'admin-drilldown-footer';
+    footer.innerHTML = `
+      <button class="btn btn-sm" id="drilldown-create-group-btn" style="background:#2563eb;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;"
+              onclick="createGroupFromDrilldown('${escapeAdminHtml(type)}')">
+        Create Group
+      </button>
+      <span id="drilldown-group-status" style="font-size:13px;color:#6b7280;"></span>
+      <button class="btn btn-sm" style="margin-left:auto;" onclick="closeDrilldown()">Close</button>`;
+    panel.appendChild(footer);
+
+  } catch (err) {
+    const body = overlay.querySelector('.admin-drilldown-body');
+    body.innerHTML = `<div class="admin-error">Failed to load: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// Close the drill-down overlay
+function closeDrilldown() {
+  const overlay = document.querySelector('.admin-drilldown-overlay');
+  if (overlay) overlay.remove();
+}
+
+// Select All / Deselect All toggle
+function toggleDrilldownSelectAll(masterCb) {
+  const checkboxes = document.querySelectorAll('.drilldown-cb');
+  checkboxes.forEach(cb => { cb.checked = masterCb.checked; });
+  updateDrilldownSelectionCount();
+}
+
+// Update the "X selected" count in the overlay header
+function updateDrilldownSelectionCount() {
+  const all     = document.querySelectorAll('.drilldown-cb');
+  const checked = document.querySelectorAll('.drilldown-cb:checked');
+  const countEl = document.getElementById('drilldown-selected-count');
+  if (countEl) countEl.textContent = `${checked.length} selected`;
+
+  // Keep "Select All" checkbox in sync
+  const selectAll = document.getElementById('drilldown-select-all');
+  if (selectAll) selectAll.checked = all.length > 0 && checked.length === all.length;
+}
+
+// Create an email group from the selected drill-down rows.
+// Collects unique user_ids from checked rows and calls the existing
+// POST /email/groups endpoint to create a manual group.
+async function createGroupFromDrilldown(type) {
+  const checked = document.querySelectorAll('.drilldown-cb:checked');
+  if (checked.length === 0) {
+    alert('Select at least one row first.');
+    return;
+  }
+
+  // Collect unique user IDs (content mode may have duplicates)
+  const userIds = [...new Set([...checked].map(cb => cb.dataset.userId))];
+
+  const groupName = prompt(`Name this group (${userIds.length} user${userIds.length !== 1 ? 's' : ''}):`);
+  if (!groupName || !groupName.trim()) return;
+
+  const btn    = document.getElementById('drilldown-create-group-btn');
+  const status = document.getElementById('drilldown-group-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    await apiFetch('/email/groups', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: groupName.trim(),
+        description: `Created from ${type} drill-down on ${today}`,
+        group_type: 'manual',
+        manual_user_ids: userIds
+      })
+    });
+
+    if (status) {
+      status.style.color = '#16a34a';
+      status.textContent = `Group "${groupName.trim()}" created with ${userIds.length} user${userIds.length !== 1 ? 's' : ''}!`;
+    }
+    if (btn) { btn.textContent = 'Created!'; }
+
+  } catch (err) {
+    if (status) {
+      status.style.color = '#dc2626';
+      status.textContent = `Error: ${err.message}`;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Create Group'; }
+  }
 }
 
 // ================================================================
@@ -1492,6 +1666,82 @@ function injectAdminStyles() {
       margin-left: 4px;
       color: #6366f1;
       font-weight: 700;
+    }
+
+    /* ---- KPI Drill-down overlay ---- */
+    .admin-drilldown-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .admin-drilldown-panel {
+      background: var(--bg-primary, #fff);
+      color: var(--text-primary, #1e293b);
+      border-radius: 12px;
+      width: 90%;
+      max-width: 720px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    .admin-drilldown-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border-color, #e2e8f0);
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .admin-drilldown-close {
+      background: none;
+      border: none;
+      font-size: 22px;
+      cursor: pointer;
+      color: var(--text-secondary, #64748b);
+      padding: 4px 8px;
+      line-height: 1;
+    }
+    .admin-drilldown-close:hover { color: var(--text-primary, #1e293b); }
+    .admin-drilldown-body {
+      overflow-y: auto;
+      padding: 12px 20px;
+      flex: 1;
+    }
+    .admin-drilldown-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-color, #e2e8f0);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .admin-drilldown-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border-color, #f1f5f9);
+      font-size: 13px;
+    }
+    .admin-drilldown-row:hover { background: var(--bg-hover, #f8fafc); }
+    .admin-drilldown-row label { flex: 1; cursor: pointer; }
+    .admin-drilldown-select-all {
+      padding: 8px 0 12px;
+      border-bottom: 2px solid var(--border-color, #e2e8f0);
+      margin-bottom: 4px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .admin-kpi[onclick]:hover {
+      border-color: var(--color-primary, #2563eb);
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,.1);
+      transform: translateY(-1px);
+      transition: all 0.15s ease;
     }
   `;
   document.head.appendChild(style);
