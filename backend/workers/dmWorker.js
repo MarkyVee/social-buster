@@ -56,10 +56,10 @@ const worker = new Worker('dm', async (job) => {
 async function processSendDM(job) {
   const { conversationId, userId, platform, recipientId, commentId, messageText, stepOrder, isFinalStep } = job.data;
 
-  // Get the access token for this platform
+  // Get the access token + page ID for this platform
   const { data: conn, error: connError } = await supabaseAdmin
     .from('platform_connections')
-    .select('access_token')
+    .select('access_token, platform_user_id')
     .eq('user_id', userId)
     .eq('platform', platform)
     .single();
@@ -75,15 +75,13 @@ async function processSendDM(job) {
     throw new Error(`Failed to decrypt ${platform} token for user ${userId}: ${err.message}`);
   }
 
-  // Step 1 for Facebook: use Private Replies API (comment ID based).
-  // The feed webhook gives us the commenter's Facebook user ID, but the
-  // Messenger Send API needs a PSID. Private Replies takes the comment ID
-  // directly — this is the standard approach for comment-to-DM automation.
+  // Step 1 for Facebook: use Messenger Send API with comment_id as recipient.
+  // This sends a DM to the commenter without needing their PSID.
   // Follow-up steps (2+) use the regular Send API with the PSID obtained
   // from the user's reply via the messaging webhook.
   let result;
   if (platform === 'facebook' && stepOrder === 1 && commentId) {
-    result = await sendPrivateReply(accessToken, commentId, messageText);
+    result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id);
   } else {
     result = await sendDM(platform, accessToken, recipientId, messageText, userId);
   }

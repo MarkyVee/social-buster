@@ -104,21 +104,24 @@ async function sendFacebookDM(accessToken, recipientPSID, messageText) {
 }
 
 // ----------------------------------------------------------------
-// sendPrivateReply — sends a one-time private reply to a Facebook comment.
+// sendPrivateReply — sends a DM to a Facebook commenter via the
+// Messenger Send API with recipient.comment_id.
 //
-// This is the correct way to DM a commenter. The regular Send API
-// requires a Page-Scoped ID (PSID), which we don't have from the
-// feed webhook. The Private Replies API takes the comment ID directly.
+// The old /{comment-id}/private_replies endpoint was deprecated after
+// Graph API v3.2. The modern approach uses /{page-id}/messages with
+// the comment_id in the recipient object. This is how ManyChat, Chatfuel,
+// and other major platforms handle comment-to-DM automation.
 //
-// API: POST /{comment-id}/private_replies
-// Docs: https://developers.facebook.com/docs/pages-api/private-replies
+// API: POST /{page-id}/messages
+// Docs: https://developers.facebook.com/docs/messenger-platform/send-messages
 //
 // Limitations:
 //   - Only ONE private reply per comment (subsequent calls fail)
 //   - Must be within 7 days of the comment
 //   - Requires pages_messaging permission
+//   - In dev mode, recipient must be an app Tester
 // ----------------------------------------------------------------
-async function sendPrivateReply(accessToken, commentId, messageText) {
+async function sendPrivateReply(accessToken, commentId, messageText, pageId) {
   // Diagnostic: try to read the comment first to distinguish
   // "can't see it" (permissions) vs "can see it but can't reply" (unsupported)
   try {
@@ -130,21 +133,26 @@ async function sendPrivateReply(accessToken, commentId, messageText) {
   } catch (checkErr) {
     const fb = checkErr.response?.data?.error;
     console.error(`[MessagingService] Cannot read comment ${commentId} — error ${fb?.code} subcode=${fb?.error_subcode}: ${fb?.message || checkErr.message}`);
-    console.error(`[MessagingService] This means the Page token lacks permission to see this comment. Check pages_read_engagement access level.`);
+    console.error(`[MessagingService] This means the Page token lacks permission to see this comment. Check pages_read_user_content access level.`);
   }
 
   try {
+    // Use the Messenger Send API with comment_id as recipient.
+    // This is the modern replacement for the deprecated /{comment-id}/private_replies endpoint.
     const res = await axios.post(
-      `${API_BASE}/${commentId}/private_replies`,
-      { message: messageText },
+      `${API_BASE}/${pageId}/messages`,
+      {
+        recipient: { comment_id: commentId },
+        message:   { text: messageText }
+      },
       {
         params:  { access_token: accessToken },
         timeout: TIMEOUT
       }
     );
 
-    console.log(`[MessagingService] Private reply sent to comment ${commentId}`);
-    return { success: true, messageId: res.data.id || 'sent' };
+    console.log(`[MessagingService] Private reply sent to comment ${commentId} via Page ${pageId}`);
+    return { success: true, messageId: res.data.message_id || res.data.id || 'sent' };
 
   } catch (err) {
     const fbErr = err.response?.data?.error;
