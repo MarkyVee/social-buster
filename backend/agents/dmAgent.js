@@ -166,23 +166,33 @@ async function startConversation(userId, automation, comment, platform, accessTo
 //   platform         — 'facebook' | 'instagram'
 // ----------------------------------------------------------------
 async function processIncomingReply(senderPlatformId, messageText, platform) {
-  // Find the active conversation for this sender
+  // Find the active conversation for this sender.
+  // Use .maybeSingle() instead of .single() — .single() throws an error when
+  // 0 rows match, but .maybeSingle() returns null data gracefully.
+  // Use left join (not !inner) so the row is still returned even if the
+  // dm_automations FK relationship has an issue.
   const { data: conversation, error } = await supabaseAdmin
     .from('dm_conversations')
-    .select('*, dm_automations!inner(id, user_id, flow_type)')
+    .select('*, dm_automations(id, user_id, flow_type)')
     .eq('platform_user_id', senderPlatformId)
     .eq('platform', platform)
     .eq('status', 'active')
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (error) {
     console.error(`[DMAgent] Supabase query error for sender ${senderPlatformId}: ${error.message || JSON.stringify(error)}`);
     return;
   }
   if (!conversation) {
-    console.log(`[DMAgent] No active conversation found for PSID ${senderPlatformId} on ${platform} — may be a normal DM, not an automation reply`);
+    // Debug: check if there's a conversation with this PSID in ANY status
+    const { data: anyConv } = await supabaseAdmin
+      .from('dm_conversations')
+      .select('id, status, platform_user_id')
+      .eq('platform_user_id', senderPlatformId)
+      .limit(5);
+    console.log(`[DMAgent] No active conversation for PSID ${senderPlatformId} on ${platform}. All conversations for this PSID: ${JSON.stringify(anyConv || [])}`);
     return;
   }
 
