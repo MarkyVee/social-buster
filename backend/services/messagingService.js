@@ -104,6 +104,46 @@ async function sendFacebookDM(accessToken, recipientPSID, messageText) {
 }
 
 // ----------------------------------------------------------------
+// sendPrivateReply — sends a one-time private reply to a Facebook comment.
+//
+// This is the correct way to DM a commenter. The regular Send API
+// requires a Page-Scoped ID (PSID), which we don't have from the
+// feed webhook. The Private Replies API takes the comment ID directly.
+//
+// API: POST /{comment-id}/private_replies
+// Docs: https://developers.facebook.com/docs/pages-api/private-replies
+//
+// Limitations:
+//   - Only ONE private reply per comment (subsequent calls fail)
+//   - Must be within 7 days of the comment
+//   - Requires pages_messaging permission
+// ----------------------------------------------------------------
+async function sendPrivateReply(accessToken, commentId, messageText) {
+  try {
+    const res = await axios.post(
+      `${API_BASE}/${commentId}/private_replies`,
+      { message: messageText },
+      {
+        params:  { access_token: accessToken },
+        timeout: TIMEOUT
+      }
+    );
+
+    console.log(`[MessagingService] Private reply sent to comment ${commentId}`);
+    return { success: true, messageId: res.data.id || 'sent' };
+
+  } catch (err) {
+    const fbErr = err.response?.data?.error;
+    if (fbErr) {
+      const sub = fbErr.error_subcode ? ` subcode=${fbErr.error_subcode}` : '';
+      const msg = fbErr.error_user_msg || fbErr.message;
+      throw new Error(`Facebook Private Reply error ${fbErr.code}${sub}: ${msg}`);
+    }
+    throw err;
+  }
+}
+
+// ----------------------------------------------------------------
 // sendInstagramDM — sends a DM via Instagram Messaging API.
 //
 // Uses the same Page Access Token (IG is managed through Facebook Pages).
@@ -179,6 +219,7 @@ async function getDailyUsage(userId, platform) {
 
 module.exports = {
   sendDM,
+  sendPrivateReply,
   getDailyUsage,
   DAILY_LIMITS
 };

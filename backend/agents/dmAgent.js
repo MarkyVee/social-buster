@@ -113,11 +113,16 @@ async function startConversation(userId, automation, comment, platform, accessTo
   });
 
   // Queue the DM for sending (rate-limited via dmWorker)
+  // Step 1 uses Private Replies API (comment ID), not Send API (PSID).
+  // The feed webhook gives us the commenter's Facebook user ID, but the
+  // Messenger Send API needs a PSID which we don't have yet. Private Replies
+  // takes the comment ID directly — this is how ManyChat et al. work.
   await dmQueue.add('send-dm', {
     conversationId: conversation.id,
     userId,
     platform,
     recipientId:    comment.authorPlatformId,
+    commentId:      comment.platformCommentId,  // for Private Replies API
     messageText,
     stepOrder:      1,
     isFinalStep:    automation.flow_type === 'single' || steps.length === 1

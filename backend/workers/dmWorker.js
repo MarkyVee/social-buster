@@ -17,7 +17,7 @@
 
 const { Worker } = require('bullmq');
 const { connection } = require('../queues');
-const { sendDM }     = require('../services/messagingService');
+const { sendDM, sendPrivateReply } = require('../services/messagingService');
 const { decryptToken } = require('../services/tokenEncryption');
 const { supabaseAdmin } = require('../services/supabaseService');
 const { expireStaleConversations } = require('../agents/dmAgent');
@@ -54,7 +54,7 @@ const worker = new Worker('dm', async (job) => {
 //   isFinalStep    — if true, mark conversation as 'completed' after sending
 // ----------------------------------------------------------------
 async function processSendDM(job) {
-  const { conversationId, userId, platform, recipientId, messageText, stepOrder, isFinalStep } = job.data;
+  const { conversationId, userId, platform, recipientId, commentId, messageText, stepOrder, isFinalStep } = job.data;
 
   // Get the access token for this platform
   const { data: conn, error: connError } = await supabaseAdmin
@@ -75,8 +75,18 @@ async function processSendDM(job) {
     throw new Error(`Failed to decrypt ${platform} token for user ${userId}: ${err.message}`);
   }
 
-  // Send the DM
-  const result = await sendDM(platform, accessToken, recipientId, messageText, userId);
+  // Step 1 for Facebook: use Private Replies API (comment ID based).
+  // The feed webhook gives us the commenter's Facebook user ID, but the
+  // Messenger Send API needs a PSID. Private Replies takes the comment ID
+  // directly — this is the standard approach for comment-to-DM automation.
+  // Follow-up steps (2+) use the regular Send API with the PSID obtained
+  // from the user's reply via the messaging webhook.
+  let result;
+  if (platform === 'facebook' && stepOrder === 1 && commentId) {
+    result = await sendPrivateReply(accessToken, commentId, messageText);
+  } else {
+    result = await sendDM(platform, accessToken, recipientId, messageText, userId);
+  }
 
   // Update the conversation
   const now = new Date().toISOString();
