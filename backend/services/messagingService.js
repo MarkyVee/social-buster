@@ -119,6 +119,20 @@ async function sendFacebookDM(accessToken, recipientPSID, messageText) {
 //   - Requires pages_messaging permission
 // ----------------------------------------------------------------
 async function sendPrivateReply(accessToken, commentId, messageText) {
+  // Diagnostic: try to read the comment first to distinguish
+  // "can't see it" (permissions) vs "can see it but can't reply" (unsupported)
+  try {
+    const checkRes = await axios.get(
+      `${API_BASE}/${commentId}`,
+      { params: { access_token: accessToken, fields: 'id,message,from' }, timeout: TIMEOUT }
+    );
+    console.log(`[MessagingService] Comment ${commentId} readable — from: ${checkRes.data.from?.name || 'unknown'}, text: "${(checkRes.data.message || '').substring(0, 50)}"`);
+  } catch (checkErr) {
+    const fb = checkErr.response?.data?.error;
+    console.error(`[MessagingService] Cannot read comment ${commentId} — error ${fb?.code} subcode=${fb?.error_subcode}: ${fb?.message || checkErr.message}`);
+    console.error(`[MessagingService] This means the Page token lacks permission to see this comment. Check pages_read_engagement access level.`);
+  }
+
   try {
     const res = await axios.post(
       `${API_BASE}/${commentId}/private_replies`,

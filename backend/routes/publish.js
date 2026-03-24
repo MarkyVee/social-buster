@@ -963,6 +963,7 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
   const scopes = [
     'pages_show_list',
     'pages_read_engagement',
+    'pages_read_user_content',      // Required to read user comments on Page posts (Private Replies needs this)
     'pages_manage_posts',
     'pages_manage_metadata',        // Required for subscribing Page to app webhooks
     'pages_messaging',              // Facebook + Instagram DM automation
