@@ -419,14 +419,14 @@ async function openKpiDrilldown(type) {
     } else {
       // Content mode — show content info + user
       rowsHtml = data.items.map(item => {
-        const contentLabel = item.topic || item.hook || item.platform || '—';
+        const contentLabel = item.topic || item.hook || '—';
         const dateStr = item.published_at || item.created_at;
         return `
           <div class="admin-drilldown-row">
             <input type="checkbox" class="drilldown-cb" data-user-id="${item.user_id}" />
             <label style="flex:1;">
-              <span style="display:block;font-weight:600;font-size:13px;">${escapeAdminHtml(contentLabel)}</span>
-              <span style="color:#6b7280;font-size:12px;">${escapeAdminHtml(item.email || '—')}${item.brand_name && item.brand_name !== '—' ? ' · ' + escapeAdminHtml(item.brand_name) : ''}${item.platform ? ' · ' + escapeAdminHtml(item.platform) : ''}</span>
+              <span style="display:block;font-weight:600;font-size:13px;">${escapeAdminHtml(item.email || '—')}</span>
+              <span style="color:#6b7280;font-size:12px;">${escapeAdminHtml(contentLabel)}${item.platform ? ' · ' + escapeAdminHtml(item.platform) : ''}${item.brand_name && item.brand_name !== '—' ? ' · ' + escapeAdminHtml(item.brand_name) : ''}</span>
             </label>
             <span style="color:#9ca3af;font-size:11px;white-space:nowrap;">${dateStr ? new Date(dateStr).toLocaleDateString() : ''}</span>
           </div>`;
