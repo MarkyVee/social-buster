@@ -614,15 +614,16 @@ Params: access_token={PAGE_ACCESS_TOKEN}
 
 ## What's Pending (In Priority Order)
 
-1. **DM automation final end-to-end test** — API confirmed working manually. Need Sharon to comment with trigger keyword to confirm full automated pipeline.
-2. **Dashboard health check** — posts not showing on dashboard, needs investigation
-3. **Meta App Review** — required for `pages_messaging`, `pages_read_user_content`, `pages_read_engagement` at Standard Access for all users
-4. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions from debugging
-5. **Admin override bug** — `admin_notes` column missing on `user_profiles` (fix: `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`)
-6. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube (backend code exists, needs developer app credentials)
-7. **Anti-cloning / IP protection** — investigate code obfuscation, server-side secrets, architecture choices to prevent copying
-8. **WhatsApp** — 8th platform via WhatsApp Business API (future)
-9. **Remove diagnostic logging** — DM + billing debug logs should be cleaned up once everything is confirmed working
+1. **Instagram DM automation end-to-end test** — Code deployed, Meta webhook subscriptions configured in portal. Needs: (a) reconnect Facebook in app to trigger IG webhook subscription via API, (b) publish Instagram post with trigger keyword automation, (c) have separate account comment trigger keyword, (d) verify DM arrives. **READ BEFORE STARTING:** All debugging history is in `platform_publishing_guide.md` → "DM Automation — Complete Debugging History & Solution" (Issues 1-8). Facebook DM took 8 rounds of debugging. Apply ALL lessons learned there to avoid repeating mistakes. Key gotchas: deprecated endpoints, PSID/IGSID mismatch, `.maybeSingle()` not `.single()`, dedup guard must handle failures, multi-step needs ≥2 steps, one private reply per comment, must test with non-admin account.
+2. **Facebook DM automation — CONFIRMED WORKING** ✅ (single-message + multi-step + resource URL delivery all verified 2026-03-24)
+3. **Dashboard health check** — posts not showing on dashboard, needs investigation
+4. **Meta App Review** — required for `pages_messaging`, `pages_read_user_content`, `pages_read_engagement`, `instagram_manage_messages` at Standard Access for all users
+5. **Clean up Stripe test data** — mark@ has 7+ incomplete subscriptions from debugging
+6. **Admin override bug** — `admin_notes` column missing on `user_profiles` (fix: `ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS admin_notes text;`)
+7. **OAuth for remaining platforms** — LinkedIn, TikTok, X, YouTube (backend code exists, needs developer app credentials)
+8. **Anti-cloning / IP protection** — investigate code obfuscation, server-side secrets, architecture choices to prevent copying
+9. **WhatsApp** — 8th platform via WhatsApp Business API (future)
+10. **Remove diagnostic logging** — DM + billing debug logs should be cleaned up once everything is confirmed working
 
 **Already completed (remove from active tracking):**
 - ~~Stripe billing~~ — fully working (subscribe, upgrade, downgrade, cancel)
