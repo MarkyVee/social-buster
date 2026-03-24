@@ -137,7 +137,9 @@ router.get('/health', async (req, res) => {
     'media-scan':     mediaScanQueue,
     performance:      performanceQueue,
     research:         researchQueue,
-    'media-analysis': mediaAnalysisQueue
+    'media-analysis': mediaAnalysisQueue,
+    dm:               dmQueue,
+    email:            emailQueue
   };
 
   for (const [name, q] of Object.entries(queues)) {
@@ -418,7 +420,7 @@ router.get('/stats', async (req, res) => {
 
     // Total failed jobs across all queues
     let totalFailed = 0;
-    for (const q of [publishQueue, commentQueue, mediaScanQueue, performanceQueue, researchQueue, mediaAnalysisQueue]) {
+    for (const q of [publishQueue, commentQueue, mediaScanQueue, performanceQueue, researchQueue, mediaAnalysisQueue, dmQueue, emailQueue]) {
       try { totalFailed += await q.getFailedCount(); } catch (_) {}
     }
 
