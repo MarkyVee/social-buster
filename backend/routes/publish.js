@@ -215,6 +215,27 @@ async function saveMetaPageConnection(userId, page, finish) {
 
       connectedPlatforms.push('instagram');
       console.log(`[Publish] Instagram "@${igAccount.username}" connected for user ${userId}`);
+
+      // Subscribe the Instagram Business Account to our app's webhooks
+      // so Meta sends real-time events (comments, DMs) for this account.
+      // Same pattern as Facebook Page subscription above.
+      try {
+        await axios.post(
+          `https://graph.facebook.com/v21.0/${igAccount.id}/subscribed_apps`,
+          null,
+          {
+            params: {
+              access_token: page.access_token,
+              subscribed_fields: 'comments,messages,message_reactions'
+            },
+            timeout: 10000
+          }
+        );
+        console.log(`[Publish] Instagram "@${igAccount.username}" subscribed to app webhooks (comments, messages)`);
+      } catch (subErr) {
+        // Non-fatal — webhooks won't fire but polling still works as a safety net
+        console.warn(`[Publish] Could not subscribe Instagram to webhooks:`, subErr.response?.data?.error?.message || subErr.message);
+      }
     } catch (igErr) {
       // Non-fatal — Facebook still connects even if Instagram lookup fails
       console.warn('[Publish] Could not fetch Instagram account:', igErr.message);
