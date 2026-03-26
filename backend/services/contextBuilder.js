@@ -268,8 +268,8 @@ async function buildCommentSection(userId) {
       .from('comments')
       .select('comment_text, sentiment, platform')
       .eq('user_id', userId)
-      .gte('created_at', cutoff)
-      .order('created_at', { ascending: false })
+      .gte('ingested_at', cutoff)
+      .order('ingested_at', { ascending: false })
       .limit(100);
 
     if (!comments || comments.length === 0) return null;

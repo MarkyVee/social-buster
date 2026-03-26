@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_user_status
 CREATE INDEX IF NOT EXISTS idx_dm_conversations_user_status
   ON dm_conversations(user_id, status);
 
--- 4. Index on post_comments(post_id, created_at) for comment lookups
+-- 4. Index on comments(post_id, ingested_at) for comment lookups
 --    commentAgent queries comments per post frequently
-CREATE INDEX IF NOT EXISTS idx_comments_post_created
-  ON post_comments(post_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_post_ingested
+  ON comments(post_id, ingested_at DESC);
