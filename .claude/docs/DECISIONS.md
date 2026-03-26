@@ -38,6 +38,13 @@
 ---
 
 - Date: 2026-03-25
+- Decision: Do NOT cache Supabase clients per JWT — current pattern is correct
+- Reason: Idea Destroyer analysis. Supabase JS client is an HTTP wrapper (PostgREST), not a connection manager. Caching creates multitenancy security risks (token mixups, expired auth, shared request state) for negligible GC savings. PostgREST + Supavisor handle PostgreSQL connection pooling on Supabase's side. One fresh client per request is the recommended pattern.
+- Impact: ISSUE-009 closed as wont-fix. Real scalability work should focus on query optimization (indexes, N+1 queries, pagination) not client object caching.
+
+---
+
+- Date: 2026-03-25
 - Decision: Adopted 12-feature roadmap organized into 3 tiers (Tier 1: low risk/high impact first, Tier 3: bigger lifts last)
 - Reason: All 8 user-sourced premium features + 4 additional ideas (A-D) already had implementation plans in [[feature-roadmap-handoff]]. Consolidated into [[FEATURES]] with IDs for tracking.
 - Impact: FEAT-001 through FEAT-012 now tracked in [[FEATURES]]. Build order: Tier 1 (Performance Predictor, Pain-Point Miner, Voice Tracker, "Why This Works") → Tier 2 (Trend Forecaster, Repurpose Engine, Fatigue Detector, Competitor Mode) → Tier 3 (War Room, Accessibility, Authenticity, Campaigns).

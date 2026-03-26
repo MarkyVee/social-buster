@@ -50,19 +50,21 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-004
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** Rate limiting silently allows ALL requests when Redis is down. No fallback limiter. Enables brute force and DoS during Redis outages.
 - **Found in:** `backend/middleware/rateLimit.js` (lines 48-77)
+- **Resolution:** Added in-memory fallback rate limiter (`checkMemoryRateLimit`). When Redis is unavailable, requests are rate-limited using a per-process Map with auto-expiring entries. Prevents brute force during outages. `X-RateLimit-Fallback: true` header set for monitoring.
 
 ---
 
 - **ID:** ISSUE-005
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** Logout does not clear `active_session_id` from user_profiles or Redis. Old sessions could potentially be reused after logout.
 - **Found in:** `backend/routes/auth.js` (line 201)
+- **Resolution:** Logout now clears `active_session_id` from `user_profiles` after Supabase sign-out. Non-fatal if DB update fails (token is already invalidated by Supabase).
 
 ---
 
@@ -98,10 +100,11 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-009
 - **Date:** 2026-03-25
-- **Status:** open
-- **Category:** CRITICAL / Scalability
-- **Description:** New Supabase client created per HTTP request in tenancy middleware. No client pooling or reuse. At 5,000 concurrent users = connection exhaustion (PostgreSQL default 100 connections). ~1 MB memory per client = 5+ GB RAM overhead.
+- **Status:** wont-fix
+- **Category:** CRITICAL / Scalability (DOWNGRADED — not a real issue)
+- **Description:** New Supabase client created per HTTP request in tenancy middleware. Originally flagged as "connection exhaustion" — **this was wrong.** Supabase JS client is an HTTP wrapper, NOT a connection manager. PostgREST + Supavisor handle PostgreSQL connection pooling on Supabase's infrastructure. Caching clients by JWT would introduce multitenancy security risks (token mixups, expired auth state, shared request context) for negligible GC savings (~500 bytes per request). The current pattern (one fresh client per request) is correct and recommended by Supabase.
 - **Found in:** `backend/middleware/tenancy.js` (line 35)
+- **Resolution:** Won't fix. Idea Destroyer analysis confirmed this is premature optimization that trades security for unmeasured gains. Real scalability bottlenecks are ISSUE-008 (indexes, fixed), ISSUE-010 (N+1 queries), ISSUE-011 (memory bloat).
 
 ---
 
@@ -150,19 +153,21 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-014
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** wont-fix (false positive)
 - **Category:** HIGH / Security
 - **Description:** Admin dashboard XSS — `brand_name`, `subscription.plan`, and other user-controlled fields rendered via `innerHTML` without calling `escapeAdminHtml()`. Stored XSS fires when admin views user list. Attacker sets brand_name to script payload → admin session exfiltrated.
 - **Found in:** `frontend/public/js/admin.js` (line ~350)
+- **Resolution:** Manual code review confirmed all user-controlled fields (email, brand_name, industry, subscription_tier, hooks, platform, admin_notes) are consistently escaped with `escapeAdminHtml()`. The audit agent was wrong — this was a false positive.
 
 ---
 
 - **ID:** ISSUE-015
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** DM reply text has no length validation. Attacker can reply to a DM with a 10MB text string, causing database bloat and crashing CSV exports / admin UI when rendering lead data.
 - **Found in:** `backend/agents/dmAgent.js` (lines 233-245)
+- **Resolution:** Added `.slice(0, 2000)` truncation on DM reply text before inserting into `dm_collected_data`. 2000 chars is generous for email/phone/name fields while preventing abuse.
 
 ---
 

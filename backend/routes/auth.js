@@ -200,6 +200,19 @@ router.post('/logout', requireAuth, async (req, res) => {
     // Sign out from Supabase (invalidates the token server-side)
     await supabaseAdmin.auth.admin.signOut(req.token);
 
+    // Clear active_session_id so the old session can't be reused.
+    // This is important for single-session enforcement — without it,
+    // an attacker who captured the session ID could keep using it.
+    try {
+      await supabaseAdmin
+        .from('user_profiles')
+        .update({ active_session_id: null })
+        .eq('user_id', req.user.id);
+    } catch (sessionErr) {
+      // Non-fatal — Supabase sign-out already invalidated the token
+      console.warn('[Auth] Could not clear active_session_id:', sessionErr.message);
+    }
+
     return res.json({ message: 'Logged out successfully' });
 
   } catch (err) {

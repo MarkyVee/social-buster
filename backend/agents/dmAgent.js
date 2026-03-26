@@ -229,11 +229,15 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
   // Get the current step (the one that was last sent, which asked for input)
   const currentStep = steps.find(s => s.step_order === conversation.current_step);
 
-  // Store the collected data if this step collects a field
+  // Store the collected data if this step collects a field.
+  // Limit reply length to 2000 chars to prevent database bloat from
+  // malicious or accidental massive replies (ISSUE-015).
   if (currentStep && currentStep.collects_field) {
     const fieldName = currentStep.collects_field === 'custom'
       ? (currentStep.custom_field_label || 'custom')
       : currentStep.collects_field;
+
+    const safeValue = messageText.trim().slice(0, 2000);
 
     await supabaseAdmin
       .from('dm_collected_data')
@@ -241,7 +245,7 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
         conversation_id: conversation.id,
         user_id:         conversation.user_id,
         field_name:      fieldName,
-        field_value:     messageText.trim()
+        field_value:     safeValue
       });
   }
 

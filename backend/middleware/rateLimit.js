@@ -14,6 +14,44 @@
 const { getRedisClient } = require('../services/redisService');
 
 // ----------------------------------------------------------------
+// In-memory fallback rate limiter — used when Redis is unavailable.
+// This is NOT a replacement for Redis — it's a safety net that prevents
+// brute-force attacks during brief Redis outages. It uses a simple
+// Map with per-key counters and auto-expires entries after the window.
+// At 5,000 users this Map might hold ~5,000 entries (one per user) —
+// that's ~500 KB of memory, completely safe.
+// ----------------------------------------------------------------
+const memoryFallback = new Map();
+const MEMORY_CLEANUP_INTERVAL = 60_000; // Clean expired entries every 60s
+
+// Periodic cleanup of expired in-memory entries
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of memoryFallback) {
+    if (now > entry.expiresAt) memoryFallback.delete(key);
+  }
+}, MEMORY_CLEANUP_INTERVAL).unref(); // .unref() prevents this from keeping Node alive
+
+function checkMemoryRateLimit(key, limit, windowSec) {
+  const now = Date.now();
+  const entry = memoryFallback.get(key);
+
+  if (!entry || now > entry.expiresAt) {
+    // New window — start counting
+    memoryFallback.set(key, { count: 1, expiresAt: now + windowSec * 1000 });
+    return { allowed: true };
+  }
+
+  entry.count++;
+  if (entry.count > limit) {
+    const retryAfter = Math.ceil((entry.expiresAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+
+  return { allowed: true };
+}
+
+// ----------------------------------------------------------------
 // Core rate limit checker.
 // key      - Redis key to increment (e.g. "rl:user:uuid:standard")
 // limit    - Maximum allowed requests in the window
@@ -70,9 +108,27 @@ function createLimiter({ limit, windowSec, tier, getIdentifier }) {
       next();
 
     } catch (err) {
-      // If Redis is down, log the error but don't block the user.
-      // It's better to allow a request than to break the platform.
-      console.error('[RateLimit] Redis error, allowing request:', err.message);
+      // Redis is down — fall back to in-memory rate limiting.
+      // This prevents brute-force attacks during Redis outages while
+      // still allowing legitimate users through. The in-memory limiter
+      // is per-process (not shared across containers), so limits are
+      // slightly less accurate, but it's far better than no limiting.
+      console.error('[RateLimit] Redis error — using in-memory fallback:', err.message);
+
+      const id = getIdentifier(req);
+      if (!id) return next();
+
+      const key = `rl:${tier}:${id}`;
+      const result = checkMemoryRateLimit(key, limit, windowSec);
+
+      if (!result.allowed) {
+        return res.status(429).json({
+          error: 'Too many requests. Please wait before trying again.',
+          retryAfter: result.retryAfter
+        });
+      }
+
+      res.set('X-RateLimit-Fallback', 'true');
       next();
     }
   };
