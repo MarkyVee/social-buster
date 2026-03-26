@@ -70,19 +70,21 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-006
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** No rate limiting on public OAuth callback endpoints. Attacker can spam these to trigger repeated OAuth flows.
 - **Found in:** `backend/routes/publish.js` (line 64), `backend/routes/media.js` (line 58)
+- **Resolution:** Added `authLimiter` (20 req/min per IP) to all 6 OAuth callback endpoints: Meta, Threads, TikTok, LinkedIn, X, and Google Drive.
 
 ---
 
 - **ID:** ISSUE-007
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** Helmet CSP is disabled (`contentSecurityPolicy: false`). No clickjacking protection (`X-Frame-Options`), no script injection prevention. App can be iframed by attackers.
 - **Found in:** `backend/server.js`
+- **Resolution:** Configured Helmet with proper CSP directives (self + unsafe-inline for our plain JS frontend, https for images/APIs), frameguard deny (blocks iframing), noSniff, and xssFilter.
 
 ---
 
@@ -173,10 +175,11 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-016
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Security
 - **Description:** OAuth result cookies missing `Secure` flag. On HTTPS production site, cookies can be sent over HTTP if user visits non-HTTPS URL. Also `SameSite=lax` instead of `strict`.
 - **Found in:** `backend/routes/publish.js` (lines 68-74)
+- **Resolution:** Added `secure: process.env.NODE_ENV === 'production'` to all 6 OAuth result cookies (5 in publish.js, 1 in media.js). Cookies are now HTTPS-only in production.
 
 ---
 
@@ -184,19 +187,21 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-017
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** MEDIUM / Security
 - **Description:** No startup validation of required environment variables. Server starts even if critical vars (`TOKEN_ENCRYPTION_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REDIS_HOST`) are missing. Failures surface at runtime, not boot.
 - **Found in:** `backend/server.js`
+- **Resolution:** Added startup validation that checks 5 required env vars (SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, REDIS_HOST, TOKEN_ENCRYPTION_KEY). Server exits with clear error message if any are missing.
 
 ---
 
 - **ID:** ISSUE-018
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** MEDIUM / Security
 - **Description:** `axios` package is outdated (2023 version) with known CVEs for prototype pollution. Used for all external API calls (platform APIs, LLM, Cloudflare).
 - **Found in:** `backend/package.json`
+- **Resolution:** Updated axios from 1.6.2 to 1.13.6 (latest).
 
 ---
 

@@ -8,6 +8,24 @@
 // Load environment variables from .env FIRST — before anything else
 require('dotenv').config();
 
+// ----------------------------------------------------------------
+// ISSUE-017: Validate required environment variables at startup.
+// Fail fast with a clear message instead of crashing later at runtime.
+// ----------------------------------------------------------------
+const REQUIRED_ENV = [
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'REDIS_HOST',
+  'TOKEN_ENCRYPTION_KEY'
+];
+const missing = REQUIRED_ENV.filter(key => !process.env[key]);
+if (missing.length > 0) {
+  console.error(`\n[STARTUP FATAL] Missing required environment variables:\n  ${missing.join('\n  ')}\n`);
+  console.error('Set these in your .env file or Coolify environment settings.');
+  process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -90,9 +108,28 @@ app.use('/webhooks/meta', webhooksRoutes);
 // ----------------------------------------------------------------
 
 // Set secure HTTP headers (removes X-Powered-By, sets Content-Security-Policy, etc.)
+// ISSUE-007: CSP was fully disabled. Now configured with a permissive-but-safe policy
+// that allows our frontend to work while blocking clickjacking and external script injection.
 app.use(helmet({
-  // Allow serving the frontend from the same origin
-  contentSecurityPolicy: false
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'", "'unsafe-inline'"],   // Our frontend uses inline scripts
+      styleSrc:   ["'self'", "'unsafe-inline'"],   // Our frontend uses inline styles
+      imgSrc:     ["'self'", "data:", "blob:", "https:"],  // Allow images from Supabase Storage, Cloudflare, etc.
+      connectSrc: ["'self'", "https:"],             // Allow API calls to Supabase, platform APIs
+      fontSrc:    ["'self'", "https:"],
+      frameSrc:   ["'none'"],                       // Block all iframing of our pages
+      objectSrc:  ["'none'"],
+      baseUri:    ["'self'"]
+    }
+  },
+  // Prevent our site from being embedded in iframes (clickjacking protection)
+  frameguard: { action: 'deny' },
+  // Prevent MIME type sniffing
+  noSniff: true,
+  // Enable XSS filter in older browsers
+  xssFilter: true
 }));
 
 // Enable CORS so the frontend can call the API

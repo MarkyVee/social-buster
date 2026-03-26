@@ -28,7 +28,7 @@ const router  = express.Router();
 
 const { requireAuth }    = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
-const { standardLimiter, aiLimiter, videoLimiter } = require('../middleware/rateLimit');
+const { standardLimiter, aiLimiter, videoLimiter, authLimiter } = require('../middleware/rateLimit');
 const { checkLimit }     = require('../middleware/checkLimit');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { encryptToken }   = require('../services/tokenEncryption');
@@ -55,7 +55,8 @@ const FRONTEND_URL        = process.env.FRONTEND_URL        || 'http://localhost
 //   4. We set a short-lived cookie so the frontend knows it worked
 //   5. We redirect the user back to the Media Library page
 // ----------------------------------------------------------------
-router.get('/oauth/google_drive/callback', async (req, res) => {
+// ISSUE-006: Rate limit OAuth callbacks to prevent abuse (20 req/min per IP)
+router.get('/oauth/google_drive/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   // Helper to set result cookie and redirect back to frontend
@@ -63,7 +64,8 @@ router.get('/oauth/google_drive/callback', async (req, res) => {
     res.cookie('sb_oauth', JSON.stringify({ provider: 'google_drive', status, email }), {
       maxAge:   30000,   // Cookie expires in 30 seconds — just long enough to read on redirect
       httpOnly: false,   // Must be readable by JavaScript on the frontend
-      sameSite: 'lax'
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production'  // ISSUE-016: Secure flag in production
     });
     return res.redirect(`${FRONTEND_URL}/#media`);
   };

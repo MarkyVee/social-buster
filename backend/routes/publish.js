@@ -25,7 +25,7 @@ const crypto  = require('crypto');
 
 const { requireAuth }    = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
-const { standardLimiter } = require('../middleware/rateLimit');
+const { standardLimiter, authLimiter } = require('../middleware/rateLimit');
 const { checkLimit }     = require('../middleware/checkLimit');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { encryptToken }   = require('../services/tokenEncryption');
@@ -62,7 +62,8 @@ const X_REDIRECT_URI        = process.env.X_REDIRECT_URI        || `${FRONTEND_U
 //   - Checks for a linked Instagram Business Account and stores `instagram`
 // Sets a cookie so the frontend can show a success/error message.
 // ----------------------------------------------------------------
-router.get('/oauth/meta/callback', async (req, res) => {
+// ISSUE-006: Rate limit OAuth callbacks to prevent abuse (20 req/min per IP)
+router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   // Helper: set result cookie and redirect back to the Settings page
@@ -70,7 +71,8 @@ router.get('/oauth/meta/callback', async (req, res) => {
     res.cookie('sb_platform_oauth', JSON.stringify(result), {
       maxAge:   30000,   // 30 seconds — just long enough to read on redirect
       httpOnly: false,   // Frontend JS must be able to read it
-      sameSite: 'lax'
+      sameSite: 'lax',
+      secure:   process.env.NODE_ENV === 'production'  // ISSUE-016: Secure flag in production
     });
     return res.redirect(`${FRONTEND_URL}/#settings`);
   };
@@ -255,7 +257,7 @@ async function saveMetaPageConnection(userId, page, finish) {
 // Called by Threads (threads.net) after the user grants permission.
 // Exchanges the code for a token, fetches user info, stores the connection.
 // ----------------------------------------------------------------
-router.get('/oauth/threads/callback', async (req, res) => {
+router.get('/oauth/threads/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   const finish = (result) => {
@@ -374,7 +376,7 @@ router.all('/oauth/threads/data-deletion', async (req, res) => {
 // Exchanges the authorization code for an access token.
 // TikTok tokens expire after 24 hours — refresh_token lasts 365 days.
 // ----------------------------------------------------------------
-router.get('/oauth/tiktok/callback', async (req, res) => {
+router.get('/oauth/tiktok/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   const finish = (result) => {
@@ -454,7 +456,7 @@ router.get('/oauth/tiktok/callback', async (req, res) => {
 // Called by LinkedIn after the user grants permission.
 // Exchanges code for access token (60-day lifetime).
 // ----------------------------------------------------------------
-router.get('/oauth/linkedin/callback', async (req, res) => {
+router.get('/oauth/linkedin/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   const finish = (result) => {
@@ -528,7 +530,7 @@ router.get('/oauth/linkedin/callback', async (req, res) => {
 // X uses OAuth 2.0 with PKCE — the code_verifier is stored in Redis
 // during the start flow and retrieved here for token exchange.
 // ----------------------------------------------------------------
-router.get('/oauth/x/callback', async (req, res) => {
+router.get('/oauth/x/callback', authLimiter, async (req, res) => {
   const { code, state, error: oauthError } = req.query;
 
   const finish = (result) => {

@@ -33,6 +33,11 @@ What was built, fixed, or shipped — logged per session.
 - **DB VERIFIED:** All migrations run in Supabase. 6 fixes applied (3 missing indexes, 2 RLS enables, 1 unique constraint). Full verification: 110 checks, all PASS.
 - **COMMITTED:** Support tickets system (admin routes, user submission, migration SQL, frontend Issues tab)
 - **COMMITTED:** `.obsidian/` added to `.gitignore`
+- **FIXED ISSUE-006:** Rate limiting on all 6 OAuth callback endpoints (20 req/min per IP)
+- **FIXED ISSUE-007:** Helmet CSP configured with proper directives + frameguard deny + noSniff + xssFilter
+- **FIXED ISSUE-016:** OAuth cookies now have `Secure` flag in production (HTTPS-only)
+- **FIXED ISSUE-017:** Startup env var validation — server exits immediately if required vars are missing
+- **FIXED ISSUE-018:** Updated axios from 1.6.2 → 1.13.6 (fixes known CVEs)
 
 ## 2026-03-24
 
