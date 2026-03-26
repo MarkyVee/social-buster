@@ -388,6 +388,9 @@ Google rejects any redirect URI that doesn't exactly match what's registered in 
 ### Video analysis can be blocked by media processing
 If `seedPendingMediaProcessing` ever queues jobs for the entire media library (not just posts needing publishing), it will compete with `mediaAnalysisQueue` for disk space, CPU, and Docker volume capacity. The seed is intentionally scoped to media on pending posts — keep it that way.
 
+### Cloudflare proxy overrides CSP headers (ISSUE-020)
+Cloudflare's reverse proxy modifies/strips the `Content-Security-Policy` header our Express server sends. This means CSP changes in Helmet may NOT reach the browser. Cloudflare also auto-injects a Web Analytics beacon script that gets blocked by our CSP. Three origin-side fixes were attempted and failed (domain whitelist, cache purge, `script-src-elem`). **If you need to change CSP behavior for Cloudflare-injected scripts, manage it at the Cloudflare edge (Transform Rules or Web Analytics settings), not in server.js.** See [[ISSUES]] ISSUE-020.
+
 ### Facebook error 506 during testing
 Error 506 = "Duplicate content." Facebook rejects posts with identical text within a short window. This is normal when testing the same post repeatedly. Use slightly different content each test or wait a few minutes.
 

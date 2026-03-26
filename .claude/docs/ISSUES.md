@@ -210,6 +210,21 @@ Track bugs, problems, and blockers discovered during development.
 
 ## Resolved Issues
 
+- **ID:** ISSUE-020
+- **Date:** 2026-03-26
+- **Status:** open
+- **Severity:** LOW — cosmetic (1 console error, no functional impact)
+- **Description:** Cloudflare auto-injects its Web Analytics beacon script (`static.cloudflareinsights.com/beacon.min.js`) at the edge. Our CSP blocks it. Three fix attempts failed:
+  1. Added `https://static.cloudflareinsights.com` to `scriptSrc` in Helmet CSP — browser console still showed the old CSP without the domain
+  2. Purged Cloudflare edge cache — still blocked
+  3. Added explicit `scriptSrcElem` directive — pending deploy test
+- **Root cause:** Cloudflare's reverse proxy appears to be modifying/overriding our `Content-Security-Policy` response header. The CSP the browser receives does not match what our server sends.
+- **Found in:** `backend/server.js` (Helmet CSP), Cloudflare edge proxy
+- **Fallback fix:** If `scriptSrcElem` doesn't work, disable Cloudflare Web Analytics: Cloudflare Dashboard → Analytics & Logs → Web Analytics → remove social-buster.com. We don't use Cloudflare analytics — we have our own admin dashboard.
+- **Related:** ISSUE-007 (original CSP enablement), ISSUE-019 (cache-busting incident), FEAT-016 (Cloudflare cache purge from admin)
+
+---
+
 - **ID:** ISSUE-019
 - **Date:** 2026-03-25
 - **Status:** resolved

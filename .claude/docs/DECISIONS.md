@@ -58,6 +58,13 @@
 
 ---
 
+- Date: 2026-03-26
+- Decision: Cloudflare CSP conflict — handle at the edge, not the origin
+- Reason: Cloudflare's reverse proxy modifies/overrides the CSP header our Express server sends. Three attempts to fix from the origin (whitelist domain, purge cache, add script-src-elem) did not resolve the issue. The Cloudflare beacon is injected at the edge, so CSP must be managed at the edge too.
+- Impact: If the `scriptSrcElem` directive fix doesn't work, disable Cloudflare Web Analytics entirely (we don't use it — we have our own admin dashboard). Long-term, FEAT-016 adds a Cloudflare API integration to the admin dashboard for cache management. CSP for Cloudflare-injected scripts should be managed via Cloudflare Transform Rules, not Helmet.
+
+---
+
 - Date: 2026-03-25
 - Decision: Always flag when a new feature or change might break existing functionality or increase costs
 - Reason: User preference — avoid surprises. New features can have hidden costs (API calls, Redis memory, DB rows, LLM tokens) or break existing patterns (route ordering, queue concurrency, worker memory). Proactive flagging prevents deploy-day surprises.

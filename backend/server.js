@@ -114,10 +114,11 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'", "https://static.cloudflareinsights.com"],   // Our frontend uses inline scripts + Cloudflare analytics beacon (injected by Coolify/Cloudflare)
+      scriptSrc:     ["'self'", "'unsafe-inline'", "https://static.cloudflareinsights.com"],  // Our frontend uses inline scripts + Cloudflare beacon
+      scriptSrcElem: ["'self'", "'unsafe-inline'", "https://static.cloudflareinsights.com"],  // Explicit — browser was falling back to script-src and losing the whitelist
       styleSrc:   ["'self'", "'unsafe-inline'"],   // Our frontend uses inline styles
       imgSrc:     ["'self'", "data:", "blob:", "https:"],  // Allow images from Supabase Storage, Cloudflare, etc.
-      connectSrc: ["'self'", "https:", "https://cloudflareinsights.com"],  // Allow API calls to Supabase, platform APIs + Cloudflare beacon reporting
+      connectSrc: ["'self'", "https:"],             // Allow API calls to Supabase, platform APIs, Cloudflare beacon reporting
       fontSrc:    ["'self'", "https:"],
       frameSrc:   ["'none'"],                       // Block all iframing of our pages
       objectSrc:  ["'none'"],
