@@ -338,6 +338,20 @@ NODE_ENV=production
 
 ---
 
+## Pre-Commit Rule: Don't Break What's Working
+
+**Every commit must pass a mental checklist before staging:**
+
+1. **Did I change any frontend JS or CSS file?** → Bump its `?v=` cache-busting parameter in `index.html`. Failure to do this causes stale-cache bugs that break the entire frontend after deploy.
+2. **Did I add a new route or `require()` in server.js?** → Does the imported file exist and export correctly? A missing file crashes the server on startup.
+3. **Did I add a new DB table or query a new table?** → Does the table exist, or is a migration required before this code can run? Flag the migration as a deploy dependency.
+4. **Did I change any shared module** (queues/index.js, middleware, services)? → What else imports it? Will existing callers break?
+5. **Could any of my changes cause a runtime error if a dependency hasn't been deployed yet?** (e.g., new table, new Redis key, new env var)
+
+This is non-negotiable. Introducing breakage while building, fixing, or adding something else wastes time debugging problems that didn't exist before the change. Catch it before commit, not after deploy.
+
+---
+
 ## Known Landmines and Gotchas
 
 ### CRITICAL: SQL Migration Pending

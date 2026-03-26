@@ -210,4 +210,12 @@ Track bugs, problems, and blockers discovered during development.
 
 ## Resolved Issues
 
-_(none yet)_
+- **ID:** ISSUE-019
+- **Date:** 2026-03-25
+- **Status:** resolved
+- **Severity:** HIGH — broke all frontend navigation
+- **Description:** Watchdog commit added 517 lines to `admin.js` but did not bump the `?v=24` cache-busting parameter in `index.html`. After deploy, browsers served the stale cached admin.js. This caused a frontend mismatch that broke sidebar navigation (New Brief, Generated Posts, Publishing Queue — all unresponsive). 20+ minutes spent debugging a problem that didn't exist before the commit.
+- **Found in:** `frontend/public/index.html` (stale `?v=24` on admin.js script tag)
+- **Root cause:** Claude failed to update cache-busting version when modifying a frontend JS file. No pre-commit checklist was in place.
+- **Resolution:** Bumped `?v=24` → `?v=25` in index.html. Added "Pre-Commit Rule: Don't Break What's Working" section to CLAUDE.md with a 5-point mental checklist. Updated persistent feedback memory with the incident and checklist. This class of bug is now preventable.
+- **Lesson:** Every frontend JS/CSS file change MUST bump its `?v=` in index.html. This is non-negotiable.
