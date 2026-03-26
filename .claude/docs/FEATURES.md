@@ -225,6 +225,17 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-018
+- **Date:** 2026-03-26
+- **Status:** idea
+- **Priority:** HIGH
+- **Description:** ADA / WCAG Accessibility Compliance
+- **Reason:** Platform needs to meet ADA (Americans with Disabilities Act) and WCAG 2.1 AA standards. Required for legal compliance in the U.S. and good practice for all users. Includes: proper ARIA labels, keyboard navigation, color contrast ratios, screen reader compatibility, focus management, alt text on images, form labels, skip navigation links.
+- **Implementation:** Audit all frontend HTML/JS/CSS against WCAG 2.1 AA checklist. Key areas: sidebar navigation, form inputs, modal dialogs, chart accessibility (Chart.js has built-in a11y options), color contrast on status badges, focus trapping in overlays.
+- **Files:** All frontend files (`index.html`, `app.js`, `styles.css`, `admin.js`, etc.)
+
+---
+
 ## Done
 
 _(none yet)_
