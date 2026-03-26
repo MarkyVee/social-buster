@@ -212,6 +212,19 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+## Backlog — UX / Data Visualization
+
+- **ID:** FEAT-017
+- **Date:** 2026-03-26
+- **Status:** idea
+- **Priority:** MEDIUM
+- **Description:** Intelligence Data Visualization — parse AI text into visual representations
+- **Reason:** Performance Intelligence, Niche Research, and AI summaries currently display as raw text/log dumps (pre-formatted blocks). Users need structured visuals: ranked trend lists, per-platform comparisons, key insight cards, best-time heatmaps. The current text walls are not actionable at a glance.
+- **Implementation:** Parse LLM output into structured JSON (or prompt the LLM to return JSON), then render as charts, ranked lists, heatmaps, and insight cards instead of `<pre>` blocks.
+- **Files:** `backend/services/llmService.js`, `backend/agents/performanceAgent.js`, `backend/agents/researchAgent.js`, `frontend/public/js/app.js` (Intelligence view)
+
+---
+
 ## Done
 
 _(none yet)_
