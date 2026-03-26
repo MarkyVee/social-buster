@@ -502,7 +502,7 @@ function renderAuthScreen() {
             Create Account
           </button>
           <div class="text-center text-sm text-muted mt-4">
-            By registering, you agree to our Terms of Service.
+            By registering, you agree to our <a href="/terms.html" target="_blank" style="color:var(--color-primary);">Terms of Service</a> and <a href="/privacy.html" target="_blank" style="color:var(--color-primary);">Privacy Policy</a>.
           </div>
         </form>
 

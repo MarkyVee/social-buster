@@ -36,6 +36,43 @@ const crypto   = require('crypto');
 const router   = express.Router();
 const { processIncomingReply } = require('../agents/dmAgent');
 const { processRealtimeComment } = require('../agents/commentAgent');
+const { supabaseAdmin } = require('../services/supabaseService');
+
+// ----------------------------------------------------------------
+// Decode Meta's signed_request parameter.
+// Used by deauthorization and data deletion callbacks.
+// Returns { user_id, algorithm, issued_at } or null on failure.
+// ----------------------------------------------------------------
+function decodeSignedRequest(signedRequest, appSecret) {
+  try {
+    if (!signedRequest || !appSecret) return null;
+
+    const [encodedSig, payload] = signedRequest.split('.');
+    if (!encodedSig || !payload) return null;
+
+    // Base64url decode
+    const b64Decode = (str) => Buffer.from(str.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+    const sig  = b64Decode(encodedSig);
+    const data = JSON.parse(b64Decode(payload).toString('utf8'));
+
+    // Verify HMAC-SHA256 signature
+    const expectedSig = crypto
+      .createHmac('sha256', appSecret)
+      .update(payload)
+      .digest();
+
+    if (!crypto.timingSafeEqual(sig, expectedSig)) {
+      console.error('[Webhooks] signed_request signature mismatch');
+      return null;
+    }
+
+    return data;
+  } catch (err) {
+    console.error('[Webhooks] Failed to decode signed_request:', err.message);
+    return null;
+  }
+}
 
 // ----------------------------------------------------------------
 // GET /webhooks/meta — Meta verification challenge.
@@ -236,13 +273,39 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
 // the signed_request to find the user_id and revoke their connection.
 // ----------------------------------------------------------------
 router.post('/deauthorize', (req, res) => {
-  const signedRequest = req.body?.signed_request || '(unknown)';
-  console.log('[Webhooks] Meta deauthorize webhook received. signed_request:', signedRequest);
+  // Acknowledge immediately — Meta expects a fast 200
+  res.sendStatus(200);
 
-  // TODO (production): decode signed_request using FACEBOOK_APP_SECRET,
-  // find user by platform_user_id, delete their row in platform_connections.
+  // Process asynchronously so we don't block the response
+  (async () => {
+    try {
+      const appSecret = process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+      const decoded = decodeSignedRequest(req.body?.signed_request, appSecret);
 
-  return res.sendStatus(200);
+      if (!decoded?.user_id) {
+        console.error('[Webhooks] Deauthorize: could not decode signed_request or missing user_id');
+        return;
+      }
+
+      const platformUserId = String(decoded.user_id);
+      console.log(`[Webhooks] Deauthorize: removing connections for platform user ${platformUserId}`);
+
+      // Delete all platform connections matching this Meta user ID.
+      // This covers both Facebook Pages and Instagram accounts connected via this user.
+      const { error } = await supabaseAdmin
+        .from('platform_connections')
+        .delete()
+        .eq('platform_user_id', platformUserId);
+
+      if (error) {
+        console.error(`[Webhooks] Deauthorize DB error: ${error.message}`);
+      } else {
+        console.log(`[Webhooks] Deauthorize: deleted connection(s) for platform user ${platformUserId}`);
+      }
+    } catch (err) {
+      console.error('[Webhooks] Deauthorize processing error:', err.message);
+    }
+  })();
 });
 
 // ----------------------------------------------------------------
@@ -256,17 +319,155 @@ router.post('/deauthorize', (req, res) => {
 // URL to register: https://social-buster.com/webhooks/meta/data-deletion
 // ----------------------------------------------------------------
 router.all('/data-deletion', async (req, res) => {
-  const signedRequest = req.body?.signed_request || req.query?.signed_request || '(unknown)';
-  const confirmationCode = `sb-deletion-${Date.now()}`;
-  console.log('[Webhooks] Meta data deletion request received. Code:', confirmationCode, 'signed_request:', signedRequest);
+  try {
+    const appSecret = process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+    const signedRequest = req.body?.signed_request || req.query?.signed_request;
+    const decoded = decodeSignedRequest(signedRequest, appSecret);
 
-  // TODO (production): decode signed_request, find user, queue data cleanup,
-  // store confirmation_code so the status_url page can show progress.
+    const confirmationCode = `sb-del-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const platformUserId = decoded?.user_id ? String(decoded.user_id) : null;
 
-  return res.json({
-    url:               `${process.env.FRONTEND_URL || 'https://social-buster.com'}/data-deleted`,
-    confirmation_code: confirmationCode
-  });
+    console.log(`[Webhooks] Data deletion request. Code: ${confirmationCode}, platform_user_id: ${platformUserId || 'unknown'}`);
+
+    // Store the deletion request so the status page can look it up
+    const { error: insertError } = await supabaseAdmin
+      .from('data_deletion_requests')
+      .insert({
+        confirmation_code: confirmationCode,
+        platform_user_id:  platformUserId,
+        status:            'pending',
+        requested_at:      new Date().toISOString()
+      });
+
+    if (insertError) {
+      // Table may not exist yet — log but don't fail the response to Meta
+      console.error(`[Webhooks] Failed to store deletion request: ${insertError.message}`);
+    }
+
+    // Process deletion asynchronously
+    if (platformUserId) {
+      (async () => {
+        try {
+          // Find the internal user_id from platform_connections
+          const { data: connections } = await supabaseAdmin
+            .from('platform_connections')
+            .select('user_id')
+            .eq('platform_user_id', platformUserId);
+
+          const userIds = [...new Set((connections || []).map(c => c.user_id))];
+
+          for (const userId of userIds) {
+            console.log(`[Webhooks] Data deletion: purging data for user ${userId}`);
+
+            // Delete in dependency order (children first)
+            // DM data
+            await supabaseAdmin.from('dm_collected_data').delete().eq('user_id', userId);
+            await supabaseAdmin.from('dm_conversations').delete().eq('user_id', userId);
+
+            // Comments on user's posts
+            const { data: userPosts } = await supabaseAdmin
+              .from('posts')
+              .select('id')
+              .eq('user_id', userId);
+            const postIds = (userPosts || []).map(p => p.id);
+            if (postIds.length > 0) {
+              await supabaseAdmin.from('comments').delete().in('post_id', postIds);
+              await supabaseAdmin.from('post_metrics').delete().in('post_id', postIds);
+            }
+
+            // Posts, briefs, media
+            await supabaseAdmin.from('posts').delete().eq('user_id', userId);
+            await supabaseAdmin.from('briefs').delete().eq('user_id', userId);
+            await supabaseAdmin.from('media_items').delete().eq('user_id', userId);
+
+            // Automations
+            const { data: automations } = await supabaseAdmin
+              .from('dm_automations')
+              .select('id')
+              .eq('user_id', userId);
+            const autoIds = (automations || []).map(a => a.id);
+            if (autoIds.length > 0) {
+              await supabaseAdmin.from('dm_automation_steps').delete().in('automation_id', autoIds);
+            }
+            await supabaseAdmin.from('dm_automations').delete().eq('user_id', userId);
+
+            // Platform connections
+            await supabaseAdmin.from('platform_connections').delete().eq('user_id', userId);
+
+            // User profile (keep auth record — Supabase manages that)
+            await supabaseAdmin.from('user_profiles').delete().eq('id', userId);
+
+            console.log(`[Webhooks] Data deletion complete for user ${userId}`);
+          }
+
+          // Mark deletion as completed
+          await supabaseAdmin
+            .from('data_deletion_requests')
+            .update({ status: 'completed', completed_at: new Date().toISOString() })
+            .eq('confirmation_code', confirmationCode);
+
+          console.log(`[Webhooks] Data deletion request ${confirmationCode} completed`);
+        } catch (err) {
+          console.error(`[Webhooks] Data deletion processing error: ${err.message}`);
+          // Mark as failed
+          await supabaseAdmin
+            .from('data_deletion_requests')
+            .update({ status: 'failed', error_message: err.message })
+            .eq('confirmation_code', confirmationCode)
+            .catch(() => {});
+        }
+      })();
+    }
+
+    const baseUrl = process.env.FRONTEND_URL || 'https://social-buster.com';
+    return res.json({
+      url:               `${baseUrl}/data-deleted.html?code=${confirmationCode}`,
+      confirmation_code: confirmationCode
+    });
+
+  } catch (err) {
+    console.error('[Webhooks] Data deletion handler error:', err.message);
+    // Still return a valid response so Meta doesn't retry
+    const fallbackCode = `sb-del-error-${Date.now()}`;
+    return res.json({
+      url:               `${process.env.FRONTEND_URL || 'https://social-buster.com'}/data-deleted.html`,
+      confirmation_code: fallbackCode
+    });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /webhooks/meta/data-deletion-status
+// Status check endpoint for the data-deleted.html page.
+// ----------------------------------------------------------------
+router.get('/data-deletion-status', async (req, res) => {
+  const code = req.query.code;
+  if (!code) {
+    return res.json({ status: 'not_found', message: 'No confirmation code provided.' });
+  }
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('data_deletion_requests')
+      .select('status, requested_at, completed_at')
+      .eq('confirmation_code', code)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      return res.json({ status: 'not_found', message: 'Confirmation code not found.' });
+    }
+
+    return res.json({
+      status:       data.status,
+      requested_at: data.requested_at,
+      completed_at: data.completed_at
+    });
+  } catch (err) {
+    console.error('[Webhooks] Deletion status check error:', err.message);
+    return res.json({ status: 'error', message: 'Unable to check status.' });
+  }
 });
 
 module.exports = router;

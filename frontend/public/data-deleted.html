@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Deletion Status — Social Buster</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 80px auto; padding: 0 24px; color: #333; line-height: 1.7; text-align: center; }
+    h1 { font-size: 1.6rem; margin-bottom: 8px; }
+    .status-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px; margin: 32px 0; }
+    .status-icon { font-size: 3rem; margin-bottom: 16px; }
+    .confirmation { font-family: monospace; background: #e0e7ff; padding: 6px 14px; border-radius: 6px; font-size: 0.9rem; display: inline-block; margin-top: 12px; }
+    .check-form { margin-top: 24px; }
+    .check-form input { padding: 10px 14px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.95rem; width: 280px; }
+    .check-form button { padding: 10px 20px; background: #4f46e5; color: #fff; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; margin-left: 8px; }
+    .check-form button:hover { background: #4338ca; }
+    #status-result { margin-top: 20px; padding: 16px; border-radius: 8px; display: none; }
+    .status-pending { background: #fef3c7; border: 1px solid #fbbf24; }
+    .status-completed { background: #d1fae5; border: 1px solid #34d399; }
+    .status-not-found { background: #fee2e2; border: 1px solid #f87171; }
+    a { color: #4f46e5; }
+    .back-link { display: inline-block; margin-bottom: 24px; font-size: 0.9rem; }
+    p { font-size: 1rem; }
+  </style>
+</head>
+<body>
+
+  <a href="/" class="back-link">&larr; Back to Social Buster</a>
+
+  <div class="status-box">
+    <div class="status-icon">🗑️</div>
+    <h1>Data Deletion Request</h1>
+    <p>If you requested data deletion through Facebook or Instagram, your data is being processed for removal from Social Buster.</p>
+    <p>Data deletion is completed within <strong>30 days</strong> of the request. This includes:</p>
+    <ul style="text-align:left;max-width:400px;margin:16px auto;">
+      <li>Platform connection tokens</li>
+      <li>Published post records</li>
+      <li>Comment data</li>
+      <li>DM conversation data and collected leads</li>
+      <li>Performance metrics</li>
+    </ul>
+  </div>
+
+  <div class="check-form">
+    <p><strong>Check your deletion status:</strong></p>
+    <div>
+      <input type="text" id="confirmation-code" placeholder="Enter your confirmation code">
+      <button onclick="checkDeletionStatus()">Check</button>
+    </div>
+    <div id="status-result"></div>
+  </div>
+
+  <p style="margin-top:40px;font-size:0.9rem;color:#888;">
+    Questions? Contact us at <a href="mailto:mark@markseminko.com">mark@markseminko.com</a>
+  </p>
+
+  <script>
+    // Check URL params for confirmation code (Meta may redirect here with it)
+    const params = new URLSearchParams(window.location.search);
+    const codeFromUrl = params.get('code') || params.get('confirmation_code');
+    if (codeFromUrl) {
+      document.getElementById('confirmation-code').value = codeFromUrl;
+      checkDeletionStatus();
+    }
+
+    async function checkDeletionStatus() {
+      const code = document.getElementById('confirmation-code').value.trim();
+      const resultEl = document.getElementById('status-result');
+      if (!code) {
+        resultEl.style.display = 'block';
+        resultEl.className = 'status-not-found';
+        resultEl.textContent = 'Please enter a confirmation code.';
+        return;
+      }
+
+      try {
+        const res = await fetch('/webhooks/meta/data-deletion-status?code=' + encodeURIComponent(code));
+        const data = await res.json();
+
+        resultEl.style.display = 'block';
+        if (data.status === 'completed') {
+          resultEl.className = 'status-completed';
+          resultEl.textContent = 'Your data has been successfully deleted.';
+        } else if (data.status === 'pending') {
+          resultEl.className = 'status-pending';
+          resultEl.textContent = 'Your data deletion is in progress. Please check back later.';
+        } else {
+          resultEl.className = 'status-not-found';
+          resultEl.textContent = data.message || 'Confirmation code not found. Please check and try again.';
+        }
+      } catch (err) {
+        resultEl.style.display = 'block';
+        resultEl.className = 'status-not-found';
+        resultEl.textContent = 'Unable to check status. Please try again later.';
+      }
+    }
+  </script>
+
+</body>
+</html>
