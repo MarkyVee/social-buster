@@ -395,7 +395,8 @@ router.get('/stats', async (req, res) => {
       { count: newUsers7d },
       // For DAU/MAU we need user_ids — fetch just that column, deduplicate in JS
       { data: dauRows },
-      { data: mauRows }
+      { data: mauRows },
+      { count: openTickets }
     ] = await Promise.all([
       supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1 }),
       supabaseAdmin.from('posts').select('*',               { count: 'exact', head: true }).eq('status', 'published'),
@@ -408,7 +409,9 @@ router.get('/stats', async (req, res) => {
       // DAU: distinct users who submitted a brief today
       supabaseAdmin.from('briefs').select('user_id').gte('created_at', todayStart),
       // MAU: distinct users who submitted a brief in the last 30 days
-      supabaseAdmin.from('briefs').select('user_id').gte('created_at', thirtyDaysAgo)
+      supabaseAdmin.from('briefs').select('user_id').gte('created_at', thirtyDaysAgo),
+      // Open support tickets (open + in_progress)
+      supabaseAdmin.from('support_tickets').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress'])
     ]);
 
     // Total users from Supabase Auth (includes users without profiles)
@@ -435,7 +438,8 @@ router.get('/stats', async (req, res) => {
       new_users_7d:      newUsers7d   || 0,
       dau,
       mau,
-      total_failed_jobs: totalFailed
+      total_failed_jobs: totalFailed,
+      open_tickets:      openTickets || 0
     });
 
   } catch (err) {
@@ -1455,6 +1459,100 @@ router.get('/drilldown/:type', async (req, res) => {
   } catch (err) {
     console.error('[Admin] Drilldown error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch drilldown data' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/tickets
+//
+// List all support tickets for the admin Issues tab.
+// Optional filters: ?status=open  ?priority=high
+// ----------------------------------------------------------------
+router.get('/tickets', async (req, res) => {
+  try {
+    let query = supabaseAdmin
+      .from('support_tickets')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (req.query.status)   query = query.eq('status', req.query.status);
+    if (req.query.priority) query = query.eq('priority', req.query.priority);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return res.json({ tickets: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] Tickets list error:', err.message);
+    return res.status(500).json({ error: 'Failed to load tickets' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/tickets/:id
+//
+// Single ticket detail for admin.
+// ----------------------------------------------------------------
+router.get('/tickets/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('support_tickets')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Ticket not found' });
+
+    return res.json({ ticket: data });
+
+  } catch (err) {
+    console.error('[Admin] Ticket detail error:', err.message);
+    return res.status(500).json({ error: 'Failed to load ticket' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/tickets/:id
+//
+// Update a ticket's status and/or admin notes.
+// Body: { status?, admin_notes? }
+// ----------------------------------------------------------------
+router.put('/tickets/:id', async (req, res) => {
+  try {
+    const updates = {};
+    const { status, admin_notes } = req.body;
+
+    const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+    if (status) {
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Must be: ${validStatuses.join(', ')}` });
+      }
+      updates.status = status;
+      // Auto-set resolved_at when marking resolved
+      if (status === 'resolved') updates.resolved_at = new Date().toISOString();
+    }
+    if (admin_notes !== undefined) updates.admin_notes = admin_notes;
+
+    updates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabaseAdmin
+      .from('support_tickets')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`[Admin] Ticket ${req.params.id} updated by ${req.user.email}: ${JSON.stringify(updates)}`);
+    return res.json({ ticket: data });
+
+  } catch (err) {
+    console.error('[Admin] Ticket update error:', err.message);
+    return res.status(500).json({ error: 'Failed to update ticket' });
   }
 });
 

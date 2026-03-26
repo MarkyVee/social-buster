@@ -32,6 +32,7 @@ const messagesRoutes    = require('./routes/messages');       // User-facing inb
 const automationsRoutes = require('./routes/automations');    // DM automation CRUD + leads
 const webhooksRoutes    = require('./routes/webhooks');       // Meta webhook receiver (DM replies)
 const emailRoutes       = require('./routes/email');          // Admin bulk email (groups + campaigns)
+const ticketsRoutes     = require('./routes/tickets');        // User support ticket submission
 
 // ----------------------------------------------------------------
 // BullMQ worker orchestrator (Phase 5)
@@ -129,6 +130,7 @@ app.use('/admin', adminRoutes);           // Admin dashboard + BullMQ Board (pro
 app.use('/messages', messagesRoutes);     // User inbox + messaging (protected by requireAuth)
 app.use('/automations', automationsRoutes); // DM automation CRUD + leads export
 app.use('/email', emailRoutes);            // Admin bulk email (groups + campaigns)
+app.use('/tickets', ticketsRoutes);        // User support tickets (report issues)
 
 // ----------------------------------------------------------------
 // Health check endpoint — Docker and load balancers use this

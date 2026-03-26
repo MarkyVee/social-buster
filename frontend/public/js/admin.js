@@ -36,6 +36,10 @@ function renderAdminDashboard(el) {
       <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
       <button class="admin-tab"        data-tab="email"     onclick="switchAdminTab('email')">Email</button>
       <button class="admin-tab"        data-tab="plans"     onclick="switchAdminTab('plans')">Plans</button>
+      <button class="admin-tab"        data-tab="issues"    onclick="switchAdminTab('issues')">
+        Issues
+        <span id="admin-issues-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
+      </button>
     </div>
 
     <!-- Tab panels -->
@@ -47,6 +51,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
     <div id="admin-tab-email"     class="admin-panel hidden"></div>
     <div id="admin-tab-plans"     class="admin-panel hidden"></div>
+    <div id="admin-tab-issues"    class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -82,6 +87,7 @@ function switchAdminTab(tab) {
   if (tab === 'revenue')   loadAdminRevenue();
   if (tab === 'email')     loadAdminEmail();
   if (tab === 'plans')     loadAdminPlans();
+  if (tab === 'issues')    loadAdminIssues();
 }
 
 // ================================================================
@@ -103,6 +109,15 @@ async function loadAdminOverview() {
 
     panel.innerHTML = buildOverviewHtml(stats, health)
       + `<div style="margin-top:20px;"><button class="btn btn-sm" onclick="panel=document.getElementById('admin-tab-overview');if(panel)panel.dataset.loaded='';loadAdminOverview();">🔄 Refresh Overview</button></div>`;
+
+    // Update the Issues tab badge with open ticket count
+    const issuesBadge = document.getElementById('admin-issues-badge');
+    if (issuesBadge && stats.open_tickets > 0) {
+      issuesBadge.textContent = stats.open_tickets;
+      issuesBadge.style.display = 'inline';
+    } else if (issuesBadge) {
+      issuesBadge.style.display = 'none';
+    }
 
   } catch (err) {
     panel.innerHTML = `<div class="admin-error">Failed to load overview: ${escapeAdminHtml(err.message)}</div>`;
@@ -1178,6 +1193,233 @@ async function sendAdminMsg() {
   } catch (err) {
     showAlert('admin-compose-alerts', err.message, 'error');
     if (statusEl) statusEl.textContent = '';
+  }
+}
+
+// ================================================================
+// ISSUES TAB
+// ================================================================
+
+// Color + label helpers for ticket priority and status badges
+function ticketPriorityBadge(p) {
+  const map = {
+    low:      { bg: '#f3f4f6', color: '#374151', label: 'Low' },
+    medium:   { bg: '#fef3c7', color: '#92400e', label: 'Medium' },
+    high:     { bg: '#fed7aa', color: '#9a3412', label: 'High' },
+    critical: { bg: '#fee2e2', color: '#991b1b', label: 'Critical' }
+  };
+  const s = map[p] || map.medium;
+  return `<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:${s.bg};color:${s.color};font-weight:600;">${s.label}</span>`;
+}
+function ticketStatusBadge(st) {
+  const map = {
+    open:        { bg: '#dbeafe', color: '#1e40af', label: 'Open' },
+    in_progress: { bg: '#ede9fe', color: '#5b21b6', label: 'In Progress' },
+    resolved:    { bg: '#dcfce7', color: '#166534', label: 'Resolved' },
+    closed:      { bg: '#f3f4f6', color: '#374151', label: 'Closed' }
+  };
+  const s = map[st] || map.open;
+  return `<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:${s.bg};color:${s.color};font-weight:600;">${s.label}</span>`;
+}
+
+// Main loader for the Issues tab
+async function loadAdminIssues(statusFilter, priorityFilter) {
+  const panel = document.getElementById('admin-tab-issues');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  // Build query params from filters
+  let qs = '';
+  const params = [];
+  if (statusFilter && statusFilter !== 'all')     params.push(`status=${statusFilter}`);
+  if (priorityFilter && priorityFilter !== 'all') params.push(`priority=${priorityFilter}`);
+  if (params.length) qs = '?' + params.join('&');
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading tickets…</div>`;
+
+  try {
+    const { tickets } = await apiFetch(`/admin/tickets${qs}`);
+
+    // Filter bar
+    const sf = statusFilter || 'all';
+    const pf = priorityFilter || 'all';
+    const filterBar = `
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap;">
+        <label style="font-size:13px;font-weight:600;">Status:
+          <select onchange="loadAdminIssues(this.value, document.getElementById('issues-priority-filter').value)" style="margin-left:4px;padding:4px 8px;border-radius:4px;border:1px solid #d1d5db;">
+            <option value="all" ${sf==='all'?'selected':''}>All</option>
+            <option value="open" ${sf==='open'?'selected':''}>Open</option>
+            <option value="in_progress" ${sf==='in_progress'?'selected':''}>In Progress</option>
+            <option value="resolved" ${sf==='resolved'?'selected':''}>Resolved</option>
+            <option value="closed" ${sf==='closed'?'selected':''}>Closed</option>
+          </select>
+        </label>
+        <label style="font-size:13px;font-weight:600;">Priority:
+          <select id="issues-priority-filter" onchange="loadAdminIssues(document.querySelector('#admin-tab-issues select').value, this.value)" style="margin-left:4px;padding:4px 8px;border-radius:4px;border:1px solid #d1d5db;">
+            <option value="all" ${pf==='all'?'selected':''}>All</option>
+            <option value="critical" ${pf==='critical'?'selected':''}>Critical</option>
+            <option value="high" ${pf==='high'?'selected':''}>High</option>
+            <option value="medium" ${pf==='medium'?'selected':''}>Medium</option>
+            <option value="low" ${pf==='low'?'selected':''}>Low</option>
+          </select>
+        </label>
+        <span style="font-size:13px;color:#6b7280;">${tickets.length} ticket${tickets.length !== 1 ? 's' : ''}</span>
+      </div>`;
+
+    if (tickets.length === 0) {
+      panel.innerHTML = filterBar + '<p style="color:#6b7280;text-align:center;padding:40px 0;">No tickets found.</p>';
+      return;
+    }
+
+    const rows = tickets.map(t => {
+      const snippet = (t.what_happened || '').substring(0, 80) + ((t.what_happened || '').length > 80 ? '…' : '');
+      const date = new Date(t.created_at).toLocaleDateString();
+      return `
+        <tr style="cursor:pointer;" onclick="openAdminTicketDetail('${t.id}')">
+          <td style="font-size:13px;"><strong>${escapeAdminHtml(t.user_email)}</strong></td>
+          <td style="font-size:13px;"><code>${escapeAdminHtml(t.feature)}</code></td>
+          <td style="font-size:12px;color:#4b5563;">${escapeAdminHtml(snippet)}</td>
+          <td>${ticketPriorityBadge(t.priority)}</td>
+          <td>${ticketStatusBadge(t.status)}</td>
+          <td style="font-size:12px;color:#9ca3af;white-space:nowrap;">${date}</td>
+        </tr>`;
+    }).join('');
+
+    panel.innerHTML = filterBar + `
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead><tr><th>User</th><th>Feature</th><th>Issue</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load tickets: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// Open a single ticket detail view in the Issues tab
+async function openAdminTicketDetail(ticketId) {
+  const panel = document.getElementById('admin-tab-issues');
+  if (!panel) return;
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading ticket…</div>`;
+
+  try {
+    const { ticket: t } = await apiFetch(`/admin/tickets/${ticketId}`);
+
+    panel.innerHTML = `
+      <div style="margin-bottom:16px;">
+        <button class="btn btn-sm" onclick="loadAdminIssues()">← Back to list</button>
+      </div>
+
+      <div style="border:1px solid var(--border-color,#e2e8f0);border-radius:8px;padding:20px;">
+        <!-- Header row -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div>
+            <div style="font-size:16px;font-weight:700;">${escapeAdminHtml(t.user_email)}</div>
+            <div style="font-size:12px;color:#9ca3af;">Submitted ${new Date(t.created_at).toLocaleString()}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            ${ticketPriorityBadge(t.priority)}
+            ${ticketStatusBadge(t.status)}
+          </div>
+        </div>
+
+        <!-- Feature -->
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">What part of the app</div>
+          <div style="font-size:14px;"><code>${escapeAdminHtml(t.feature)}</code></div>
+        </div>
+
+        <!-- What happened -->
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">What happened</div>
+          <div style="font-size:14px;white-space:pre-wrap;">${escapeAdminHtml(t.what_happened)}</div>
+        </div>
+
+        <!-- Expected -->
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">What they expected</div>
+          <div style="font-size:14px;white-space:pre-wrap;">${escapeAdminHtml(t.expected)}</div>
+        </div>
+
+        <!-- Steps to reproduce -->
+        ${t.steps ? `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">Steps to reproduce</div>
+          <div style="font-size:14px;white-space:pre-wrap;">${escapeAdminHtml(t.steps)}</div>
+        </div>` : ''}
+
+        <!-- Browser info -->
+        ${t.browser_info ? `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">Browser / Device</div>
+          <div style="font-size:12px;color:#6b7280;">${escapeAdminHtml(t.browser_info)}</div>
+        </div>` : ''}
+
+        <!-- Screenshot -->
+        ${t.screenshot_url ? `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;margin-bottom:4px;">Screenshot</div>
+          <a href="${escapeAdminHtml(t.screenshot_url)}" target="_blank">
+            <img src="${escapeAdminHtml(t.screenshot_url)}" style="max-width:100%;max-height:300px;border-radius:6px;border:1px solid #e2e8f0;" />
+          </a>
+        </div>` : ''}
+
+        <hr style="border:none;border-top:1px solid var(--border-color,#e2e8f0);margin:20px 0;" />
+
+        <!-- Admin controls -->
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+          <div>
+            <label style="font-size:12px;font-weight:700;color:#6b7280;display:block;margin-bottom:4px;">Update Status</label>
+            <select id="ticket-status-select" style="padding:6px 10px;border-radius:4px;border:1px solid #d1d5db;">
+              <option value="open" ${t.status==='open'?'selected':''}>Open</option>
+              <option value="in_progress" ${t.status==='in_progress'?'selected':''}>In Progress</option>
+              <option value="resolved" ${t.status==='resolved'?'selected':''}>Resolved</option>
+              <option value="closed" ${t.status==='closed'?'selected':''}>Closed</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:200px;">
+            <label style="font-size:12px;font-weight:700;color:#6b7280;display:block;margin-bottom:4px;">Admin Notes (internal only)</label>
+            <textarea id="ticket-admin-notes" rows="3" style="width:100%;padding:8px;border-radius:4px;border:1px solid #d1d5db;font-size:13px;resize:vertical;">${escapeAdminHtml(t.admin_notes || '')}</textarea>
+          </div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-sm" style="background:#2563eb;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;"
+                  onclick="saveAdminTicketUpdate('${t.id}')">
+            Save Changes
+          </button>
+          <span id="ticket-save-status" style="font-size:13px;color:#6b7280;"></span>
+        </div>
+
+        ${t.resolved_at ? `<div style="margin-top:12px;font-size:12px;color:#16a34a;">Resolved on ${new Date(t.resolved_at).toLocaleString()}</div>` : ''}
+      </div>`;
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load ticket: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// Save admin status + notes updates on a ticket
+async function saveAdminTicketUpdate(ticketId) {
+  const statusEl = document.getElementById('ticket-status-select');
+  const notesEl  = document.getElementById('ticket-admin-notes');
+  const msgEl    = document.getElementById('ticket-save-status');
+
+  if (msgEl) { msgEl.style.color = '#6b7280'; msgEl.textContent = 'Saving…'; }
+
+  try {
+    await apiFetch(`/admin/tickets/${ticketId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        status: statusEl?.value,
+        admin_notes: notesEl?.value || ''
+      })
+    });
+    if (msgEl) { msgEl.style.color = '#16a34a'; msgEl.textContent = 'Saved!'; }
+  } catch (err) {
+    if (msgEl) { msgEl.style.color = '#dc2626'; msgEl.textContent = `Error: ${err.message}`; }
   }
 }
 

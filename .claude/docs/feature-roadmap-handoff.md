@@ -1275,3 +1275,4 @@ User explicitly said "I'm not going to do TikTok right now. Or any others." Resu
 - Email sender name customization (minor cosmetic)
 - Dropbox/Box media integrations (stubs exist, no SDK code)
 - "Coming soon" labels in platform connections UI — could be updated since backend code exists for some
+- Dashboard graphics become more aesthetically like Power Bi type of graphics, charts, dials, etc. 
