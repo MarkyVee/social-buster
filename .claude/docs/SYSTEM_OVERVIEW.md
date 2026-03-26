@@ -16,15 +16,26 @@
 
 ## Current Focus
 
-### Right Now
-- [ ] FEAT-013: DM automation dashboard data for users (Facebook first)
-- [ ] Fix ISSUE-001/002/003 (critical security — OAuth state + webhook verification)
+### Completed This Session (2026-03-25)
+- [x] FEAT-013: DM automation dashboard — full KPIs, funnel, trends, keyword perf
+- [x] ISSUE-001/002: OAuth state injection fixed (cryptographic nonces)
+- [x] ISSUE-003: Webhook signature verification mandatory
+- [x] ISSUE-004: Rate limit in-memory fallback
+- [x] ISSUE-005: Logout clears active_session_id
+- [x] ISSUE-008: Performance indexes (run in Supabase — DONE)
+- [x] ISSUE-013: LLM prompt injection defense
+- [x] ISSUE-015: DM reply text length validation
+- [x] PII fixes: author_handle removed, contextBuilder table name fixed
+- [x] Support tickets system (admin + user-facing)
+- [x] Database fully verified — 110 checks, all PASS
 
 ### Blockers
 - Meta App Review blocked until Instagram DM test passes
 
 ### Next Action
-- [ ] Build DM dashboard → then Instagram DM test → then Meta App Review
+- [ ] Instagram DM automation test (read `platform_publishing_guide.md` DM debugging history first)
+- [ ] Meta App Review submission
+- [ ] Remaining open [[ISSUES]]: ISSUE-006 (OAuth callback rate limiting), ISSUE-007 (CSP/Helmet), ISSUE-010 (admin N+1), ISSUE-011 (performanceAgent pagination), ISSUE-012 (per-account API rate limiting), ISSUE-016 (OAuth cookie Secure flag), ISSUE-017 (env var validation), ISSUE-018 (outdated axios)
 
 ## How to Use This System
 

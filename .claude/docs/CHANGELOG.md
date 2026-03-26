@@ -28,6 +28,11 @@ What was built, fixed, or shipped — logged per session.
   - Frontend: KPI cards (conversion rate, total convos, leads, avg completion, active automations), funnel bars, DM usage meters, 14-day trend chart, automation performance table with per-row conversion rates, keyword performance table, unified leads table
   - Main dashboard now shows DM conversion rate card
   - Fixed Express route ordering: `/leads` and `/dashboard` defined before `/:id` to prevent param collision
+- **FIX:** contextBuilder.js `comments` table query used `created_at` instead of `ingested_at` — corrected
+- **FIX:** migration_performance_indexes.sql referenced wrong table `post_comments` — corrected to `comments` with `ingested_at`
+- **DB VERIFIED:** All migrations run in Supabase. 6 fixes applied (3 missing indexes, 2 RLS enables, 1 unique constraint). Full verification: 110 checks, all PASS.
+- **COMMITTED:** Support tickets system (admin routes, user submission, migration SQL, frontend Issues tab)
+- **COMMITTED:** `.obsidian/` added to `.gitignore`
 
 ## 2026-03-24
 

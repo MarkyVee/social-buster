@@ -90,7 +90,7 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-008
 - **Date:** 2026-03-25
-- **Status:** resolved (pending SQL run)
+- **Status:** resolved
 - **Category:** CRITICAL / Scalability
 - **Description:** Missing composite index on `posts(status, scheduled_at)`. Publish cycle runs every 60s and scans the entire posts table. At 5,000 users (~50K posts), this causes DB CPU spikes every minute.
 - **Found in:** `backend/agents/publishingAgent.js` (lines 75-81)
