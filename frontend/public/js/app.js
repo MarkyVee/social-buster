@@ -1516,75 +1516,98 @@ async function renderIntelligencePlaceholder(el) {
     const comments  = commentsData.status  === 'fulfilled' ? commentsData.value  : null;
     const perf      = perfData.status      === 'fulfilled' ? perfData.value      : null;
 
-    const sentimentColor = s =>
-      s === 'positive' ? '#16a34a' : s === 'negative' ? '#b91c1c' : '#64748b';
+    // Build KPI cards from performance totals
+    const perfCards = perf?.totals ? [
+      { label: 'Posts Tracked',   value: perf.totals.total_posts,      color: 'indigo' },
+      { label: 'Total Likes',     value: perf.totals.total_likes,      color: 'pink' },
+      { label: 'Total Comments',  value: perf.totals.total_comments,   color: 'blue' },
+      { label: 'Total Reach',     value: perf.totals.total_reach,      color: 'green' },
+      { label: 'Impressions',     value: perf.totals.total_impressions, color: 'amber' }
+    ] : [];
+
+    // Sentiment counts
+    const sc = comments?.sentimentCounts || { positive: 0, neutral: 0, negative: 0 };
+    const sentimentTotal = sc.positive + sc.neutral + sc.negative;
 
     container.innerHTML = `
-      <!-- Performance Summary -->
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div class="card-title">Performance Summary</div>
-          <span class="text-muted text-sm">Last 30 days</span>
+      <!-- Performance KPI cards -->
+      ${perfCards.length > 0 ? `
+        <div class="kpi-grid" style="margin-bottom:24px;">
+          ${perfCards.map(c => `
+            <div class="kpi-card kpi-card--${c.color}">
+              <div class="kpi-card__label">${c.label}</div>
+              <div class="kpi-card__value">${(c.value || 0).toLocaleString()}</div>
+            </div>
+          `).join('')}
         </div>
-        ${perf?.totals
-          ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:16px;">
-              ${[
-                ['Posts tracked', perf.totals.total_posts],
-                ['Total likes',   perf.totals.total_likes],
-                ['Total comments',perf.totals.total_comments],
-                ['Total reach',   perf.totals.total_reach]
-              ].map(([label, val]) => `
-                <div class="stat-card">
-                  <div class="stat-label">${label}</div>
-                  <div class="stat-value">${val.toLocaleString()}</div>
-                </div>`).join('')}
-             </div>`
-          : `<p class="text-muted text-sm">No performance data yet. Publish some posts first.</p>`
-        }
+      ` : ''}
+
+      <!-- Platform breakdown + Sentiment donut row -->
+      <div class="chart-row" style="margin-bottom:24px;">
+        <div class="chart-card">
+          <div class="chart-card__title">Engagement by Platform</div>
+          <div id="intel-platform-chart" style="min-height:250px;display:flex;justify-content:center;">
+            ${perf?.summary?.length > 0
+              ? ''
+              : '<div class="text-muted" style="padding:24px;text-align:center;align-self:center;">No platform data yet. Publish posts first.</div>'}
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card__title">Comment Sentiment</div>
+          <div id="intel-sentiment-chart" style="min-height:250px;display:flex;justify-content:center;">
+            ${sentimentTotal > 0
+              ? ''
+              : '<div class="text-muted" style="padding:24px;text-align:center;align-self:center;">No comments ingested yet.</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Intelligence Summary -->
+      <div class="chart-card" style="margin-bottom:24px;">
+        <div class="chart-card__title">Performance Intelligence</div>
         ${summary?.summary
-          ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;color:#374151;background:#f8fafc;padding:12px;border-radius:8px;line-height:1.6;">${summary.summary}</pre>`
-          : `<p class="text-muted text-sm">${summary?.message || 'No intelligence summary available.'}</p>`
+          ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;color:#374151;background:#f8fafc;padding:16px;border-radius:8px;line-height:1.7;margin:0;">${summary.summary}</pre>`
+          : `<p class="text-muted text-sm">${summary?.message || 'No intelligence summary available. Publish posts and let the performance agent run.'}</p>`
         }
       </div>
 
       <!-- Research Brief -->
-      <div class="card" style="margin-bottom:20px;">
-        <div class="card-header">
-          <div class="card-title">Niche Research</div>
+      <div class="chart-card" style="margin-bottom:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div class="chart-card__title" style="margin-bottom:0;">Niche Research</div>
           <button class="btn btn-secondary btn-sm" onclick="refreshIntelligence()">Refresh</button>
         </div>
         ${research?.research
-          ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:12px;color:#374151;background:#f8fafc;padding:12px;border-radius:8px;line-height:1.6;">${research.research}</pre>`
+          ? `<pre style="white-space:pre-wrap;font-family:inherit;font-size:13px;color:#374151;background:#f8fafc;padding:16px;border-radius:8px;line-height:1.7;margin:0;">${research.research}</pre>`
           : `<p class="text-muted text-sm">${research?.message || 'No research available.'}</p>
              <button class="btn btn-primary btn-sm" style="margin-top:12px;" onclick="refreshIntelligence()">Generate Research Brief</button>`
         }
       </div>
 
       <!-- Recent Comments -->
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">Recent Comments</div>
-          ${comments?.sentimentCounts
-            ? `<div style="display:flex;gap:10px;font-size:12px;">
-                <span style="color:#16a34a;">✅ ${comments.sentimentCounts.positive} positive</span>
-                <span style="color:#64748b;">➖ ${comments.sentimentCounts.neutral} neutral</span>
-                <span style="color:#b91c1c;">⚠️ ${comments.sentimentCounts.negative} negative</span>
-               </div>`
-            : ''}
+      <div class="chart-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div class="chart-card__title" style="margin-bottom:0;">Recent Comments</div>
+          ${sentimentTotal > 0 ? `
+            <div style="display:flex;gap:12px;font-size:12px;">
+              <span style="color:#22c55e;font-weight:600;">${sc.positive} positive</span>
+              <span style="color:#94a3b8;font-weight:600;">${sc.neutral} neutral</span>
+              <span style="color:#ef4444;font-weight:600;">${sc.negative} negative</span>
+            </div>
+          ` : ''}
         </div>
         ${comments?.comments?.length > 0
-          ? `<div style="display:flex;flex-direction:column;gap:10px;">
+          ? `<div style="display:flex;flex-direction:column;gap:8px;">
               ${comments.comments.map(c => `
-                <div style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:#f8fafc;border-radius:8px;">
-                  <span style="font-size:14px;flex-shrink:0;">${
-                    c.sentiment === 'positive' ? '😊' : c.sentiment === 'negative' ? '😤' : '😐'
-                  }</span>
+                <div style="display:flex;align-items:flex-start;gap:10px;padding:12px;background:#f8fafc;border-radius:8px;border-left:3px solid ${
+                  c.sentiment === 'positive' ? '#22c55e' : c.sentiment === 'negative' ? '#ef4444' : '#94a3b8'
+                };">
                   <div style="flex:1;min-width:0;">
-                    <div style="font-size:12px;color:#0f172a;line-height:1.5;">${c.comment_text || ''}</div>
-                    <div style="font-size:11px;color:#94a3b8;margin-top:3px;">
-                      @${c.author_handle || 'unknown'} · ${c.platform}
-                      ${c.trigger_matched ? ' · <span style="color:#6366f1;">⚡ trigger matched</span>' : ''}
-                      ${c.dm_sent ? ' · <span style="color:#16a34a;">DM sent</span>' : ''}
+                    <div style="font-size:13px;color:#0f172a;line-height:1.5;">${escapeHtml(c.comment_text || '')}</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:4px;">
+                      @${escapeHtml(c.author_handle || 'unknown')} · ${escapeHtml(c.platform)}
+                      ${c.trigger_matched ? ' · <span style="color:#6366f1;font-weight:600;">trigger matched</span>' : ''}
+                      ${c.dm_sent ? ' · <span style="color:#22c55e;font-weight:600;">DM sent</span>' : ''}
                     </div>
                   </div>
                 </div>`).join('')}
@@ -1593,6 +1616,67 @@ async function renderIntelligencePlaceholder(el) {
         }
       </div>
     `;
+
+    // Render platform engagement chart (stacked bar: likes, comments, shares)
+    if (perf?.summary?.length > 0 && window.Chart) {
+      const platEl = document.getElementById('intel-platform-chart');
+      if (platEl) {
+        platEl.innerHTML = '<canvas id="intel-platform-canvas"></canvas>';
+        registerChart(new Chart(document.getElementById('intel-platform-canvas'), {
+          type: 'bar',
+          data: {
+            labels: perf.summary.map(p => p.platform.charAt(0).toUpperCase() + p.platform.slice(1)),
+            datasets: [
+              { label: 'Likes',    data: perf.summary.map(p => p.total_likes),    backgroundColor: '#ec4899' },
+              { label: 'Comments', data: perf.summary.map(p => p.total_comments), backgroundColor: '#3b82f6' },
+              { label: 'Shares',   data: perf.summary.map(p => p.total_shares),   backgroundColor: '#8b5cf6' }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', font: { size: 12 } } } },
+            scales: {
+              x: { stacked: true, grid: { display: false } },
+              y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
+            },
+            animation: { duration: 600 }
+          }
+        }));
+      }
+    }
+
+    // Render sentiment doughnut
+    if (sentimentTotal > 0 && window.Chart) {
+      const sentEl = document.getElementById('intel-sentiment-chart');
+      if (sentEl) {
+        sentEl.innerHTML = '<canvas id="intel-sentiment-canvas" style="max-height:250px;"></canvas>';
+        registerChart(new Chart(document.getElementById('intel-sentiment-canvas'), {
+          type: 'doughnut',
+          data: {
+            labels: ['Positive', 'Neutral', 'Negative'],
+            datasets: [{
+              data: [sc.positive, sc.neutral, sc.negative],
+              backgroundColor: ['#22c55e', '#94a3b8', '#ef4444'],
+              borderWidth: 0,
+              hoverOffset: 6
+            }]
+          },
+          options: {
+            cutout: '62%',
+            plugins: {
+              legend: { position: 'bottom', labels: { padding: 14, usePointStyle: true, pointStyle: 'circle', font: { size: 12 } } },
+              tooltip: {
+                callbacks: {
+                  label: (ctx) => `${ctx.label}: ${ctx.raw} (${Math.round(ctx.raw / sentimentTotal * 100)}%)`
+                }
+              }
+            },
+            animation: { duration: 700 }
+          }
+        }));
+      }
+    }
 
   } catch (err) {
     const container = document.getElementById('intelligence-container');
