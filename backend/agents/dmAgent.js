@@ -239,7 +239,9 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
 
     const safeValue = messageText.trim().slice(0, 2000);
 
-    await supabaseAdmin
+    console.log(`[DMAgent] Storing collected data: conv=${conversation.id}, field=${fieldName}, value="${safeValue.substring(0, 50)}"`);
+
+    const { error: insertError } = await supabaseAdmin
       .from('dm_collected_data')
       .insert({
         conversation_id: conversation.id,
@@ -247,6 +249,14 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
         field_name:      fieldName,
         field_value:     safeValue
       });
+
+    if (insertError) {
+      console.error(`[DMAgent] FAILED to store collected data for conv ${conversation.id}: ${insertError.message || JSON.stringify(insertError)}`);
+    } else {
+      console.log(`[DMAgent] Stored ${fieldName} for conversation ${conversation.id}`);
+    }
+  } else {
+    console.log(`[DMAgent] Step ${conversation.current_step} does not collect a field (collects_field=${currentStep?.collects_field || 'NULL'})`);
   }
 
   // Advance to the next step
