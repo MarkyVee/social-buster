@@ -16,10 +16,18 @@ const REQUIRED_ENV = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
   'SUPABASE_SERVICE_ROLE_KEY',
-  'REDIS_HOST',
   'TOKEN_ENCRYPTION_KEY'
 ];
+// Redis can be configured via REDIS_HOST (Coolify) or REDIS_URL (Docker Compose) — either is fine
+const REQUIRED_ENV_EITHER = [
+  ['REDIS_HOST', 'REDIS_URL']   // At least one must be set
+];
 const missing = REQUIRED_ENV.filter(key => !process.env[key]);
+for (const group of REQUIRED_ENV_EITHER) {
+  if (!group.some(key => process.env[key])) {
+    missing.push(group.join(' or '));
+  }
+}
 if (missing.length > 0) {
   console.error(`\n[STARTUP FATAL] Missing required environment variables:\n  ${missing.join('\n  ')}\n`);
   console.error('Set these in your .env file or Coolify environment settings.');

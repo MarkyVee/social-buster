@@ -329,6 +329,20 @@ Follow the existing Facebook pattern:
 - **Status:** Stub exists in `platformAPIs.js`, OAuth already saves the IG token
 - **App Review:** `instagram_content_publish` requires App Review for public launch
 
+#### Meta API Limitation: No Personal Account Publishing
+Meta's Graph API does NOT support publishing to personal Facebook profiles or personal Instagram accounts. This applies to ALL third-party apps (Buffer, Hootsuite, Later, etc.). Only Facebook Pages and Instagram Business/Creator accounts (linked to a Page) are supported.
+
+#### How to Connect an Instagram Account to Social Buster
+Instagram accounts don't appear as separate options in our connect flow. They attach automatically to whichever Facebook Page they're linked to. Steps:
+
+1. **Switch Instagram to Professional** — Instagram → Settings → Professional account → Switch to Business or Creator
+2. **Link to a Facebook Page** — Instagram → Settings → Professional account → Linked Facebook Page → pick the Page
+3. **Grant Social Buster access to that Page** — during the Meta OAuth flow, make sure you check the box for that Page (if you skip it, the Page won't appear in our Page selector)
+4. **Select the Page in Social Buster** — click "Connect Instagram" → pick the linked Page → Instagram connects automatically
+5. **Verify** — server logs should show `[Publish] Instagram "@username" connected for user ...`
+
+If the Instagram account doesn't connect: the Page has no linked Instagram Business account. Go back to step 2 and link from either side (Instagram settings or Facebook Page settings → Linked Accounts → Instagram).
+
 ### Threads
 - **App:** Same Meta app — Threads API product already added
 - **OAuth:** Separate flow through `threads.net` — already built in `routes/publish.js`

@@ -2398,9 +2398,9 @@ async function loadConnectedPlatforms() {
     { id: 'instagram', label: 'Instagram',   icon: '📸', group: 'meta',    note: 'Requires an Instagram Professional account linked to a Facebook Page' },
     { id: 'facebook',  label: 'Facebook',    icon: '👥', group: 'meta',    note: 'Requires a Facebook Page (not a personal profile)' },
     { id: 'threads',   label: 'Threads',     icon: '🧵', group: 'threads', note: 'Requires a Threads account' },
-    { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'tiktok',   note: 'Requires TikTok for Business — credentials needed in .env' },
-    { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'linkedin', note: 'Requires a LinkedIn App — credentials needed in .env' },
-    { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'x',       note: 'Requires a Twitter Developer App — credentials needed in .env' },
+    { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'coming_soon', note: 'Coming soon — TikTok for Business integration' },
+    { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'coming_soon', note: 'Coming soon — LinkedIn integration' },
+    { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'coming_soon', note: 'Coming soon — X (Twitter) integration' },
     { id: 'whatsapp',  label: 'WhatsApp',    icon: '💬', group: 'coming_soon', note: 'Coming soon — WhatsApp Business API integration' },
     { id: 'telegram',  label: 'Telegram',    icon: '✈️', group: 'coming_soon', note: 'Coming soon — Telegram Bot integration' }
   ];

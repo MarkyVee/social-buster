@@ -18,6 +18,7 @@ What was built, fixed, or shipped — logged per session.
 - **FIXED ISSUE-020:** Helmet CSP `useDefaults: true` includes hidden `scriptSrcAttr: ["'none'"]` that silently blocks ALL inline `onclick` handlers. Five-step debugging cascade: (1) whitelisted Cloudflare domain, (2) purged edge cache, (3) added `scriptSrcElem` — which made it WORSE by triggering the hidden default, (4) disabled Cloudflare Web Analytics, (5) set `useDefaults: false` in Helmet CSP — fixed. Documented as a landmine in CLAUDE.md.
 - **Cloudflare Web Analytics disabled** — beacon was being auto-injected and conflicting with CSP. We have our own admin dashboard analytics.
 - **FEAT-016 logged:** Cloudflare cache purge + CSP diagnostics from admin dashboard (backlog).
+- **ADDED:** `backend/test-instagram-dm.js` — local webhook simulator for testing Instagram DM automation without a connected Instagram Business account. Signs payloads with FACEBOOK_APP_SECRET, interactive mode walks through published posts + automations, supports multi-step flow testing (comment → trigger → DM → reply → lead collection). CLI flags for quick one-off tests.
 
 ---
 
