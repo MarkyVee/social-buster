@@ -114,28 +114,31 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-010
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Scalability
-- **Description:** Admin dashboard N+1 query pattern. Loads all users, then loops to count posts individually per user. At 5,000 users, dashboard takes 60-120 seconds to load.
-- **Found in:** `backend/routes/admin.js` (lines 477-494, 599-600)
+- **Description:** Admin dashboard N+1 query pattern. Single-user detail fetched ALL post rows just to count by status.
+- **Found in:** `backend/routes/admin.js` (line 593)
+- **Resolution:** Replaced row-fetch-then-count with parallel `{ count: 'exact', head: true }` queries per known status. Returns only counts, never loads post rows.
 
 ---
 
 - **ID:** ISSUE-011
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Scalability
-- **Description:** `performanceAgent` loads ALL published posts from last 30 days into memory with no pagination. At 5,000 users (~50K posts), this is 50+ MB per cycle (every 2 hours). Then fetches metrics 1-by-1 per post via platform API.
-- **Found in:** `backend/agents/performanceAgent.js` (lines 42-47, 95-120)
+- **Description:** `performanceAgent` loads ALL published posts from last 30 days into memory with no pagination. At 5,000 users (~50K posts), this is 50+ MB per cycle (every 2 hours).
+- **Found in:** `backend/agents/performanceAgent.js` (lines 42-47)
+- **Resolution:** Added cursor-based pagination with BATCH_SIZE=500. Both the main post fetch and cohort metric aggregation now paginate through results instead of loading everything at once.
 
 ---
 
 - **ID:** ISSUE-012
 - **Date:** 2026-03-25
-- **Status:** open
+- **Status:** resolved
 - **Category:** HIGH / Scalability
 - **Description:** No per-account rate limiting on platform API calls. Multiple publishing jobs can hit the same user's platform account simultaneously. Risks platform bans (24-hour lockouts).
 - **Found in:** `backend/services/platformAPIs.js`
+- **Resolution:** Two-layer Redis-based rate limiting: (1) per-account mutex lock prevents simultaneous API calls to the same user+platform, with 5 retries at 2s intervals; (2) daily counter with platform-specific limits (Instagram: 50, Facebook: 200, others: 100). Both fail open if Redis is down.
 
 ---
 

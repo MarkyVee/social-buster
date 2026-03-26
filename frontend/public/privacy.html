@@ -24,7 +24,7 @@
   <a href="/" class="back-link">&larr; Back to Social Buster</a>
 
   <h1>Privacy Policy</h1>
-  <p class="date">Last updated: March 21, 2026</p>
+  <p class="date">Last updated: March 25, 2026</p>
 
   <p>Social Buster ("we," "us," or "our") operates the Social Buster platform at <strong>socialbuster.com</strong>, an AI-powered social media marketing tool. This Privacy Policy explains how we collect, use, store, and protect your information when you use our service.</p>
 
@@ -52,15 +52,15 @@
   <h3>1c. Content You Create</h3>
   <ul>
     <li>Briefs, generated posts, captions, hashtags, and calls-to-action</li>
-    <li>Media files you select from connected cloud storage (Google Drive, Dropbox, or Box) — when you attach media to a post, a copy is stored on our servers so it can be published reliably</li>
-    <li>AI-generated images created through the platform — stored on our servers</li>
-    <li>Video clips you select from your media library — processed copies are stored on our servers for publishing</li>
+    <li>Media files you select from connected cloud storage (Google Drive, Dropbox, or Box) — <strong>media is not permanently stored on our servers.</strong> When you attach media to a post, a temporary copy is held in cloud-hosted storage (Supabase Storage) only for the duration of the publishing process. Once the post is published or deleted, the temporary copy is removed. We do not retain your images or videos on our infrastructure beyond what is needed to complete the publish.</li>
+    <li>AI-generated images created through the platform — stored in cloud-hosted storage (Supabase Storage), not on our application servers. You can delete these at any time from your media library.</li>
+    <li>Video clips you select from your media library — temporary processed copies are held in cloud-hosted storage during publishing, then removed.</li>
     <li>DM automation rules you configure (trigger keywords, message templates, follow-up sequences)</li>
   </ul>
 
   <h3>1d. Billing Information</h3>
   <ul>
-    <li>Subscription plan and status. Payment processing is handled entirely by <strong>Stripe</strong> — we never see or store your credit card number, CVV, or full billing details.</li>
+    <li>Subscription plan and status only. <strong>All payment processing is handled entirely by Stripe.</strong> Your credit card number, CVV, expiration date, and full billing address are entered directly on Stripe's secure payment form and are never transmitted to, processed by, or stored on Social Buster's servers. We only receive a confirmation of your subscription plan and payment status from Stripe — we never have access to your payment card details at any point.</li>
   </ul>
 
   <h3>1e. Usage and Log Data</h3>
@@ -77,7 +77,7 @@
     <li><strong>Send direct messages</strong> — to send automated DMs on your behalf to users who comment on your posts with trigger phrases you set. Messages are only sent within each platform's allowed messaging window (24 hours for Meta platforms).</li>
     <li><strong>Collect leads</strong> — when a user responds to your automated DM with information (email, phone, name), we store that data in your account so you can export it.</li>
     <li><strong>Show performance analytics</strong> — to display engagement metrics, posting recommendations, and intelligence insights based on your own post performance.</li>
-    <li><strong>Improve recommendations</strong> — we aggregate and anonymize performance data across users (e.g., average engagement by industry, best posting times by niche) to improve AI-generated suggestions for all users. Individual post content is never shared or made visible to other users.</li>
+    <li><strong>Improve recommendations</strong> — we anonymously compile and compare performance metrics across users to improve AI-generated suggestions. For example, we calculate average engagement rates by industry, best posting times by region, and effective content formats by niche. This data is stripped of all identifying information before aggregation — your post content, brand name, account details, and personal information are never included. See Section 5 for full details on what is and is not included in aggregated data.</li>
     <li><strong>Communicate with you</strong> — to send account-related notifications, system alerts, and responses to support requests.</li>
   </ul>
 
@@ -146,21 +146,38 @@
 
   <!-- ============================================================ -->
   <h2>5. Aggregated and Anonymized Data</h2>
-  <p>We aggregate performance metrics across users to provide better recommendations. For example:</p>
+  <p>We anonymously compile and compare performance metrics across users to improve AI-generated content recommendations for all users. This is strictly limited to numerical performance data and never includes personal information or content.</p>
+
+  <h3>What IS included in aggregated data:</h3>
   <ul>
-    <li>Average engagement rates by industry, platform, and post type</li>
-    <li>Best posting times by niche and geographic region</li>
-    <li>Trending content formats and topics</li>
+    <li>Average engagement rates (likes, comments, shares, reach) grouped by industry, platform, and post type</li>
+    <li>Best performing posting times grouped by niche and geographic region</li>
+    <li>Effective content formats and topics (e.g., "video posts in the fitness industry average 2x more engagement than image posts")</li>
+    <li>Average conversion rates for DM automations by industry (e.g., "retail brands see a 12% lead conversion rate")</li>
   </ul>
-  <p>This data is always <strong>aggregated and anonymized</strong> — it never includes your post content, account name, brand name, or any personally identifiable information. No individual user's data can be identified from aggregated metrics.</p>
+
+  <h3>What is NEVER included in aggregated data:</h3>
+  <ul>
+    <li>Your post content, captions, hooks, or hashtags</li>
+    <li>Your brand name, business name, or account name</li>
+    <li>Your email address or any personal contact information</li>
+    <li>Your media files (images, videos)</li>
+    <li>Your DM message content or lead data</li>
+    <li>Your OAuth tokens or platform credentials</li>
+    <li>Any information that could identify you or your business</li>
+  </ul>
+
+  <p>This data is always <strong>aggregated and anonymized</strong> before it is used. No individual user's data can be identified or reverse-engineered from aggregated metrics. Aggregated data is never sold or shared with third parties — it is used solely to improve recommendations within the Social Buster platform.</p>
 
   <!-- ============================================================ -->
   <h2>6. Data Storage and Security</h2>
   <ul>
-    <li><strong>Database:</strong> Your data is stored in a PostgreSQL database hosted by Supabase, with Row-Level Security (RLS) policies ensuring each user can only access their own data.</li>
+    <li><strong>Database:</strong> Your data is stored in a PostgreSQL database hosted by Supabase (a cloud-hosted service), with Row-Level Security (RLS) policies ensuring each user can only access their own data. Your data is isolated from all other users at the database level.</li>
+    <li><strong>Media files:</strong> Media (images, videos) is <strong>not stored on our application servers.</strong> Temporary copies are held in cloud-hosted storage (Supabase Storage) only during the publishing process. Once published or deleted, temporary media files are removed. We do not maintain a permanent copy of your media on our infrastructure.</li>
     <li><strong>OAuth tokens:</strong> All platform access tokens are encrypted using AES-256-GCM before storage. Encryption keys are stored separately from the database.</li>
     <li><strong>Passwords:</strong> Handled entirely by Supabase Auth using bcrypt hashing. We never store or have access to plaintext passwords.</li>
-    <li><strong>Payments:</strong> Processed entirely by Stripe. We do not store credit card numbers or payment details on our servers.</li>
+    <li><strong>Payments:</strong> All credit card numbers, CVV codes, expiration dates, and billing details are processed and stored exclusively by Stripe. <strong>No payment card information ever touches our servers.</strong> We only store your subscription plan name and payment status.</li>
+    <li><strong>Personal data:</strong> Your personal information (email, brand details, post content, lead data, DM conversations) is <strong>never sold, rented, shared with, or made accessible to any third party, other Social Buster user, or external organization</strong> — except for the third-party services listed in Section 9 that are necessary to operate the platform, and only the minimum data required for each service.</li>
     <li><strong>Infrastructure:</strong> Our servers are hosted in secure data centers with standard industry protections (firewalls, access controls, encrypted connections via HTTPS).</li>
   </ul>
 

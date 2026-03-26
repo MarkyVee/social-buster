@@ -589,15 +589,23 @@ router.get('/users/:id', async (req, res) => {
       }
     }
 
-    // Summarise post counts by status
-    const { data: postCounts } = await supabaseAdmin
-      .from('posts')
-      .select('status')
-      .eq('user_id', userId);
+    // Summarise post counts by status — parallel count queries instead of
+    // fetching all rows (avoids loading thousands of rows just to count them)
+    const knownStatuses = ['draft', 'approved', 'scheduled', 'publishing', 'published', 'failed'];
+    const countResults = await Promise.all(
+      knownStatuses.map(status =>
+        supabaseAdmin
+          .from('posts')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('status', status)
+      )
+    );
 
     const statusSummary = {};
-    (postCounts || []).forEach(p => {
-      statusSummary[p.status] = (statusSummary[p.status] || 0) + 1;
+    knownStatuses.forEach((status, i) => {
+      const count = countResults[i].count || 0;
+      if (count > 0) statusSummary[status] = count;
     });
 
     return res.json({

@@ -32,6 +32,9 @@ const MIN_COHORT_SAMPLE = 5;
 // runPerformanceCycle — fetches metrics for all active published posts.
 // Called by workers/performanceWorker.js on a 2-hour repeating job.
 // ----------------------------------------------------------------
+// Page size for fetching posts — prevents loading 50K+ rows into memory
+const BATCH_SIZE = 500;
+
 async function runPerformanceCycle() {
   console.log('[PerformanceAgent] Starting performance cycle...');
 
@@ -39,53 +42,67 @@ async function runPerformanceCycle() {
     // Only poll posts from the last 30 days
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const { data: posts, error } = await supabaseAdmin
-      .from('posts')
-      .select('id, user_id, platform, platform_post_id, published_at')
-      .eq('status', 'published')
-      .gte('published_at', cutoff)
-      .not('platform_post_id', 'is', null);
-
-    if (error) {
-      console.error('[PerformanceAgent] Failed to fetch published posts:', error.message);
-      return;
-    }
-
-    if (!posts || posts.length === 0) return;
-
-    console.log(`[PerformanceAgent] Polling metrics for ${posts.length} post(s)...`);
-
-    // Group by user — share connection lookups per user
-    const byUser = {};
-    posts.forEach(post => {
-      if (!byUser[post.user_id]) byUser[post.user_id] = [];
-      byUser[post.user_id].push(post);
-    });
-
     // Track which cohort keys were touched this cycle so we don't
     // re-aggregate the same cohort for every user who shares it
     const cohortKeysProcessed = new Set();
 
-    for (const [userId, userPosts] of Object.entries(byUser)) {
-      try {
-        const processed = await processUserMetrics(userId, userPosts);
+    let totalProcessed = 0;
+    let offset = 0;
 
-        // Aggregate cohort data for this user's cohort (once per unique key)
-        if (processed > 0) {
-          await aggregateCohortPerformance(userId, cohortKeysProcessed);
-        }
+    // Paginate through published posts in batches to avoid loading
+    // tens of thousands of rows into memory at once (ISSUE-011)
+    while (true) {
+      const { data: posts, error } = await supabaseAdmin
+        .from('posts')
+        .select('id, user_id, platform, platform_post_id, published_at')
+        .eq('status', 'published')
+        .gte('published_at', cutoff)
+        .not('platform_post_id', 'is', null)
+        .order('published_at', { ascending: true })
+        .range(offset, offset + BATCH_SIZE - 1);
 
-      } catch (err) {
-        console.error(`[PerformanceAgent] Error for user ${userId}:`, err.message);
+      if (error) {
+        console.error('[PerformanceAgent] Failed to fetch published posts:', error.message);
+        return;
       }
+
+      if (!posts || posts.length === 0) break;
+
+      console.log(`[PerformanceAgent] Processing batch of ${posts.length} post(s) (offset ${offset})...`);
+
+      // Group by user — share connection lookups per user
+      const byUser = {};
+      posts.forEach(post => {
+        if (!byUser[post.user_id]) byUser[post.user_id] = [];
+        byUser[post.user_id].push(post);
+      });
+
+      for (const [userId, userPosts] of Object.entries(byUser)) {
+        try {
+          const processed = await processUserMetrics(userId, userPosts);
+          totalProcessed += processed;
+
+          // Aggregate cohort data for this user's cohort (once per unique key)
+          if (processed > 0) {
+            await aggregateCohortPerformance(userId, cohortKeysProcessed);
+          }
+
+        } catch (err) {
+          console.error(`[PerformanceAgent] Error for user ${userId}:`, err.message);
+        }
+      }
+
+      // If we got fewer than BATCH_SIZE, we've reached the end
+      if (posts.length < BATCH_SIZE) break;
+      offset += BATCH_SIZE;
     }
+
+    console.log(`[PerformanceAgent] Performance cycle complete. ${totalProcessed} post(s) processed.`);
 
   } catch (err) {
     console.error('[PerformanceAgent] Unexpected error:', err.message);
     throw err;
   }
-
-  console.log('[PerformanceAgent] Performance cycle complete.');
 }
 
 // ----------------------------------------------------------------
@@ -314,22 +331,35 @@ async function aggregateCohortPerformance(userId, cohortKeysProcessed = new Set(
 
     const peerIds = peers.map(p => p.user_id);
 
-    // ---- Step 4: Fetch 30-day metrics for all peers ----
+    // ---- Step 4: Fetch 30-day metrics for all peers (paginated) ----
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const { data: metrics } = await supabaseAdmin
-      .from('post_metrics')
-      .select([
-        'platform',
-        'likes', 'comments', 'shares', 'saves',
-        'reach', 'impressions', 'video_views',
-        'recorded_at',
-        'posts(hook, published_at, briefs(post_type, tone))'
-      ].join(', '))
-      .in('user_id', peerIds)
-      .gte('recorded_at', cutoff);
+    const selectFields = [
+      'platform',
+      'likes', 'comments', 'shares', 'saves',
+      'reach', 'impressions', 'video_views',
+      'recorded_at',
+      'posts(hook, published_at, briefs(post_type, tone))'
+    ].join(', ');
 
-    if (!metrics || metrics.length === 0) return;
+    // Paginate to avoid loading unbounded peer metrics into memory
+    let metrics = [];
+    let mOffset = 0;
+    while (true) {
+      const { data: batch } = await supabaseAdmin
+        .from('post_metrics')
+        .select(selectFields)
+        .in('user_id', peerIds)
+        .gte('recorded_at', cutoff)
+        .range(mOffset, mOffset + BATCH_SIZE - 1);
+
+      if (!batch || batch.length === 0) break;
+      metrics = metrics.concat(batch);
+      if (batch.length < BATCH_SIZE) break;
+      mOffset += BATCH_SIZE;
+    }
+
+    if (metrics.length === 0) return;
 
     // ---- Step 5: Group by platform + post_type and aggregate ----
     // We build groups keyed by "platform|post_type"

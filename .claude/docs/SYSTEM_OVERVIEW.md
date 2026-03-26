@@ -45,13 +45,13 @@
 - Meta App Review blocked until Instagram DM test passes
 - DM collected data not populating — needs log investigation after next test
 
-### Still Open — Scalability (not security risks)
-- [ ] ISSUE-010: Admin dashboard N+1 queries (batch with JOINs)
-- [ ] ISSUE-011: performanceAgent loads all posts into memory (needs pagination)
-- [ ] ISSUE-012: No per-account platform API rate limiting (risks bans)
+### Scalability — ALL RESOLVED
+- [x] ISSUE-010: Admin user detail — parallel count queries (no more row fetch)
+- [x] ISSUE-011: performanceAgent paginated (BATCH_SIZE=500)
+- [x] ISSUE-012: Per-account Redis rate limiting + mutex locks
 
 ### Next Action
-- [ ] Fix ISSUE-010/011/012 (scalability)
+- [ ] Update privacy policy content (FEAT-014 — media storage, data sharing, aggregated data clarity)
 - [ ] Instagram DM automation test (read `platform_publishing_guide.md` first)
 - [ ] Investigate DM collected data via Coolify logs after test
 - [ ] Meta App Review submission

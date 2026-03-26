@@ -163,6 +163,21 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-014
+- **Date:** 2026-03-25
+- **Status:** planned
+- **Priority:** HIGH (required before Meta App Review)
+- **Description:** Privacy Policy Content Update
+- **Reason:** Privacy policy needs to explicitly clarify several data handling practices before Meta App Review submission:
+  1. **Media is not stored on our servers permanently** — media files (images, videos) are only held temporarily during the publishing process and are deleted immediately after. The only persistent media storage is in Supabase Storage buckets (cloud-hosted, not our servers). Clarify this distinction in Section 1c and Section 6.
+  2. **Personal data is never shared** — strengthen the language. User data, post content, brand info, and lead data are never sold, shared, or made available to other users or third parties.
+  3. **Credit card information stays on Stripe** — already stated in Section 1d and Section 6, but make it more prominent/explicit. We never see, process, or store any payment card details.
+  4. **Aggregated/anonymized data disclosure** — Section 5 already covers this but should be clearer: performance metrics (engagement rates, posting times, content format effectiveness) may be anonymously compiled and compared across users to improve AI recommendations. No individual user, brand, post content, or PII is ever identifiable. Add specific examples of what IS and IS NOT included in aggregated data.
+- **Files:** `frontend/public/privacy.html`
+- **Related:** [[SYSTEM_OVERVIEW]], Meta App Review
+
+---
+
 ## Done
 
 _(none yet)_

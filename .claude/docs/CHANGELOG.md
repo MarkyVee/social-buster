@@ -4,6 +4,15 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-25 (Session 2)
+
+- **FIXED ISSUE-010:** Admin user detail — replaced fetch-all-rows post counting with parallel `{ count: 'exact', head: true }` queries per status. No more loading thousands of rows just to count them.
+- **FIXED ISSUE-011:** performanceAgent — added cursor-based pagination (BATCH_SIZE=500) to both the main post fetch and cohort metric aggregation. Prevents loading 50K+ rows into memory.
+- **FIXED ISSUE-012:** Per-account platform API rate limiting — two-layer Redis system: (1) mutex lock prevents simultaneous API calls to same user+platform (5 retries, 2s intervals), (2) daily counter with platform-specific limits (Instagram: 50/day, Facebook: 200/day, others: 100/day). Fails open if Redis is down.
+- **FEAT-014 logged:** Privacy policy content update needed — media not stored permanently, personal data never shared, credit card info on Stripe only, aggregated data disclosure clarity. Required before Meta App Review.
+
+---
+
 ## 2026-03-25
 
 - Set up documentation system: [[DECISIONS]], [[ISSUES]], [[FEATURES]], [[CHANGELOG]]

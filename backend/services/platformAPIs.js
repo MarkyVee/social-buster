@@ -21,6 +21,101 @@
 
 const axios = require('axios');
 const { decryptToken } = require('./tokenEncryption');
+const { getRedisClient } = require('./redisService');
+
+// ================================================================
+// PER-ACCOUNT RATE LIMITING (ISSUE-012)
+//
+// Prevents multiple BullMQ jobs from hitting the same user's platform
+// account simultaneously (risks 24-hour lockouts from platforms).
+//
+// Two layers:
+//   1. Mutex lock — only one API call at a time per userId+platform
+//   2. Daily counter — hard cap on API calls per account per day
+//
+// Daily limits are conservative to stay well within platform ToS:
+//   Facebook:  200 publish calls/day (official limit: much higher)
+//   Instagram: 50 publishes/day (official limit: 50)
+//   TikTok:    50 publishes/day
+//   Others:    100 calls/day (safe default)
+// ================================================================
+const DAILY_LIMITS = {
+  facebook:  200,
+  instagram: 50,
+  tiktok:    50,
+  linkedin:  100,
+  x:         100,
+  threads:   100,
+  youtube:   100,
+  whatsapp:  100,
+  telegram:  100
+};
+
+const LOCK_TTL = 120; // seconds — auto-expire lock if process crashes
+
+/**
+ * acquireAccountLock — acquires a per-account mutex.
+ * Returns true if lock acquired, false if another job holds it.
+ * Retries up to 5 times with 2s delay.
+ */
+async function acquireAccountLock(userId, platform) {
+  const key = `platform_lock:${userId}:${platform}`;
+  try {
+    const redis = getRedisClient();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const acquired = await redis.set(key, '1', 'EX', LOCK_TTL, 'NX');
+      if (acquired) return true;
+      // Wait 2s before retrying
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    return false; // Could not acquire after retries
+  } catch (err) {
+    // Redis down — allow the call to proceed (don't block publishing entirely)
+    console.warn(`[PlatformAPIs] Lock acquire failed (Redis): ${err.message}`);
+    return true;
+  }
+}
+
+/**
+ * releaseAccountLock — releases the per-account mutex.
+ */
+async function releaseAccountLock(userId, platform) {
+  const key = `platform_lock:${userId}:${platform}`;
+  try {
+    const redis = getRedisClient();
+    await redis.del(key);
+  } catch (err) {
+    console.warn(`[PlatformAPIs] Lock release failed: ${err.message}`);
+  }
+}
+
+/**
+ * checkDailyLimit — checks and increments the daily API call counter.
+ * Returns true if under limit, false if limit exceeded.
+ */
+async function checkDailyLimit(userId, platform) {
+  const key = `platform_daily:${userId}:${platform}`;
+  const limit = DAILY_LIMITS[platform] || 100;
+  try {
+    const redis = getRedisClient();
+    const current = parseInt(await redis.get(key) || '0', 10);
+    if (current >= limit) return false;
+    // Increment. If this is the first call today, set TTL to expire at midnight UTC.
+    const newCount = await redis.incr(key);
+    if (newCount === 1) {
+      // Expire at end of day UTC
+      const now = new Date();
+      const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+      const ttl = Math.ceil((endOfDay - now) / 1000);
+      await redis.expire(key, ttl);
+    }
+    return true;
+  } catch (err) {
+    // Redis down — allow the call (don't block publishing)
+    console.warn(`[PlatformAPIs] Daily limit check failed (Redis): ${err.message}`);
+    return true;
+  }
+}
 
 // ================================================================
 // MAIN ENTRY POINTS
@@ -31,29 +126,49 @@ const { decryptToken } = require('./tokenEncryption');
  * @returns {{ platformPostId: string }}
  */
 async function publish(post, connection) {
-  let accessToken;
+  const userId = post.user_id;
+  const platform = connection.platform;
+
+  // Per-account daily limit check (ISSUE-012)
+  const underLimit = await checkDailyLimit(userId, platform);
+  if (!underLimit) {
+    throw new Error(`Daily ${platform} API limit reached for this account. Try again tomorrow.`);
+  }
+
+  // Per-account mutex — prevent simultaneous API calls to the same account
+  const locked = await acquireAccountLock(userId, platform);
+  if (!locked) {
+    throw new Error(`Another ${platform} publish job is running for this account. Will retry.`);
+  }
+
   try {
-    accessToken = decryptToken(connection.access_token);
-  } catch (err) {
-    throw new Error(`Failed to decrypt ${connection.platform} token: ${err.message}`);
-  }
+    let accessToken;
+    try {
+      accessToken = decryptToken(connection.access_token);
+    } catch (err) {
+      throw new Error(`Failed to decrypt ${connection.platform} token: ${err.message}`);
+    }
 
-  // Proactively refresh if the token has already expired
-  if (connection.token_expires_at && new Date(connection.token_expires_at) <= new Date()) {
-    accessToken = await refreshAccessToken(connection);
-  }
+    // Proactively refresh if the token has already expired
+    if (connection.token_expires_at && new Date(connection.token_expires_at) <= new Date()) {
+      accessToken = await refreshAccessToken(connection);
+    }
 
-  switch (connection.platform) {
-    case 'instagram': return publishToInstagram(post, accessToken, connection);
-    case 'facebook':  return publishToFacebook(post, accessToken, connection);
-    case 'tiktok':    return publishToTikTok(post, accessToken, connection);
-    case 'linkedin':  return publishToLinkedIn(post, accessToken, connection);
-    case 'x':         return publishToX(post, accessToken, connection);
-    case 'threads':   return publishToThreads(post, accessToken, connection);
-    case 'whatsapp':  return publishToWhatsApp(post, accessToken, connection);
-    case 'telegram':  return publishToTelegram(post, accessToken, connection);
-    default:
-      throw new Error(`Unsupported platform: "${connection.platform}"`);
+    switch (connection.platform) {
+      case 'instagram': return await publishToInstagram(post, accessToken, connection);
+      case 'facebook':  return await publishToFacebook(post, accessToken, connection);
+      case 'tiktok':    return await publishToTikTok(post, accessToken, connection);
+      case 'linkedin':  return await publishToLinkedIn(post, accessToken, connection);
+      case 'x':         return await publishToX(post, accessToken, connection);
+      case 'threads':   return await publishToThreads(post, accessToken, connection);
+      case 'whatsapp':  return await publishToWhatsApp(post, accessToken, connection);
+      case 'telegram':  return await publishToTelegram(post, accessToken, connection);
+      default:
+        throw new Error(`Unsupported platform: "${connection.platform}"`);
+    }
+  } finally {
+    // Always release the lock, even on error
+    await releaseAccountLock(userId, platform);
   }
 }
 
