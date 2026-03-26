@@ -212,16 +212,20 @@ Track bugs, problems, and blockers discovered during development.
 
 - **ID:** ISSUE-020
 - **Date:** 2026-03-26
-- **Status:** open
-- **Severity:** LOW — cosmetic (1 console error, no functional impact)
-- **Description:** Cloudflare auto-injects its Web Analytics beacon script (`static.cloudflareinsights.com/beacon.min.js`) at the edge. Our CSP blocks it. Three fix attempts failed:
-  1. Added `https://static.cloudflareinsights.com` to `scriptSrc` in Helmet CSP — browser console still showed the old CSP without the domain
-  2. Purged Cloudflare edge cache — still blocked
-  3. Added explicit `scriptSrcElem` directive — pending deploy test
-- **Root cause:** Cloudflare's reverse proxy appears to be modifying/overriding our `Content-Security-Policy` response header. The CSP the browser receives does not match what our server sends.
-- **Found in:** `backend/server.js` (Helmet CSP), Cloudflare edge proxy
-- **Fallback fix:** If `scriptSrcElem` doesn't work, disable Cloudflare Web Analytics: Cloudflare Dashboard → Analytics & Logs → Web Analytics → remove social-buster.com. We don't use Cloudflare analytics — we have our own admin dashboard.
-- **Related:** ISSUE-007 (original CSP enablement), ISSUE-019 (cache-busting incident), FEAT-016 (Cloudflare cache purge from admin)
+- **Status:** resolved
+- **Severity:** CRITICAL — broke all frontend navigation (inline onclick handlers)
+- **Description:** Helmet CSP debugging cascade. Started as Cloudflare beacon blocked, ended with broken navigation.
+- **Full timeline:**
+  1. ISSUE-007 enabled Helmet CSP with `scriptSrc: ['self', 'unsafe-inline']`. Worked fine.
+  2. Cloudflare's auto-injected beacon blocked by CSP. Added domain to `scriptSrc` — didn't help (Cloudflare proxy caching/overriding header).
+  3. Purged Cloudflare edge cache — still blocked.
+  4. Added `scriptSrcElem` explicitly — **THIS BROKE EVERYTHING.** Helmet's `useDefaults: true` includes a hidden default: `scriptSrcAttr: ["'none'"]`. Before adding `scriptSrcElem`, browser fell back from `script-src-attr` to `script-src` (which has `'unsafe-inline'`). After adding `scriptSrcElem`, browser honored the explicit `script-src-attr 'none'` from Helmet defaults, blocking every `onclick="..."` handler in the app.
+  5. Disabled Cloudflare Web Analytics in dashboard (correct — we don't need it).
+- **Root cause:** Helmet's default CSP includes `scriptSrcAttr: ["'none'"]`. We never overrode it. It was invisible until `scriptSrcElem` changed the browser's fallback chain.
+- **Resolution:** Set `useDefaults: false` in Helmet CSP. We now control every directive explicitly — no hidden defaults. Removed `scriptSrcElem` and `scriptSrcAttr`. Replaced `frameSrc` with `frameAncestors` (CSP Level 2 proper). Disabled Cloudflare Web Analytics beacon injection.
+- **Lesson:** NEVER use Helmet CSP with `useDefaults: true` (the default) on a plain JS frontend that uses inline event handlers. The hidden `scriptSrcAttr: 'none'` default will silently break them.
+- **Found in:** `backend/server.js` (Helmet CSP config)
+- **Related:** ISSUE-007, ISSUE-019, FEAT-016
 
 ---
 

@@ -55,7 +55,7 @@
 - [x] FEAT-015: System Watchdog — confidence scoring, anomaly detection, auto-pause, dashboard visuals
 
 ### Open Issues
-- [ ] ISSUE-020: Cloudflare beacon blocked by CSP — `scriptSrcElem` fix deployed, if still blocked → disable Cloudflare Web Analytics in dashboard
+- [x] ISSUE-020: RESOLVED — Helmet CSP `useDefaults: true` includes hidden `scriptSrcAttr: 'none'` that blocks onclick handlers. Fixed with `useDefaults: false`. Cloudflare Web Analytics disabled in dashboard.
 
 ### Next Action
 - [ ] Run `migration_system_events.sql` in Supabase SQL Editor

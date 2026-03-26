@@ -110,17 +110,22 @@ app.use('/webhooks/meta', webhooksRoutes);
 // Set secure HTTP headers (removes X-Powered-By, sets Content-Security-Policy, etc.)
 // ISSUE-007: CSP was fully disabled. Now configured with a permissive-but-safe policy
 // that allows our frontend to work while blocking clickjacking and external script injection.
+//
+// CRITICAL: useDefaults: false is required. Helmet's defaults include
+// scriptSrcAttr: ["'none'"] which blocks ALL inline onclick handlers
+// (our entire sidebar navigation). We must control every directive ourselves.
+// See ISSUE-020 for the full debugging history.
 app.use(helmet({
   contentSecurityPolicy: {
+    useDefaults: false,
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc:     ["'self'", "'unsafe-inline'", "https://static.cloudflareinsights.com"],  // Our frontend uses inline scripts + Cloudflare beacon
-      scriptSrcElem: ["'self'", "'unsafe-inline'", "https://static.cloudflareinsights.com"],  // Explicit — browser was falling back to script-src and losing the whitelist
+      scriptSrc:  ["'self'", "'unsafe-inline'"],   // Our frontend uses inline scripts + onclick handlers
       styleSrc:   ["'self'", "'unsafe-inline'"],   // Our frontend uses inline styles
       imgSrc:     ["'self'", "data:", "blob:", "https:"],  // Allow images from Supabase Storage, Cloudflare, etc.
-      connectSrc: ["'self'", "https:"],             // Allow API calls to Supabase, platform APIs, Cloudflare beacon reporting
+      connectSrc: ["'self'", "https:"],             // Allow API calls to Supabase, platform APIs
       fontSrc:    ["'self'", "https:"],
-      frameSrc:   ["'none'"],                       // Block all iframing of our pages
+      frameAncestors: ["'none'"],                   // Block all iframing of our pages (CSP Level 2)
       objectSrc:  ["'none'"],
       baseUri:    ["'self'"]
     }
