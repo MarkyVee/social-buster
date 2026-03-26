@@ -50,3 +50,17 @@
 - Impact: FEAT-001 through FEAT-012 now tracked in [[FEATURES]]. Build order: Tier 1 (Performance Predictor, Pain-Point Miner, Voice Tracker, "Why This Works") → Tier 2 (Trend Forecaster, Repurpose Engine, Fatigue Detector, Competitor Mode) → Tier 3 (War Room, Accessibility, Authenticity, Campaigns).
 
 ---
+
+- Date: 2026-03-25
+- Decision: Do NOT build a red team agent
+- Reason: Operational monitoring (watchdog) covers 90% of production safety needs. Automated red teaming (adversarial probing for auth bypass, SQL injection, XSS, cross-tenant data access) is risky in production — could trigger rate limits, lock out real users, or corrupt data. The manual 18-issue security audit already covered OWASP top-10 vectors. If ever built, it should be staging-only, never production.
+- Impact: Red team is deferred indefinitely. Watchdog (FEAT-015) handles real-time health. Security audits remain manual and per-session as needed.
+
+---
+
+- Date: 2026-03-25
+- Decision: Always flag when a new feature or change might break existing functionality or increase costs
+- Reason: User preference — avoid surprises. New features can have hidden costs (API calls, Redis memory, DB rows, LLM tokens) or break existing patterns (route ordering, queue concurrency, worker memory). Proactive flagging prevents deploy-day surprises.
+- Impact: Claude must call out: (1) any new recurring API/LLM calls and their cost at scale, (2) any new DB tables/indexes and their storage impact, (3) any changes to shared files (queues, middleware, server.js) and what they could break, (4) any new Redis keys and their memory footprint. Do this before implementing, not after.
+
+---
