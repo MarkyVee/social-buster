@@ -4,6 +4,15 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-26
+
+- **FIXED ISSUE-019:** Cache-busting version on admin.js not bumped after watchdog commit (517 lines added). Broke frontend navigation. Bumped `?v=24` → `?v=25` in index.html. Added "Pre-Commit Rule: Don't Break What's Working" checklist to CLAUDE.md.
+- **FIXED ISSUE-020:** Helmet CSP `useDefaults: true` includes hidden `scriptSrcAttr: ["'none'"]` that silently blocks ALL inline `onclick` handlers. Five-step debugging cascade: (1) whitelisted Cloudflare domain, (2) purged edge cache, (3) added `scriptSrcElem` — which made it WORSE by triggering the hidden default, (4) disabled Cloudflare Web Analytics, (5) set `useDefaults: false` in Helmet CSP — fixed. Documented as a landmine in CLAUDE.md.
+- **Cloudflare Web Analytics disabled** — beacon was being auto-injected and conflicting with CSP. We have our own admin dashboard analytics.
+- **FEAT-016 logged:** Cloudflare cache purge + CSP diagnostics from admin dashboard (backlog).
+
+---
+
 ## 2026-03-25 (Session 2)
 
 - **FIXED ISSUE-010:** Admin user detail — replaced fetch-all-rows post counting with parallel `{ count: 'exact', head: true }` queries per status. No more loading thousands of rows just to count them.

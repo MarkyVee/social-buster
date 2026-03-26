@@ -198,6 +198,20 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+## Backlog — Admin Tooling
+
+- **ID:** FEAT-016
+- **Date:** 2026-03-26
+- **Status:** planned
+- **Priority:** LOW
+- **Description:** Cloudflare Cache Purge from Admin Dashboard
+- **Reason:** After deploys, Cloudflare edge cache can serve stale CSP headers or old static files. Currently requires logging into Cloudflare dashboard manually. Admin should be able to purge cache with one click from the Admin Dashboard.
+- **Implementation:** Use Cloudflare API (`POST /zones/{zone_id}/purge_cache` with `{"purge_everything": true}`). Requires `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_API_TOKEN` (with Cache Purge permission) in `.env`. Add a button to the admin Overview or Watchdog tab.
+- **Files:** `backend/routes/admin.js`, `frontend/public/js/admin.js`
+- **Related:** ISSUE-019 (stale cache incident), [[DECISIONS]]
+
+---
+
 ## Done
 
 _(none yet)_
