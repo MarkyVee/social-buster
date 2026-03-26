@@ -28,19 +28,48 @@ const {
   mediaAnalysisQueue,
   mediaProcessQueue,
   dmQueue,
-  emailQueue
+  emailQueue,
+  watchdogQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
-require('./publishWorker');
-require('./commentWorker');
-require('./mediaWorker');
-require('./performanceWorker');
-require('./researchWorker');
-require('./mediaAnalysisWorker');   // Video segment analysis (FFmpeg scene detection)
-require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
-require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
-require('./emailWorker');           // Admin bulk email campaigns via Resend
+const publishWorker       = require('./publishWorker');
+const commentWorker       = require('./commentWorker');
+const mediaWorker         = require('./mediaWorker');
+const performanceWorker   = require('./performanceWorker');
+const researchWorker      = require('./researchWorker');
+const mediaAnalysisWorker = require('./mediaAnalysisWorker');   // Video segment analysis (FFmpeg scene detection)
+const mediaProcessWorker  = require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
+const dmWorker            = require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
+const emailWorker         = require('./emailWorker');           // Admin bulk email campaigns via Resend
+require('./watchdogWorker');        // System health watchdog: anomaly detection + auto-pause
+
+// ---- Watchdog instrumentation ----
+// Hook into all workers to track job durations and error counts.
+// This gives the watchdog agent data to compute health confidence.
+const { incrementErrorCount, trackJobDuration } = require('../agents/watchdogAgent');
+
+function instrumentWorker(worker, queueName) {
+  worker.on('completed', (job) => {
+    if (job?.processedOn && job?.finishedOn) {
+      const duration = job.finishedOn - job.processedOn;
+      trackJobDuration(queueName, duration).catch(() => {});
+    }
+  });
+  worker.on('failed', () => {
+    incrementErrorCount().catch(() => {});
+  });
+}
+
+instrumentWorker(publishWorker,       'publish');
+instrumentWorker(commentWorker,       'comment');
+instrumentWorker(mediaWorker,         'media-scan');
+instrumentWorker(performanceWorker,   'performance');
+instrumentWorker(researchWorker,      'research');
+instrumentWorker(mediaAnalysisWorker, 'media-analysis');
+instrumentWorker(mediaProcessWorker,  'media-process');
+instrumentWorker(dmWorker,            'dm');
+instrumentWorker(emailWorker,         'email');
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -103,7 +132,17 @@ async function registerRepeatableJobs() {
     }
   );
 
-  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire)');
+  // Watchdog queue — system health monitoring every 5 minutes
+  await watchdogQueue.add(
+    'watchdog-cycle',
+    {},
+    {
+      repeat: { every: 5 * 60 * 1000 }, // every 5 minutes
+      jobId: 'repeatable:watchdog-cycle'
+    }
+  );
+
+  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire, watchdog)');
 }
 
 // ----------------------------------------------------------------

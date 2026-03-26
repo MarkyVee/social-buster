@@ -36,6 +36,10 @@ function renderAdminDashboard(el) {
       <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
       <button class="admin-tab"        data-tab="email"     onclick="switchAdminTab('email')">Email</button>
       <button class="admin-tab"        data-tab="plans"     onclick="switchAdminTab('plans')">Plans</button>
+      <button class="admin-tab"        data-tab="watchdog"  onclick="switchAdminTab('watchdog')">
+        Watchdog
+        <span id="admin-watchdog-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
+      </button>
       <button class="admin-tab"        data-tab="issues"    onclick="switchAdminTab('issues')">
         Issues
         <span id="admin-issues-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
@@ -51,6 +55,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
     <div id="admin-tab-email"     class="admin-panel hidden"></div>
     <div id="admin-tab-plans"     class="admin-panel hidden"></div>
+    <div id="admin-tab-watchdog"   class="admin-panel hidden"></div>
     <div id="admin-tab-issues"    class="admin-panel hidden"></div>
   `;
 
@@ -87,6 +92,7 @@ function switchAdminTab(tab) {
   if (tab === 'revenue')   loadAdminRevenue();
   if (tab === 'email')     loadAdminEmail();
   if (tab === 'plans')     loadAdminPlans();
+  if (tab === 'watchdog')  loadAdminWatchdog();
   if (tab === 'issues')    loadAdminIssues();
 }
 
@@ -102,12 +108,13 @@ async function loadAdminOverview() {
   panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
 
   try {
-    const [stats, health] = await Promise.all([
+    const [stats, health, watchdog] = await Promise.all([
       apiFetch('/admin/stats'),
-      apiFetch('/admin/health')
+      apiFetch('/admin/health'),
+      apiFetch('/admin/watchdog').catch(() => null)
     ]);
 
-    panel.innerHTML = buildOverviewHtml(stats, health)
+    panel.innerHTML = buildOverviewHtml(stats, health, watchdog)
       + `<div style="margin-top:20px;"><button class="btn btn-sm" onclick="panel=document.getElementById('admin-tab-overview');if(panel)panel.dataset.loaded='';loadAdminOverview();">🔄 Refresh Overview</button></div>`;
 
     // Update the Issues tab badge with open ticket count
@@ -124,7 +131,7 @@ async function loadAdminOverview() {
   }
 }
 
-function buildOverviewHtml(stats, health) {
+function buildOverviewHtml(stats, health, watchdog) {
   const isCritical  = health.status === 'critical';
   const isOk        = health.status === 'ok';
   const statusColor = isOk ? '#16a34a' : isCritical ? '#7f1d1d' : '#dc2626';
@@ -185,10 +192,37 @@ function buildOverviewHtml(stats, health) {
     </tr>`;
   }).join('');
 
+  // Watchdog confidence mini-gauge for overview
+  const wdConf = watchdog?.confidence ?? null;
+  const wdPaused = watchdog?.pause_state?.paused || false;
+  const wdColor = wdConf === null ? '#94a3b8'
+                : wdConf >= 80 ? '#16a34a'
+                : wdConf >= 50 ? '#f59e0b'
+                : '#dc2626';
+
+  let pauseBannerHtml = '';
+  if (wdPaused) {
+    const reason = escapeAdminHtml(watchdog?.pause_state?.reason || 'Unknown');
+    pauseBannerHtml = `
+      <div class="wd-pause-banner">
+        <div>🛑 SYSTEM PAUSED — ${reason}</div>
+        <button class="btn btn-sm" style="background:#16a34a;color:#fff;border:none;"
+          onclick="resumeSystem()">▶ Resume System</button>
+      </div>`;
+  }
+
   return `
+    ${pauseBannerHtml}
     <!-- Health banner -->
     <div class="admin-health-banner" style="border-color:${statusColor};background:${statusBg};">
-      <span style="color:${statusColor};font-weight:700;font-size:15px;">${statusLabel}</span>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+        ${wdConf !== null ? `
+          <div style="display:flex;align-items:center;gap:8px;padding-right:16px;border-right:1px solid #e2e8f0;">
+            <div style="font-size:28px;font-weight:800;color:${wdColor};line-height:1;">${wdConf}</div>
+            <div style="font-size:11px;color:${wdColor};font-weight:600;line-height:1.2;">HEALTH<br>SCORE</div>
+          </div>` : ''}
+        <span style="color:${statusColor};font-weight:700;font-size:15px;">${statusLabel}</span>
+      </div>
       <span class="admin-health-sub">
         Redis: <strong>${escapeAdminHtml(health.redis)}</strong> &nbsp;·&nbsp;
         DB: <strong>${escapeAdminHtml(health.database)}</strong> &nbsp;·&nbsp;
@@ -1985,6 +2019,217 @@ function injectAdminStyles() {
       transform: translateY(-1px);
       transition: all 0.15s ease;
     }
+
+    /* ============================================================ */
+    /* WATCHDOG TAB STYLES                                          */
+    /* ============================================================ */
+
+    /* Confidence gauge */
+    .wd-gauge-wrap {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding: 20px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      margin-bottom: 20px;
+    }
+    .wd-gauge-ring {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      flex-shrink: 0;
+    }
+    .wd-gauge-ring svg { transform: rotate(-90deg); }
+    .wd-gauge-ring .wd-ring-bg {
+      fill: none;
+      stroke: #e2e8f0;
+      stroke-width: 10;
+    }
+    .wd-gauge-ring .wd-ring-fg {
+      fill: none;
+      stroke-width: 10;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+    }
+    .wd-gauge-score {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 36px;
+      line-height: 1;
+    }
+    .wd-gauge-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 4px;
+    }
+    .wd-gauge-info { flex: 1; }
+    .wd-gauge-info h3 { margin: 0 0 8px; font-size: 16px; color: #0f172a; }
+    .wd-gauge-info p { margin: 0; font-size: 13px; color: #64748b; line-height: 1.6; }
+
+    /* Breakdown bars */
+    .wd-breakdown {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .wd-break-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .wd-break-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-bottom: 6px;
+    }
+    .wd-break-bar-bg {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .wd-break-bar-fg {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.4s ease;
+    }
+    .wd-break-val {
+      font-size: 20px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-top: 4px;
+    }
+
+    /* Trend chart */
+    .wd-chart-wrap {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .wd-chart-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 14px;
+    }
+    .wd-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 120px;
+    }
+    .wd-chart-bar {
+      flex: 1;
+      border-radius: 3px 3px 0 0;
+      min-width: 3px;
+      transition: height 0.3s ease;
+      position: relative;
+    }
+    .wd-chart-bar:hover::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #fff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+      z-index: 10;
+    }
+
+    /* Anomaly cards */
+    .wd-anomaly {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .wd-anomaly.critical { border-left: 4px solid #dc2626; background: #fef2f2; }
+    .wd-anomaly.warning  { border-left: 4px solid #f59e0b; background: #fffbeb; }
+    .wd-anomaly .wd-anomaly-icon { font-size: 18px; flex-shrink: 0; }
+    .wd-anomaly .wd-anomaly-body { flex: 1; }
+    .wd-anomaly .wd-anomaly-title { font-weight: 600; color: #0f172a; }
+    .wd-anomaly .wd-anomaly-time { color: #94a3b8; font-size: 11px; margin-top: 2px; }
+    .wd-anomaly .wd-anomaly-details { color: #64748b; margin-top: 4px; }
+
+    /* Pause banner */
+    .wd-pause-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 20px;
+      background: #fef2f2;
+      border: 2px solid #dc2626;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #991b1b;
+    }
+
+    /* Job duration bars */
+    .wd-duration-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .wd-dur-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .wd-dur-label { font-size: 12px; font-weight: 600; color: #64748b; }
+    .wd-dur-value { font-size: 20px; font-weight: 800; color: #0f172a; margin: 4px 0; }
+    .wd-dur-range { font-size: 11px; color: #94a3b8; }
+
+    /* Event log */
+    .wd-event-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 13px;
+    }
+    .wd-event-row:hover { background: #f8fafc; }
+    .wd-event-sev {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .wd-event-sev.info     { background: #3b82f6; }
+    .wd-event-sev.warning  { background: #f59e0b; }
+    .wd-event-sev.critical { background: #dc2626; }
+    .wd-event-time { color: #94a3b8; font-size: 11px; min-width: 80px; }
+    .wd-event-title { flex: 1; color: #1e293b; }
   `;
   document.head.appendChild(style);
 }
@@ -3286,4 +3531,266 @@ async function savePlanFeatures(planId) {
   // Split by newline, trim each, remove empty lines
   const features = textarea.value.split('\n').map(f => f.trim()).filter(Boolean);
   await savePlanField(planId, 'features', features);
+}
+
+// ================================================================
+// WATCHDOG TAB
+// System health monitoring with confidence gauge, trend chart,
+// anomaly cards, job duration stats, and event log.
+// ================================================================
+
+async function loadAdminWatchdog() {
+  const panel = document.getElementById('admin-tab-watchdog');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading watchdog…</div>`;
+
+  try {
+    const wd = await apiFetch('/admin/watchdog');
+    panel.innerHTML = buildWatchdogHtml(wd);
+
+    // Update the badge on the tab
+    const badge = document.getElementById('admin-watchdog-badge');
+    const totalUnresolved = (wd.anomalies?.unresolved_critical || 0) + (wd.anomalies?.unresolved_warning || 0);
+    if (badge) {
+      if (totalUnresolved > 0) {
+        badge.textContent = totalUnresolved;
+        badge.style.display = 'inline';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load watchdog: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+function buildWatchdogHtml(wd) {
+  const confidence = wd.confidence ?? 0;
+  const status = wd.status || 'unknown';
+  const paused = wd.pause_state?.paused || false;
+
+  // Colors based on score
+  const scoreColor = confidence >= 80 ? '#16a34a'
+                   : confidence >= 50 ? '#f59e0b'
+                   : '#dc2626';
+  const statusLabel = paused ? 'PAUSED' : status.toUpperCase();
+
+  // SVG ring gauge
+  const circumference = 2 * Math.PI * 54; // radius 54
+  const offset = circumference - (confidence / 100) * circumference;
+
+  let html = '';
+
+  // ---- Pause banner ----
+  if (paused) {
+    const reason = escapeAdminHtml(wd.pause_state?.reason || 'Unknown');
+    const pausedAt = wd.pause_state?.paused_at ? new Date(wd.pause_state.paused_at).toLocaleString() : '';
+    const pausedBy = wd.pause_state?.paused_by || '';
+    html += `
+      <div class="wd-pause-banner">
+        <div>
+          🛑 SYSTEM PAUSED — ${reason}
+          <div style="font-size:12px;font-weight:400;color:#7f1d1d;margin-top:4px;">
+            Paused ${pausedBy === 'watchdog' ? 'automatically' : 'by admin'} at ${pausedAt}
+          </div>
+        </div>
+        <button class="btn btn-sm" style="background:#16a34a;color:#fff;border:none;"
+          onclick="resumeSystem()">▶ Resume System</button>
+      </div>`;
+  }
+
+  // ---- Confidence gauge + info ----
+  html += `
+    <div class="wd-gauge-wrap">
+      <div class="wd-gauge-ring">
+        <svg width="140" height="140" viewBox="0 0 120 120">
+          <circle class="wd-ring-bg" cx="60" cy="60" r="54"/>
+          <circle class="wd-ring-fg" cx="60" cy="60" r="54"
+            stroke="${scoreColor}"
+            stroke-dasharray="${circumference}"
+            stroke-dashoffset="${offset}"/>
+        </svg>
+        <div class="wd-gauge-score" style="color:${scoreColor};">
+          ${confidence}
+          <div class="wd-gauge-label" style="color:${scoreColor};">${statusLabel}</div>
+        </div>
+      </div>
+      <div class="wd-gauge-info">
+        <h3>System Health Confidence</h3>
+        <p>
+          Score is computed every 5 minutes from 6 weighted signals: Redis connectivity,
+          queue flow, error rates, API call rates, worker liveness, and database health.
+          ${confidence < 30 ? '<br><strong style="color:#dc2626;">Score below 30 for 2 consecutive checks triggers auto-pause.</strong>' : ''}
+        </p>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="btn btn-sm" onclick="panel=document.getElementById('admin-tab-watchdog');if(panel)panel.dataset.loaded='';loadAdminWatchdog();">🔄 Refresh</button>
+          ${!paused ? '<button class="btn btn-sm" style="background:#dc2626;color:#fff;border:none;" onclick="pauseSystem()">⏸ Pause System</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+
+  // ---- Score breakdown bars ----
+  const breakdown = wd.breakdown || {};
+  const breakdownItems = [
+    { key: 'redis',    label: 'Redis',    max: 15 },
+    { key: 'queues',   label: 'Queues',   max: 20 },
+    { key: 'errors',   label: 'Errors',   max: 20 },
+    { key: 'apiRate',  label: 'API Rate',  max: 15 },
+    { key: 'workers',  label: 'Workers',  max: 15 },
+    { key: 'database', label: 'Database', max: 15 }
+  ];
+
+  html += `<div class="admin-section-title">Score Breakdown</div><div class="wd-breakdown">`;
+  for (const item of breakdownItems) {
+    const val = breakdown[item.key] ?? item.max;
+    const pct = Math.round((val / item.max) * 100);
+    const color = pct >= 80 ? '#16a34a' : pct >= 50 ? '#f59e0b' : '#dc2626';
+    html += `
+      <div class="wd-break-card">
+        <div class="wd-break-label">${item.label}</div>
+        <div class="wd-break-bar-bg"><div class="wd-break-bar-fg" style="width:${pct}%;background:${color};"></div></div>
+        <div class="wd-break-val" style="color:${color};">${val}/${item.max}</div>
+      </div>`;
+  }
+  html += `</div>`;
+
+  // ---- 24-hour trend chart ----
+  const trend = wd.trend || [];
+  if (trend.length > 1) {
+    html += `
+      <div class="wd-chart-wrap">
+        <div class="wd-chart-title">Health Score — Last 24 Hours</div>
+        <div class="wd-chart">`;
+
+    for (const point of trend) {
+      const h = Math.max(2, (point.confidence / 100) * 120);
+      const color = point.confidence >= 80 ? '#16a34a'
+                  : point.confidence >= 50 ? '#f59e0b'
+                  : '#dc2626';
+      const time = new Date(point.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      html += `<div class="wd-chart-bar" style="height:${h}px;background:${color};" data-tip="${point.confidence} — ${time}"></div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  // ---- Anomalies ----
+  const anomalies = wd.anomalies?.recent || [];
+  const unresolvedAnomalies = anomalies.filter(a => !a.resolved);
+
+  if (unresolvedAnomalies.length > 0) {
+    html += `<div class="admin-section-title">Active Anomalies (${unresolvedAnomalies.length})</div>`;
+    for (const a of unresolvedAnomalies.slice(0, 15)) {
+      const icon = a.severity === 'critical' ? '🚨' : '⚠️';
+      const time = new Date(a.created_at).toLocaleString();
+      const detailStr = a.details ? Object.entries(a.details)
+        .filter(([k]) => k !== 'userId')
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' · ') : '';
+
+      html += `
+        <div class="wd-anomaly ${a.severity}">
+          <div class="wd-anomaly-icon">${icon}</div>
+          <div class="wd-anomaly-body">
+            <div class="wd-anomaly-title">${escapeAdminHtml(a.title)}</div>
+            <div class="wd-anomaly-time">${time} · ${escapeAdminHtml(a.category || '')}</div>
+            ${detailStr ? `<div class="wd-anomaly-details">${escapeAdminHtml(detailStr)}</div>` : ''}
+          </div>
+          <button class="btn btn-sm" style="font-size:11px;" onclick="resolveWatchdogEvent('${a.id}')">✓ Resolve</button>
+        </div>`;
+    }
+  } else {
+    html += `<div class="admin-section-title">Anomalies</div>
+      <div style="padding:16px;background:#f0fdf4;border-radius:8px;color:#166534;font-size:13px;margin-bottom:20px;">
+        ✅ No active anomalies detected
+      </div>`;
+  }
+
+  // ---- Job Duration Stats ----
+  const durStats = wd.duration_stats || {};
+  const durEntries = Object.entries(durStats).filter(([, v]) => v.count > 0);
+
+  if (durEntries.length > 0) {
+    html += `<div class="admin-section-title">Job Execution Times (rolling avg)</div><div class="wd-duration-grid">`;
+    for (const [name, stats] of durEntries) {
+      const avgSec = (stats.avg / 1000).toFixed(1);
+      const maxSec = (stats.max / 1000).toFixed(1);
+      const minSec = (stats.min / 1000).toFixed(1);
+      const avgColor = stats.avg > 30000 ? '#dc2626' : stats.avg > 10000 ? '#f59e0b' : '#16a34a';
+      html += `
+        <div class="wd-dur-card">
+          <div class="wd-dur-label">${escapeAdminHtml(name)}</div>
+          <div class="wd-dur-value" style="color:${avgColor};">${avgSec}s</div>
+          <div class="wd-dur-range">min ${minSec}s · max ${maxSec}s · ${stats.count} samples</div>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ---- Recent event log ----
+  const events = wd.events || [];
+  if (events.length > 0) {
+    html += `<div class="admin-section-title">Recent Events (${events.length})</div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;max-height:400px;overflow-y:auto;">`;
+    for (const e of events.slice(0, 50)) {
+      const time = new Date(e.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const date = new Date(e.created_at).toLocaleDateString();
+      html += `
+        <div class="wd-event-row">
+          <div class="wd-event-sev ${e.severity}"></div>
+          <div class="wd-event-time">${date} ${time}</div>
+          <div class="wd-event-title">${escapeAdminHtml(e.title)}</div>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ---- Issues list ----
+  const issues = wd.issues || [];
+  if (issues.length > 0) {
+    html += `<div class="admin-section-title" style="margin-top:20px;">Current Issues</div>
+      <ul style="font-size:13px;color:#64748b;padding-left:20px;">`;
+    for (const issue of issues) {
+      html += `<li style="margin-bottom:4px;">${escapeAdminHtml(issue)}</li>`;
+    }
+    html += `</ul>`;
+  }
+
+  return html;
+}
+
+// ---- Watchdog actions ----
+
+async function pauseSystem() {
+  const reason = prompt('Reason for pausing (optional):') || 'Manual pause by admin';
+  try {
+    await apiFetch('/admin/watchdog/pause', { method: 'POST', body: JSON.stringify({ reason }) });
+    const panel = document.getElementById('admin-tab-watchdog');
+    if (panel) { panel.dataset.loaded = ''; loadAdminWatchdog(); }
+  } catch (err) {
+    alert('Failed to pause: ' + err.message);
+  }
+}
+
+async function resumeSystem() {
+  try {
+    await apiFetch('/admin/watchdog/resume', { method: 'POST' });
+    const panel = document.getElementById('admin-tab-watchdog');
+    if (panel) { panel.dataset.loaded = ''; loadAdminWatchdog(); }
+  } catch (err) {
+    alert('Failed to resume: ' + err.message);
+  }
+}
+
+async function resolveWatchdogEvent(eventId) {
+  try {
+    await apiFetch(`/admin/watchdog/resolve/${eventId}`, { method: 'POST' });
+    const panel = document.getElementById('admin-tab-watchdog');
+    if (panel) { panel.dataset.loaded = ''; loadAdminWatchdog(); }
+  } catch (err) {
+    alert('Failed to resolve: ' + err.message);
+  }
 }

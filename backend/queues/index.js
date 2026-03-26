@@ -190,6 +190,17 @@ const emailQueue = new Queue('email', {
   }
 });
 
+// Watchdog queue — system health monitoring, anomaly detection, auto-pause.
+// Runs every 5 minutes. Concurrency 1 (only one check at a time).
+// Does not need retries — if a check fails, the next scheduled run will try again.
+const watchdogQueue = new Queue('watchdog', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 1
+  }
+});
+
 module.exports = {
   publishQueue,
   commentQueue,
@@ -200,5 +211,6 @@ module.exports = {
   mediaProcessQueue,
   dmQueue,
   emailQueue,
+  watchdogQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

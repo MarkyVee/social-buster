@@ -14,6 +14,26 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ## HIGH PRIORITY — Build Now
 
+- **ID:** FEAT-015
+- **Date:** 2026-03-25
+- **Status:** done
+- **Priority:** HIGH
+- **Description:** System Watchdog — Continuous Health Monitoring with Auto-Pause
+- **Reason:** No way to detect runaway API loops, stuck queues, dead workers, or error spikes. Admin dashboard lacked diagnostic depth to trace problems to root cause.
+- **Resolution:** Full watchdog system:
+  - `system_events` + `system_state` DB tables for persistent event logging and pause state
+  - `watchdogAgent.js` — computes 0-100 confidence score from 6 weighted signals (Redis, queues, errors, API rates, workers, DB), detects anomalies (growing backlogs, error spikes, API loops, dead workers), auto-pauses at score <30 for 2 consecutive checks
+  - `watchdogWorker.js` + `watchdogQueue` — runs every 5 min via BullMQ
+  - Worker instrumentation — all 9 workers now track job durations + error counts for the watchdog
+  - Admin Watchdog tab: SVG confidence gauge, score breakdown bars, 24-hour trend chart, anomaly cards with resolve buttons, job duration stats, event log
+  - Overview tab: watchdog confidence score in health banner, pause banner with resume button
+  - Pause/resume system: auto-pause pauses all 6 processing queues, sends email alert; admin can manually pause/resume from dashboard
+  - Email alerts on status transitions (healthy → degraded/critical → recovered)
+  - 4 new admin API endpoints: GET /admin/watchdog, POST pause/resume/resolve
+- **Files:** `backend/agents/watchdogAgent.js`, `backend/workers/watchdogWorker.js`, `backend/workers/index.js`, `backend/queues/index.js`, `backend/routes/admin.js`, `frontend/public/js/admin.js`, `backend/data/migration_system_events.sql`
+
+---
+
 - **ID:** FEAT-013
 - **Date:** 2026-03-25
 - **Status:** done

@@ -9,7 +9,17 @@ What was built, fixed, or shipped — logged per session.
 - **FIXED ISSUE-010:** Admin user detail — replaced fetch-all-rows post counting with parallel `{ count: 'exact', head: true }` queries per status. No more loading thousands of rows just to count them.
 - **FIXED ISSUE-011:** performanceAgent — added cursor-based pagination (BATCH_SIZE=500) to both the main post fetch and cohort metric aggregation. Prevents loading 50K+ rows into memory.
 - **FIXED ISSUE-012:** Per-account platform API rate limiting — two-layer Redis system: (1) mutex lock prevents simultaneous API calls to same user+platform (5 retries, 2s intervals), (2) daily counter with platform-specific limits (Instagram: 50/day, Facebook: 200/day, others: 100/day). Fails open if Redis is down.
-- **FEAT-014 logged:** Privacy policy content update needed — media not stored permanently, personal data never shared, credit card info on Stripe only, aggregated data disclosure clarity. Required before Meta App Review.
+- **FEAT-014:** Privacy policy content update — media not stored permanently, personal data never shared, credit card info on Stripe only, detailed aggregated data inclusions/exclusions. Updated `privacy.html`.
+- **FEAT-015 DONE:** System Watchdog — full continuous health monitoring system:
+  - New `watchdogAgent.js` — computes 0-100 health confidence score every 5 min from 6 signals (Redis, queues, errors, API rates, workers, DB)
+  - Anomaly detection: API loop detection, growing queue backlogs, error spikes, dead worker alerts
+  - Auto-pause: system automatically pauses all processing queues when confidence drops below 30 for 2 consecutive checks
+  - `system_events` + `system_state` tables for persistent diagnostic logging and pause state
+  - Worker instrumentation: all 9 workers now track job durations + error counts
+  - Admin Watchdog tab: SVG confidence gauge, breakdown bars, 24-hour trend chart, anomaly cards with resolve, job duration stats, event log
+  - Overview tab: health score in banner, pause banner with resume button
+  - Email alerts on status transitions
+  - Manual pause/resume controls from dashboard
 
 ---
 

@@ -50,8 +50,12 @@
 - [x] ISSUE-011: performanceAgent paginated (BATCH_SIZE=500)
 - [x] ISSUE-012: Per-account Redis rate limiting + mutex locks
 
+### New This Session
+- [x] FEAT-014: Privacy policy updated (media, data sharing, aggregated data, Stripe)
+- [x] FEAT-015: System Watchdog — confidence scoring, anomaly detection, auto-pause, dashboard visuals
+
 ### Next Action
-- [ ] Update privacy policy content (FEAT-014 — media storage, data sharing, aggregated data clarity)
+- [ ] Run `migration_system_events.sql` in Supabase SQL Editor
 - [ ] Instagram DM automation test (read `platform_publishing_guide.md` first)
 - [ ] Investigate DM collected data via Coolify logs after test
 - [ ] Meta App Review submission

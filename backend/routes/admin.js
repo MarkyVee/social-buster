@@ -14,6 +14,10 @@
  *   GET  /admin/users/:id      — Single user detail (profile + recent posts + metrics)
  *   PUT  /admin/users/:id      — Override a user's subscription tier or add notes
  *   GET  /admin/queues/*       — BullMQ Board (visual job queue monitor UI)
+ *   GET  /admin/watchdog       — Watchdog: confidence score, anomalies, events, duration stats
+ *   POST /admin/watchdog/pause — Manually pause all job queues
+ *   POST /admin/watchdog/resume — Resume all paused queues
+ *   POST /admin/watchdog/resolve/:id — Mark an anomaly as resolved
  */
 
 const express = require('express');
@@ -1658,6 +1662,176 @@ router.post('/rls-fix', async (req, res) => {
   } catch (err) {
     console.error('[Admin] RLS fix error:', err.message);
     return res.status(500).json({ error: `Failed to fix RLS: ${err.message}` });
+  }
+});
+
+// ================================================================
+// WATCHDOG ENDPOINTS
+// System health monitoring, anomaly detection, pause/resume controls
+// ================================================================
+
+const {
+  getRecentEvents,
+  getLatestSnapshot,
+  getScoreTrend,
+  getJobDurationStats,
+  getSystemPauseState
+} = require('../agents/watchdogAgent');
+
+// ----------------------------------------------------------------
+// GET /admin/watchdog
+//
+// Returns the full watchdog state: latest score, trend, anomalies,
+// pause state, job duration stats, and recent events.
+// ----------------------------------------------------------------
+router.get('/watchdog', async (req, res) => {
+  try {
+    const [snapshot, trend, events, durationStats, pauseState] = await Promise.all([
+      getLatestSnapshot(),
+      getScoreTrend(24),
+      getRecentEvents(100),
+      getJobDurationStats(),
+      getSystemPauseState()
+    ]);
+
+    // Separate anomalies from health snapshots
+    const anomalies = events.filter(e => e.event_type === 'anomaly');
+    const recentEvents = events.filter(e => e.event_type !== 'health_snapshot');
+
+    // Count unresolved anomalies by severity
+    const unresolvedCritical = anomalies.filter(a => a.severity === 'critical' && !a.resolved).length;
+    const unresolvedWarning  = anomalies.filter(a => a.severity === 'warning' && !a.resolved).length;
+
+    return res.json({
+      confidence:   snapshot?.confidence ?? null,
+      status:       snapshot?.details?.status ?? 'unknown',
+      breakdown:    snapshot?.details?.breakdown ?? {},
+      issues:       snapshot?.details?.issues ?? [],
+      last_check:   snapshot?.created_at ?? null,
+      trend,
+      anomalies: {
+        unresolved_critical: unresolvedCritical,
+        unresolved_warning:  unresolvedWarning,
+        recent: anomalies.slice(0, 20)
+      },
+      events:       recentEvents.slice(0, 50),
+      duration_stats: durationStats,
+      pause_state:  pauseState
+    });
+
+  } catch (err) {
+    console.error('[Admin] Watchdog error:', err.message);
+    return res.status(500).json({ error: 'Failed to load watchdog data' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/watchdog/pause
+//
+// Manually pause all job queues. Body: { reason?: string }
+// ----------------------------------------------------------------
+router.post('/watchdog/pause', async (req, res) => {
+  try {
+    const reason = req.body.reason || 'Manual pause by admin';
+
+    await supabaseAdmin.from('system_state').upsert({
+      key: 'pause',
+      value: {
+        paused: true,
+        reason,
+        paused_at: new Date().toISOString(),
+        paused_by: 'admin'
+      },
+      updated_at: new Date().toISOString()
+    });
+
+    // Pause all processing queues
+    const {
+      publishQueue, commentQueue, mediaScanQueue,
+      performanceQueue, researchQueue, dmQueue
+    } = require('../queues');
+
+    await Promise.all([
+      publishQueue.pause(), commentQueue.pause(),
+      mediaScanQueue.pause(), performanceQueue.pause(),
+      researchQueue.pause(), dmQueue.pause()
+    ]);
+
+    // Log the event
+    await supabaseAdmin.from('system_events').insert({
+      event_type: 'auto_pause',
+      severity: 'warning',
+      category: 'system',
+      title: `System manually paused: ${reason}`,
+      details: { reason, paused_by: 'admin' }
+    });
+
+    return res.json({ paused: true, reason });
+
+  } catch (err) {
+    console.error('[Admin] Pause error:', err.message);
+    return res.status(500).json({ error: 'Failed to pause system' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/watchdog/resume
+//
+// Resume all paused job queues.
+// ----------------------------------------------------------------
+router.post('/watchdog/resume', async (req, res) => {
+  try {
+    await supabaseAdmin.from('system_state').upsert({
+      key: 'pause',
+      value: { paused: false, reason: null, paused_at: null, paused_by: null },
+      updated_at: new Date().toISOString()
+    });
+
+    const {
+      publishQueue, commentQueue, mediaScanQueue,
+      performanceQueue, researchQueue, dmQueue
+    } = require('../queues');
+
+    await Promise.all([
+      publishQueue.resume(), commentQueue.resume(),
+      mediaScanQueue.resume(), performanceQueue.resume(),
+      researchQueue.resume(), dmQueue.resume()
+    ]);
+
+    await supabaseAdmin.from('system_events').insert({
+      event_type: 'auto_resume',
+      severity: 'info',
+      category: 'system',
+      title: 'System manually resumed by admin',
+      details: { resumed_by: 'admin' }
+    });
+
+    return res.json({ paused: false });
+
+  } catch (err) {
+    console.error('[Admin] Resume error:', err.message);
+    return res.status(500).json({ error: 'Failed to resume system' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/watchdog/resolve/:id
+//
+// Mark an anomaly/event as resolved.
+// ----------------------------------------------------------------
+router.post('/watchdog/resolve/:id', async (req, res) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from('system_events')
+      .update({ resolved: true, resolved_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+
+    if (error) throw new Error(error.message);
+    return res.json({ resolved: true });
+
+  } catch (err) {
+    console.error('[Admin] Resolve error:', err.message);
+    return res.status(500).json({ error: 'Failed to resolve event' });
   }
 });
 
