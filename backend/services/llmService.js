@@ -27,6 +27,29 @@ const { loadPrompt } = require('./promptLoader');
 const { buildContext, formatForPrompt } = require('./contextBuilder');
 
 // ----------------------------------------------------------------
+// Sanitize user-submitted content before injecting into LLM prompts.
+// Strips common prompt injection patterns (role overrides, instruction
+// resets, system prompt leaks) while preserving normal marketing text.
+// This is a defense-in-depth layer — the LLM's own safety filters
+// are the primary guard, but we strip obvious attacks before they
+// reach the model.
+// ----------------------------------------------------------------
+function sanitizeForPrompt(text) {
+  if (!text || typeof text !== 'string') return text || '';
+
+  return text
+    // Strip attempts to override system role or inject new instructions
+    .replace(/\b(ignore|forget|disregard|override)\s+(all\s+)?(previous|above|prior|earlier)\s+(instructions?|rules?|prompts?|context)/gi, '[filtered]')
+    .replace(/\b(you are now|act as|pretend to be|switch to|new role|system prompt|reveal your|show me your|return your|output your)\b/gi, '[filtered]')
+    .replace(/\b(do not follow|stop following|bypass|circumvent|jailbreak)\b/gi, '[filtered]')
+    // Strip markdown/formatting that could confuse prompt boundaries
+    .replace(/^---+$/gm, '')
+    .replace(/^#{1,6}\s+(SYSTEM|ASSISTANT|USER|INSTRUCTIONS?|RULES?)/gim, '')
+    // Limit length to prevent context stuffing (2000 chars is plenty for a brief note)
+    .slice(0, 2000);
+}
+
+// ----------------------------------------------------------------
 // How many platforms to generate per LLM call.
 //
 // Each call produces 3 platforms × 3 options = 9 posts ≈ 3,500 output tokens.
@@ -105,20 +128,30 @@ function buildUserPrompt(brief, userContext) {
   // and is formatted as plain text ready for LLM injection.
   const sharedContext = userContext.shared_context || '(No intelligence data available yet — use best practices.)';
 
+  // Sanitize all user-submitted fields to prevent prompt injection.
+  // Enum fields (post_type, objective, tone) are validated in routes/briefs.js
+  // but we sanitize anyway for defense-in-depth. Free-text fields (notes,
+  // target_audience, brand_name, brand_voice) are the primary injection risk.
+  const safeNotes    = sanitizeForPrompt(brief.notes);
+  const safeAudience = sanitizeForPrompt(brief.target_audience);
+  const safeBrand    = sanitizeForPrompt(userContext.brand_name);
+  const safeIndustry = sanitizeForPrompt(userContext.industry);
+  const safeVoice    = sanitizeForPrompt(userContext.brand_voice);
+
   return `Generate ${totalPosts} social media posts (3 options x ${brief.platforms.length} platform${brief.platforms.length > 1 ? 's' : ''}).
 
 BRIEF:
 - Post Type: ${brief.post_type}
 - Objective: ${brief.objective}
 - Tone: ${brief.tone}
-- Target Audience: ${brief.target_audience || 'General audience'}
+- Target Audience: ${safeAudience || 'General audience'}
 - Platforms: ${platformList}
-- Additional Notes: ${brief.notes || 'None'}
+- Additional Notes: ${safeNotes || 'None'}
 
 BRAND CONTEXT:
-- Brand Name: ${userContext.brand_name || 'Not specified'}
-- Industry: ${userContext.industry || 'Not specified'}
-- Brand Voice: ${userContext.brand_voice || brief.tone}
+- Brand Name: ${safeBrand || 'Not specified'}
+- Industry: ${safeIndustry || 'Not specified'}
+- Brand Voice: ${safeVoice || brief.tone}
 
 ${styleSection ? styleSection + '\n\n' : ''}INTELLIGENCE (data from all agents — use this to make smarter posts):
 ${sharedContext}

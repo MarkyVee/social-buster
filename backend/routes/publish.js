@@ -21,6 +21,7 @@
 const express = require('express');
 const router  = express.Router();
 const axios   = require('axios');
+const crypto  = require('crypto');
 
 const { requireAuth }    = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
@@ -79,9 +80,12 @@ router.get('/oauth/meta/callback', async (req, res) => {
   }
 
   try {
-    // Decode the userId we embedded in the state parameter when the flow started
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+    // Verify the OAuth state nonce — prevents state injection attacks.
+    // The nonce was stored in Redis during /oauth/meta/start. If it doesn't exist,
+    // the flow was forged or expired (10 min TTL). Each nonce is single-use.
+    const userId = await cacheGet(`oauth_nonce:${state}`);
+    if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
+    await cacheDel(`oauth_nonce:${state}`);
 
     // Step 1: Exchange the one-time code for a short-lived user access token
     const tokenRes = await axios.get('https://graph.facebook.com/v21.0/oauth/access_token', {
@@ -266,8 +270,10 @@ router.get('/oauth/threads/callback', async (req, res) => {
   }
 
   try {
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+    // Verify the OAuth state nonce — same pattern as Meta callback
+    const userId = await cacheGet(`oauth_nonce:${state}`);
+    if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
+    await cacheDel(`oauth_nonce:${state}`);
 
     // Threads has its own App ID/Secret, separate from the Facebook Login Meta App.
     const threadsAppId     = process.env.THREADS_APP_ID || process.env.META_APP_ID;
@@ -383,8 +389,10 @@ router.get('/oauth/tiktok/callback', async (req, res) => {
   }
 
   try {
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+    // Verify the OAuth state nonce — same pattern as Meta callback
+    const userId = await cacheGet(`oauth_nonce:${state}`);
+    if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
+    await cacheDel(`oauth_nonce:${state}`);
 
     // Exchange code for access token
     const tokenRes = await axios.post(
@@ -461,8 +469,10 @@ router.get('/oauth/linkedin/callback', async (req, res) => {
   }
 
   try {
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+    // Verify the OAuth state nonce — same pattern as Meta callback
+    const userId = await cacheGet(`oauth_nonce:${state}`);
+    if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
+    await cacheDel(`oauth_nonce:${state}`);
 
     // Exchange code for access token
     const tokenRes = await axios.post(
@@ -533,11 +543,13 @@ router.get('/oauth/x/callback', async (req, res) => {
   }
 
   try {
-    // State contains userId + we stored the PKCE code_verifier in Redis keyed by state
-    const userId = Buffer.from(state, 'base64').toString('utf8');
-    if (!userId || userId.length < 10) throw new Error('Invalid state parameter');
+    // Verify the OAuth state nonce — same pattern as Meta callback.
+    // The nonce is cryptographically random, so it's safe to use as the PKCE key too.
+    const userId = await cacheGet(`oauth_nonce:${state}`);
+    if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
+    await cacheDel(`oauth_nonce:${state}`);
 
-    // Retrieve the PKCE code_verifier stored during /start
+    // Retrieve the PKCE code_verifier stored during /start (keyed by the same nonce)
     const codeVerifier = await cacheGet(`x_pkce:${state}`);
     if (!codeVerifier) throw new Error('PKCE session expired. Please try connecting again.');
     await cacheDel(`x_pkce:${state}`);
@@ -971,8 +983,11 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
     });
   }
 
-  // Embed the userId in state so the callback knows which user is connecting
-  const state = Buffer.from(req.user.id).toString('base64');
+  // Generate a cryptographic nonce for the state parameter.
+  // The callback looks up the nonce in Redis to get the userId — this prevents
+  // state injection attacks where an attacker forges a state with another user's ID.
+  const state = crypto.randomBytes(32).toString('hex');
+  cacheSet(`oauth_nonce:${state}`, req.user.id, 600); // 10-minute TTL
 
   // Request scopes directly — no config_id needed.
   // pages_show_list       — list the user's Facebook Pages
@@ -1026,7 +1041,8 @@ router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_conne
     });
   }
 
-  const state = Buffer.from(req.user.id).toString('base64');
+  const state = crypto.randomBytes(32).toString('hex');
+  cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
   const authUrl = `https://threads.net/oauth/authorize` +
     `?client_id=${encodeURIComponent(threadsAppId)}` +
@@ -1052,7 +1068,8 @@ router.post('/oauth/tiktok/start', standardLimiter, checkLimit('platforms_connec
     });
   }
 
-  const state = Buffer.from(req.user.id).toString('base64');
+  const state = crypto.randomBytes(32).toString('hex');
+  cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
   const authUrl = `https://www.tiktok.com/v2/auth/authorize/` +
     `?client_key=${encodeURIComponent(process.env.TIKTOK_CLIENT_KEY)}` +
@@ -1078,7 +1095,8 @@ router.post('/oauth/linkedin/start', standardLimiter, checkLimit('platforms_conn
     });
   }
 
-  const state = Buffer.from(req.user.id).toString('base64');
+  const state = crypto.randomBytes(32).toString('hex');
+  cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
   const authUrl = `https://www.linkedin.com/oauth/v2/authorization` +
     `?response_type=code` +
@@ -1107,8 +1125,9 @@ router.post('/oauth/x/start', standardLimiter, checkLimit('platforms_connected')
     });
   }
 
-  const crypto = require('crypto');
-  const state = Buffer.from(req.user.id).toString('base64');
+  // Generate cryptographic nonce for state (same pattern as all other platforms)
+  const state = crypto.randomBytes(32).toString('hex');
+  await cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
   // Generate PKCE code_verifier (43-128 chars, URL-safe)
   const codeVerifier = crypto.randomBytes(32).toString('base64url');
@@ -1116,7 +1135,7 @@ router.post('/oauth/x/start', standardLimiter, checkLimit('platforms_connected')
   // Generate code_challenge = base64url(sha256(code_verifier))
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 
-  // Store code_verifier in Redis (5 min TTL) keyed by state so the callback can retrieve it
+  // Store code_verifier in Redis (5 min TTL) keyed by the nonce (not userId)
   await cacheSet(`x_pkce:${state}`, codeVerifier, 300);
 
   const authUrl = `https://x.com/i/oauth2/authorize` +

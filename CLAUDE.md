@@ -5,6 +5,37 @@ It is the authoritative context document for this codebase.
 
 ---
 
+## Documentation Rules (Auto-Logging)
+
+Claude MUST keep the following logs in `.claude/docs/` updated automatically during every session. These are Obsidian-compatible markdown files. Use `[[wiki-links]]` when cross-referencing between docs.
+
+### What to log and where
+
+| Event | File | When |
+|-------|------|------|
+| Architecture or design decision | [[DECISIONS]] | Any non-trivial "we chose X over Y" moment |
+| Bug, problem, or blocker discovered | [[ISSUES]] | When you find something broken or blocking |
+| Feature idea or enhancement discussed | [[FEATURES]] | When a new idea comes up, even casually |
+| Work completed in a session | [[CHANGELOG]] | End of each work session or after significant milestone |
+
+### Rules
+1. **Log immediately** — don't batch. When a decision is made, log it right then.
+2. **Use the format** already established in each file (ID, date, status, description, reason).
+3. **Update status** — when an issue is resolved or a feature is built, move it and update its status.
+4. **Cross-link** — use `[[DECISIONS]]`, `[[ISSUES]]`, `[[FEATURES]]` wiki-links to connect related entries.
+5. **Keep [[SYSTEM_OVERVIEW]]** current — update the "Current Focus" section when priorities shift.
+6. **Increment IDs** — ISSUE-001, ISSUE-002, FEAT-001, FEAT-002, etc.
+7. **Never delete entries** — move them to the appropriate status section (resolved, done, wont-fix).
+
+### Files
+- `.claude/docs/DECISIONS.md` — Decision log (architecture, design, tool choices)
+- `.claude/docs/ISSUES.md` — Bug and problem tracker
+- `.claude/docs/FEATURES.md` — Feature ideas and backlog
+- `.claude/docs/CHANGELOG.md` — What was built/shipped per session
+- `.claude/docs/SYSTEM_OVERVIEW.md` — Current focus, blockers, next action (hub page)
+
+---
+
 ## Project Overview
 
 **Social Buster** is an enterprise-grade AI-powered social media marketing platform.
@@ -410,3 +441,38 @@ Error 506 = "Duplicate content." Facebook rejects posts with identical text with
 2. Reconnect Facebook in the app (to grant new messaging scopes)
 3. Register Meta webhook (for multi-step DM reply handling)
 4. Test with a published Facebook post: add trigger keyword, comment on it, verify DM arrives
+
+## Decision Logging Rule
+
+When a meaningful system or architecture decision is made:
+
+- Suggest logging it in DECISIONS.md
+- Format it as:
+
+- Date:
+- Decision:
+- Reason:
+- Impact:
+
+Do not automatically modify files.
+Wait for user confirmation before writing.
+
+## Project Awareness Rule
+
+Always check and follow the documentation inside:
+
+/.claude/docs/
+
+(This is the source of truth for system-level decisions, priorities, and direction)
+
+Key files:
+- SYSTEM_OVERVIEW.md (current focus and priorities)
+- DECISIONS.md (past decisions and reasoning)
+- handoff.md (system state and architecture)
+
+Before suggesting solutions:
+1. Read SYSTEM_OVERVIEW
+2. Align with the current "Next Action"
+3. Respect past decisions in DECISIONS
+
+If a suggestion conflicts with documented decisions, ask before proceeding.

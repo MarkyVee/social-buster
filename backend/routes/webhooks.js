@@ -90,25 +90,29 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   res.sendStatus(200);
 
   try {
-    // Verify signature if FACEBOOK_APP_SECRET is set
-    const appSecret = process.env.FACEBOOK_APP_SECRET;
-    if (appSecret) {
-      const signature = req.headers['x-hub-signature-256'];
-      if (!signature) {
-        console.warn('[Webhooks] Missing X-Hub-Signature-256 header — ignoring');
-        return;
-      }
+    // MANDATORY signature verification — reject ALL webhooks if app secret is not configured.
+    // Without this, anyone could POST fake webhook events and trigger DM automation.
+    const appSecret = process.env.FACEBOOK_APP_SECRET || process.env.META_APP_SECRET;
+    if (!appSecret) {
+      console.error('[Webhooks] FACEBOOK_APP_SECRET / META_APP_SECRET not set — rejecting webhook (security)');
+      return;
+    }
 
-      const rawBody = typeof req.body === 'string' ? req.body : req.body.toString('utf8');
-      const expected = 'sha256=' + crypto
-        .createHmac('sha256', appSecret)
-        .update(rawBody)
-        .digest('hex');
+    const signature = req.headers['x-hub-signature-256'];
+    if (!signature) {
+      console.warn('[Webhooks] Missing X-Hub-Signature-256 header — rejecting');
+      return;
+    }
 
-      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-        console.warn('[Webhooks] Invalid signature — payload rejected');
-        return;
-      }
+    const rawBody = typeof req.body === 'string' ? req.body : req.body.toString('utf8');
+    const expected = 'sha256=' + crypto
+      .createHmac('sha256', appSecret)
+      .update(rawBody)
+      .digest('hex');
+
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+      console.warn('[Webhooks] Invalid signature — payload rejected');
+      return;
     }
 
     // Parse the body (may already be parsed by express.json or still raw)
