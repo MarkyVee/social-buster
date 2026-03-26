@@ -19,6 +19,64 @@ const { publishQueue, mediaProcessQueue, mediaAnalysisQueue } = require('../queu
 router.use(requireAuth, enforceTenancy);
 
 // ----------------------------------------------------------------
+// GET /posts/dashboard-trends
+// Returns 7-day daily counts for sparkline charts on the main dashboard.
+// ----------------------------------------------------------------
+router.get('/dashboard-trends', standardLimiter, async (req, res) => {
+  try {
+    // Build array of last 7 day strings (YYYY-MM-DD)
+    const now = new Date();
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().slice(0, 10));
+    }
+
+    // Fetch posts created in the last 7 days
+    const { data: posts } = await req.db
+      .from('posts')
+      .select('status, published_at, created_at')
+      .gte('created_at', days[0] + 'T00:00:00Z');
+
+    // Fetch DM conversations from last 7 days
+    const { data: convs } = await req.db
+      .from('dm_conversations')
+      .select('created_at, status')
+      .gte('created_at', days[0] + 'T00:00:00Z');
+
+    // Helper: count items per day by filter
+    const countPerDay = (items, filterFn, dateField) =>
+      days.map(d => ({
+        date: d,
+        count: (items || []).filter(item => filterFn(item) && item[dateField]?.slice(0, 10) === d).length
+      }));
+
+    const published = countPerDay(posts, p => p.status === 'published', 'published_at');
+    const scheduled = countPerDay(posts, p => ['scheduled', 'approved'].includes(p.status), 'created_at');
+    const conversations = countPerDay(convs, () => true, 'created_at');
+    const leads = countPerDay(convs, c => c.status === 'completed', 'created_at');
+
+    // Compute delta (today vs yesterday)
+    const delta = (arr) => {
+      const today = arr[arr.length - 1].count;
+      const yesterday = arr[arr.length - 2].count;
+      return { today, yesterday, change: today - yesterday };
+    };
+
+    res.json({
+      published:     { trend: published,     ...delta(published) },
+      scheduled:     { trend: scheduled,     ...delta(scheduled) },
+      conversations: { trend: conversations, ...delta(conversations) },
+      leads:         { trend: leads,         ...delta(leads) }
+    });
+  } catch (err) {
+    console.error('[Posts] Dashboard trends error:', err.message);
+    res.status(500).json({ error: 'Failed to load trends' });
+  }
+});
+
+// ----------------------------------------------------------------
 // GET /posts
 // List all posts for the current user.
 // Optional query params: ?status=draft&platform=instagram&brief_id=uuid

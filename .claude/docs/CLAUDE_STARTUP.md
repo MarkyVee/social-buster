@@ -1,19 +1,21 @@
-## Claude Startup Command
+## Claude Startup Instructions
 
-Read and follow the rules in CLAUDE.md.
+You have already loaded the root CLAUDE.md which contains all core behavioral rules and documentation discipline.
 
-Then read:
-/.claude/docs/SYSTEM_OVERVIEW.md
-/.claude/docs/DECISIONS.md
-/.claude/docs/handoff.md
+Now read these key files for current context:
 
-Also be aware of (read if relevant to the task):
-/.claude/docs/feature-roadmap-handoff.md
-/.claude/docs/platform_publishing_guide.md
+- `.claude/docs/SYSTEM_OVERVIEW.md` (highest priority — current focus, blockers, next actions)
+- `.claude/docs/ISSUES.md` (any critical open issues)
 
-Summarize:
-1. Current system state
-2. Current focus
-3. Next action
+Read the following only if they are relevant to the current task:
+- `.claude/docs/DECISIONS.md`
+- `.claude/docs/handoff.md`
+- `.claude/docs/feature-roadmap-handoff.md`
+- `.claude/docs/platform_publishing_guide.md`
 
-Then help the user execute the next action listed in [[SYSTEM_OVERVIEW]].
+After reading, give a brief summary of:
+1. Current system state / focus
+2. Any critical open issues or blockers
+3. The immediate next action from SYSTEM_OVERVIEW
+
+Then wait for my instructions. Do not start working on the next action until I confirm or give a specific task.

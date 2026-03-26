@@ -1,6 +1,6 @@
 # Issues Log
 
-Track bugs, problems, and blockers discovered during development.
+Track bugs, problems, and blockers discovered during development. It is okay to not have the answer. We can get second opinions. 
 
 ## Format
 - **ID:** ISSUE-001

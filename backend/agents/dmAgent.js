@@ -320,20 +320,8 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
 
   let nextMessage = replacePlaceholders(nextStep.message_template, placeholders);
 
-  // Append resource URL to the final step's message (if configured on the automation).
-  // For multi-step flows, the resource is delivered after all info has been collected.
-  const isLastStep = nextStepOrder >= steps.length;
-  if (isLastStep) {
-    // Load the automation to check for resource_url
-    const { data: auto } = await supabaseAdmin
-      .from('dm_automations')
-      .select('resource_url')
-      .eq('id', conversation.automation_id)
-      .single();
-    if (auto?.resource_url) {
-      nextMessage += `\n\n${auto.resource_url}`;
-    }
-  }
+  // Resource URL is delivered as a separate message AFTER all data is collected
+  // (handled in the isFinalStep block above when the last reply comes in)
 
   // Update conversation state
   const now = new Date().toISOString();
@@ -367,7 +355,7 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     recipientId:    senderPlatformId,
     messageText:    nextMessage,
     stepOrder:      nextStepOrder,
-    isFinalStep:    nextStepOrder >= steps.length
+    isFinalStep:    false  // Never mark as final when SENDING a question — completion happens when the reply is RECEIVED
   }, {
     jobId: `dm-${conversation.id}-step-${nextStepOrder}`,
     removeOnComplete: true

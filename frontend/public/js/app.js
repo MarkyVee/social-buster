@@ -19,6 +19,16 @@ const App = {
 };
 
 // ============================================================
+// Chart.js instance management — destroy all before re-rendering views
+// ============================================================
+window._chartInstances = [];
+function registerChart(chart) { window._chartInstances.push(chart); return chart; }
+function destroyAllCharts() {
+  window._chartInstances.forEach(c => { try { c.destroy(); } catch (_) {} });
+  window._chartInstances = [];
+}
+
+// ============================================================
 // Token storage helpers
 // Store the JWT in localStorage so it survives page refreshes.
 // ============================================================
@@ -376,6 +386,7 @@ function navigate(view) {
     if (typeof stopAnalysisPoller === 'function') stopAnalysisPoller();
   }
   App.currentView = view;
+  destroyAllCharts();
   window.location.hash = view;
   renderView(view);
   updateSidebarActiveState(view);
@@ -736,6 +747,51 @@ function startUnreadBadgePoller() {
 // VIEWS — placeholder renderers (will be filled in per phase)
 // ============================================================
 
+// ============================================================
+// Chart.js helper — render a tiny sparkline in a KPI card
+// ============================================================
+function renderSparkline(canvasId, dataPoints, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !window.Chart) return;
+  registerChart(new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: dataPoints.map((_, i) => i),
+      datasets: [{
+        data: dataPoints.map(d => d.count),
+        borderColor: color,
+        backgroundColor: color + '20',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false } },
+      animation: { duration: 600 }
+    }
+  }));
+}
+
+// Show delta arrow (▲/▼) comparing today vs yesterday
+function renderKpiDelta(elementId, delta) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  if (delta === 0 || delta === undefined || delta === null) {
+    el.className = 'kpi-card__delta kpi-card__delta--flat';
+    el.textContent = '— same as yesterday';
+  } else {
+    const arrow = delta > 0 ? '▲' : '▼';
+    const cls = delta > 0 ? 'up' : 'down';
+    el.className = `kpi-card__delta kpi-card__delta--${cls}`;
+    el.textContent = `${arrow} ${Math.abs(delta)} vs yesterday`;
+  }
+}
+
 async function renderDashboard(el) {
   const brandName = App.user?.profile?.brand_name || 'your brand';
   const status    = getProfileCompletionStatus();
@@ -761,26 +817,34 @@ async function renderDashboard(el) {
 
     ${profileBanner}
 
-    <div class="stats-grid">
-      <div class="stat-card" onclick="navigate('posts')" style="cursor:pointer;" title="View generated posts">
-        <div class="stat-label">Posts Published</div>
-        <div class="stat-value" id="dash-published">—</div>
+    <div class="kpi-grid">
+      <div class="kpi-card kpi-card--green" onclick="navigate('posts')" title="View generated posts">
+        <div class="kpi-card__label">Posts Published</div>
+        <div class="kpi-card__value" id="dash-published">—</div>
+        <div class="kpi-card__delta" id="dash-published-delta"></div>
+        <canvas class="kpi-card__sparkline" id="spark-published"></canvas>
       </div>
-      <div class="stat-card" onclick="navigate('queue')" style="cursor:pointer;" title="View publishing queue">
-        <div class="stat-label">Posts Scheduled</div>
-        <div class="stat-value" id="dash-scheduled">—</div>
+      <div class="kpi-card kpi-card--blue" onclick="navigate('queue')" title="View publishing queue">
+        <div class="kpi-card__label">Posts Scheduled</div>
+        <div class="kpi-card__value" id="dash-scheduled">—</div>
+        <div class="kpi-card__delta" id="dash-scheduled-delta"></div>
+        <canvas class="kpi-card__sparkline" id="spark-scheduled"></canvas>
       </div>
-      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="View DM automations">
-        <div class="stat-label">DM Conversations</div>
-        <div class="stat-value" id="dash-conversations">—</div>
+      <div class="kpi-card kpi-card--indigo" onclick="navigate('automations')" title="View DM automations">
+        <div class="kpi-card__label">DM Conversations</div>
+        <div class="kpi-card__value" id="dash-conversations">—</div>
+        <div class="kpi-card__delta" id="dash-conversations-delta"></div>
+        <canvas class="kpi-card__sparkline" id="spark-conversations"></canvas>
       </div>
-      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="View collected leads">
-        <div class="stat-label">Leads Captured</div>
-        <div class="stat-value" id="dash-leads">—</div>
+      <div class="kpi-card kpi-card--amber" onclick="navigate('automations')" title="View collected leads">
+        <div class="kpi-card__label">Leads Captured</div>
+        <div class="kpi-card__value" id="dash-leads">—</div>
+        <div class="kpi-card__delta" id="dash-leads-delta"></div>
+        <canvas class="kpi-card__sparkline" id="spark-leads"></canvas>
       </div>
-      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="DM conversion rate">
-        <div class="stat-label">DM Conv. Rate</div>
-        <div class="stat-value" id="dash-dm-rate">—</div>
+      <div class="kpi-card kpi-card--purple" onclick="navigate('automations')" title="DM conversion rate">
+        <div class="kpi-card__label">DM Conv. Rate</div>
+        <div class="kpi-card__value" id="dash-dm-rate">—</div>
       </div>
     </div>
 
@@ -798,18 +862,19 @@ async function renderDashboard(el) {
     </div>
   `;
 
-  // Fetch stats in parallel — don't block the page render
+  // Fetch stats + trends in parallel — don't block the page render
   try {
-    const [postsRes, dmDashRes] = await Promise.all([
+    const [postsRes, dmDashRes, trendsRes] = await Promise.all([
       apiFetch('/posts'),
-      apiFetch('/automations/dashboard').catch(() => null)
+      apiFetch('/automations/dashboard').catch(() => null),
+      apiFetch('/posts/dashboard-trends').catch(() => null)
     ]);
 
     const posts = postsRes?.posts || [];
     const publishedCount = posts.filter(p => p.status === 'published').length;
     const scheduledCount = posts.filter(p => ['scheduled', 'approved'].includes(p.status)).length;
 
-    // Update stat cards with real numbers
+    // Update KPI card values
     const publishedEl = document.getElementById('dash-published');
     const scheduledEl = document.getElementById('dash-scheduled');
     const convsEl     = document.getElementById('dash-conversations');
@@ -823,6 +888,20 @@ async function renderDashboard(el) {
     if (rateEl) {
       const rate = dmDashRes?.summary?.conversion_rate;
       rateEl.textContent = rate !== undefined && rate !== null ? rate + '%' : '—';
+    }
+
+    // Render sparklines and delta arrows from trend data
+    if (trendsRes && window.Chart) {
+      const sparkColors = {
+        published: '#22c55e', scheduled: '#3b82f6',
+        conversations: '#6366f1', leads: '#f59e0b'
+      };
+      ['published', 'scheduled', 'conversations', 'leads'].forEach(key => {
+        const data = trendsRes[key];
+        if (!data) return;
+        renderSparkline('spark-' + key, data.trend, sparkColors[key]);
+        renderKpiDelta('dash-' + key + '-delta', data.change);
+      });
     }
 
     // Show recent published posts (last 5)
@@ -2888,81 +2967,77 @@ async function renderAutomationsView(el) {
       <div class="page-subtitle">Performance dashboard, workflows, and collected leads.</div>
     </div>
 
-    <!-- KPI cards row -->
-    <div id="dm-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px;">
-      <div class="card" style="padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Conversion Rate</div>
-        <div id="kpi-conversion" style="font-size:1.8rem;font-weight:700;color:var(--success);">—</div>
-        <div class="text-muted text-sm" id="kpi-conv-detail"></div>
+    <!-- KPI cards row — Power BI style -->
+    <div class="kpi-grid">
+      <div class="kpi-card kpi-card--green">
+        <div class="kpi-card__label">Conversion Rate</div>
+        <div class="kpi-card__value" id="kpi-conversion">—</div>
+        <div class="kpi-card__sub" id="kpi-conv-detail"></div>
       </div>
-      <div class="card" style="padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Total Conversations</div>
-        <div id="kpi-conversations" style="font-size:1.8rem;font-weight:700;">—</div>
+      <div class="kpi-card kpi-card--indigo">
+        <div class="kpi-card__label">Total Conversations</div>
+        <div class="kpi-card__value" id="kpi-conversations">—</div>
       </div>
-      <div class="card" style="padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Leads Collected</div>
-        <div id="kpi-leads" style="font-size:1.8rem;font-weight:700;">—</div>
+      <div class="kpi-card kpi-card--amber">
+        <div class="kpi-card__label">Leads Collected</div>
+        <div class="kpi-card__value" id="kpi-leads">—</div>
       </div>
-      <div class="card" style="padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Avg Completion</div>
-        <div id="kpi-avg-time" style="font-size:1.8rem;font-weight:700;">—</div>
+      <div class="kpi-card kpi-card--blue">
+        <div class="kpi-card__label">Avg Completion</div>
+        <div class="kpi-card__value" id="kpi-avg-time">—</div>
       </div>
-      <div class="card" style="padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Active Automations</div>
-        <div id="kpi-active" style="font-size:1.8rem;font-weight:700;">—</div>
-      </div>
-    </div>
-
-    <!-- DM usage + funnel row -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">
-      <!-- Funnel -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">Conversation Funnel</div></div>
-        <div id="dm-funnel" style="padding:0 16px 16px;">
-          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
-        </div>
-      </div>
-      <!-- Daily usage -->
-      <div class="card">
-        <div class="card-header"><div class="card-title">Daily DM Usage</div></div>
-        <div id="dm-usage-bars" style="padding:0 16px 16px;">
-          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
-        </div>
+      <div class="kpi-card kpi-card--purple">
+        <div class="kpi-card__label">Active Automations</div>
+        <div class="kpi-card__value" id="kpi-active">—</div>
       </div>
     </div>
 
-    <!-- 14-day trend -->
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card-header"><div class="card-title">Conversations — Last 14 Days</div></div>
-      <div id="dm-trend" style="padding:0 16px 16px;">
-        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+    <!-- Funnel donut + Daily usage row -->
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-card__title">Conversation Funnel</div>
+        <div id="dm-funnel" style="display:flex;justify-content:center;min-height:260px;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card__title">Daily DM Usage</div>
+        <div id="dm-usage-bars" style="padding:0;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 14-day trend + keyword performance row -->
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-card__title">Conversations — Last 14 Days</div>
+        <div id="dm-trend" style="min-height:220px;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card__title">Keyword Performance</div>
+        <div id="keyword-perf" style="min-height:220px;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
       </div>
     </div>
 
     <!-- Per-automation performance table -->
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card-header">
-        <div class="card-title">Automation Performance</div>
-        <div class="text-muted text-sm">Set up automations from the "DM Automation" button on each published post.</div>
-      </div>
+    <div class="chart-card">
+      <div class="chart-card__title">Automation Performance</div>
+      <div class="text-muted text-sm" style="margin-top:-12px;margin-bottom:16px;">Set up automations from the "DM Automation" button on each published post.</div>
       <div id="automations-perf-list">
         <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
       </div>
     </div>
 
-    <!-- Keyword performance -->
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card-header"><div class="card-title">Keyword Performance</div></div>
-      <div id="keyword-perf">
-        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
-      </div>
-    </div>
-
     <!-- Leads table -->
-    <div class="card">
-      <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <div class="chart-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <div>
-          <div class="card-title">Collected Leads</div>
+          <div class="chart-card__title" style="margin-bottom:2px;">Collected Leads</div>
           <div class="text-muted text-sm">Data collected from DM conversations.</div>
         </div>
         <button class="btn btn-sm btn-secondary" onclick="exportLeadsCSV()">Export CSV</button>
@@ -3025,39 +3100,51 @@ function renderDmKpis(dash) {
   if (activeEl) activeEl.textContent = `${s.active_automations}/${s.total_automations}`;
 }
 
-// --- Funnel visualization ---
+// --- Funnel visualization (Chart.js doughnut) ---
 function renderDmFunnel(funnel) {
   const el = document.getElementById('dm-funnel');
   if (!el) return;
   const total = Object.values(funnel).reduce((a, b) => a + b, 0);
   if (total === 0) {
-    el.innerHTML = '<div class="text-muted" style="padding:12px;text-align:center;">No conversations yet.</div>';
+    el.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center;">No conversations yet.</div>';
     return;
   }
 
   const stages = [
-    { key: 'completed',  label: 'Completed',  color: '#27ae60' },
-    { key: 'active',     label: 'Active',      color: '#3498db' },
-    { key: 'expired',    label: 'Expired',     color: '#95a5a6' },
-    { key: 'opted_out',  label: 'Opted Out',   color: '#e67e22' },
-    { key: 'failed',     label: 'Failed',      color: '#e74c3c' }
+    { key: 'completed', label: 'Completed', color: '#22c55e' },
+    { key: 'active',    label: 'Active',    color: '#3b82f6' },
+    { key: 'expired',   label: 'Expired',   color: '#94a3b8' },
+    { key: 'opted_out', label: 'Opted Out', color: '#f59e0b' },
+    { key: 'failed',    label: 'Failed',    color: '#ef4444' }
   ];
 
-  el.innerHTML = stages.map(s => {
-    const count = funnel[s.key] || 0;
-    const pct = Math.round((count / total) * 100);
-    return `
-      <div style="margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span class="text-sm">${s.label}</span>
-          <span class="text-sm text-muted">${count} (${pct}%)</span>
-        </div>
-        <div style="background:var(--bg-secondary);border-radius:4px;height:8px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:${s.color};border-radius:4px;transition:width 0.3s;"></div>
-        </div>
-      </div>
-    `;
-  }).join('');
+  el.innerHTML = '<canvas id="funnel-donut" style="max-height:250px;"></canvas>';
+  if (!window.Chart) return;
+
+  registerChart(new Chart(document.getElementById('funnel-donut'), {
+    type: 'doughnut',
+    data: {
+      labels: stages.map(s => s.label),
+      datasets: [{
+        data: stages.map(s => funnel[s.key] || 0),
+        backgroundColor: stages.map(s => s.color),
+        borderWidth: 0,
+        hoverOffset: 6
+      }]
+    },
+    options: {
+      cutout: '62%',
+      plugins: {
+        legend: { position: 'bottom', labels: { padding: 14, usePointStyle: true, pointStyle: 'circle', font: { size: 12 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.label}: ${ctx.raw} (${Math.round(ctx.raw / total * 100)}%)`
+          }
+        }
+      },
+      animation: { duration: 700 }
+    }
+  }));
 }
 
 // --- Daily DM usage bars (Facebook + Instagram) ---
@@ -3089,29 +3176,42 @@ function renderDmUsageBars(usage) {
   }).join('');
 }
 
-// --- 14-day trend (CSS bar chart) ---
+// --- 14-day trend (Chart.js bar chart) ---
 function renderDmTrend(trend) {
   const el = document.getElementById('dm-trend');
-  if (!el || !trend || trend.length === 0) return;
+  if (!el || !trend || trend.length === 0) {
+    if (el) el.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center;">No data yet.</div>';
+    return;
+  }
+  if (!window.Chart) return;
 
-  const maxCount = Math.max(...trend.map(d => d.count), 1);
-  const barWidth = Math.floor(100 / trend.length);
-
-  el.innerHTML = `
-    <div style="display:flex;align-items:flex-end;gap:4px;height:120px;padding-top:8px;">
-      ${trend.map(d => {
-        const heightPct = Math.max(2, (d.count / maxCount) * 100);
-        const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        return `
-          <div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;" title="${dayLabel}: ${d.count} conversations">
-            <span class="text-sm" style="margin-bottom:4px;font-size:0.65rem;color:var(--text-muted);">${d.count || ''}</span>
-            <div style="width:100%;max-width:40px;height:${heightPct}%;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px;transition:height 0.3s;"></div>
-            <span class="text-sm" style="margin-top:4px;font-size:0.6rem;color:var(--text-muted);white-space:nowrap;">${dayLabel}</span>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
+  el.innerHTML = '<canvas id="trend-bar"></canvas>';
+  registerChart(new Chart(document.getElementById('trend-bar'), {
+    type: 'bar',
+    data: {
+      labels: trend.map(d => {
+        const dt = new Date(d.date + 'T12:00:00');
+        return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      }),
+      datasets: [{
+        label: 'Conversations',
+        data: trend.map(d => d.count),
+        backgroundColor: '#6366f1',
+        borderRadius: 4,
+        maxBarThickness: 32
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } },
+        x: { grid: { display: false } }
+      },
+      animation: { duration: 600 }
+    }
+  }));
 }
 
 // --- Per-automation performance table ---
@@ -3165,8 +3265,15 @@ function renderAutomationPerfTable(automations) {
                 <td style="padding:8px;color:var(--success);">${a.completed}</td>
                 <td style="padding:8px;color:var(--text-muted);">${a.expired}</td>
                 <td style="padding:8px;color:#e67e22;">${a.opted_out}</td>
-                <td style="padding:8px;font-weight:700;color:${rateColor};">
-                  ${a.total > 0 ? a.conversion_rate + '%' : '—'}
+                <td style="padding:8px;">
+                  ${a.total > 0 ? `
+                    <div class="rate-gauge">
+                      <span class="rate-gauge__pct" style="color:${rateColor};">${a.conversion_rate}%</span>
+                      <div class="rate-gauge__bar">
+                        <div class="rate-gauge__fill" style="width:${Math.min(100, a.conversion_rate)}%;background:${rateColor};"></div>
+                      </div>
+                    </div>
+                  ` : '—'}
                 </td>
                 <td style="padding:8px;">
                   <span class="badge badge-${a.active ? 'published' : 'draft'}">
@@ -3182,47 +3289,39 @@ function renderAutomationPerfTable(automations) {
   `;
 }
 
-// --- Keyword performance ---
+// --- Keyword performance (Chart.js horizontal bar) ---
 function renderKeywordPerf(keywords) {
   const el = document.getElementById('keyword-perf');
   if (!el) return;
 
   if (!keywords || keywords.length === 0) {
-    el.innerHTML = '<div class="text-muted" style="padding:16px;text-align:center;">No keyword data yet.</div>';
+    el.innerHTML = '<div class="text-muted" style="padding:24px;text-align:center;">No keyword data yet.</div>';
     return;
   }
+  if (!window.Chart) return;
 
-  el.innerHTML = `
-    <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border);text-align:left;">
-            <th style="padding:8px;">Keyword</th>
-            <th style="padding:8px;">Triggered</th>
-            <th style="padding:8px;">Completed</th>
-            <th style="padding:8px;">Conv. Rate</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${keywords.map(k => {
-            const rateColor = k.conversion_rate >= 50 ? 'var(--success)' : k.conversion_rate >= 25 ? '#e67e22' : 'var(--danger)';
-            return `
-              <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:8px;">
-                  <span class="badge" style="background:var(--primary-light);color:var(--primary);">${escapeHtml(k.keyword)}</span>
-                </td>
-                <td style="padding:8px;">${k.total}</td>
-                <td style="padding:8px;color:var(--success);">${k.completed}</td>
-                <td style="padding:8px;font-weight:700;color:${rateColor};">
-                  ${k.total > 0 ? k.conversion_rate + '%' : '—'}
-                </td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
+  el.innerHTML = '<canvas id="keyword-bar"></canvas>';
+  registerChart(new Chart(document.getElementById('keyword-bar'), {
+    type: 'bar',
+    data: {
+      labels: keywords.map(k => k.keyword),
+      datasets: [
+        { label: 'Triggered',  data: keywords.map(k => k.total),     backgroundColor: '#6366f1' },
+        { label: 'Completed',  data: keywords.map(k => k.completed), backgroundColor: '#22c55e' }
+      ]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', font: { size: 12 } } } },
+      scales: {
+        x: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } },
+        y: { grid: { display: false } }
+      },
+      animation: { duration: 600 }
+    }
+  }));
 }
 
 // --- Leads table (uses single /automations/leads endpoint, no N+1) ---
@@ -3259,8 +3358,8 @@ function renderLeadsTableDirect(leads) {
               <td style="padding:8px;">${escapeHtml(lead.automation_name || '—')}</td>
               <td style="padding:8px;">
                 ${(lead.dm_collected_data || []).map(d =>
-                  `<span class="text-sm"><strong>${escapeHtml(d.field_name)}:</strong> ${escapeHtml(d.field_value)}</span>`
-                ).join('<br/>') || '<span class="text-muted text-sm">—</span>'}
+                  `<span class="field-pill"><span class="field-pill__label">${escapeHtml(d.field_name)}</span><span class="field-pill__value">${escapeHtml(d.field_value)}</span></span>`
+                ).join('') || '<span class="text-muted text-sm">—</span>'}
               </td>
               <td style="padding:8px;">
                 <span class="badge badge-${lead.status === 'completed' ? 'published' : lead.status === 'active' ? 'scheduled' : 'draft'}">

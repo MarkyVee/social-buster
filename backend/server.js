@@ -120,7 +120,7 @@ app.use(helmet({
     useDefaults: false,
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'"],   // Our frontend uses inline scripts + onclick handlers
+      scriptSrc:  ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],   // Our frontend uses inline scripts + onclick handlers; Chart.js from jsDelivr CDN
       styleSrc:   ["'self'", "'unsafe-inline'"],   // Our frontend uses inline styles
       imgSrc:     ["'self'", "data:", "blob:", "https:"],  // Allow images from Supabase Storage, Cloudflare, etc.
       connectSrc: ["'self'", "https:"],             // Allow API calls to Supabase, platform APIs
