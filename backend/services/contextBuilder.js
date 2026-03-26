@@ -265,7 +265,7 @@ async function buildCommentSection(userId) {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const { data: comments } = await supabaseAdmin
-      .from('post_comments')
+      .from('comments')
       .select('comment_text, sentiment, platform')
       .eq('user_id', userId)
       .gte('created_at', cutoff)

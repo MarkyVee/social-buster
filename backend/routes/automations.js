@@ -6,13 +6,15 @@
  *
  * Routes:
  *   GET    /api/automations              — list all automations for the user
+ *   GET    /api/automations/stats        — DM usage stats (daily counts, limits)
+ *   GET    /api/automations/dashboard    — computed KPIs (conversion, funnel, trends, keyword perf)
+ *   GET    /api/automations/leads/export — CSV export of all leads
+ *   GET    /api/automations/leads        — all collected leads (single query, no N+1)
  *   GET    /api/automations/:id          — get one automation with its steps
+ *   GET    /api/automations/:id/leads    — list collected leads for one automation
  *   POST   /api/automations              — create a new automation (with steps)
  *   PUT    /api/automations/:id          — update an automation (with steps)
  *   DELETE /api/automations/:id          — delete an automation
- *   GET    /api/automations/:id/leads    — list collected leads for an automation
- *   GET    /api/automations/leads/export — CSV export of all leads
- *   GET    /api/automations/stats        — DM usage stats (daily counts, limits)
  *
  * All routes require authentication (auth middleware).
  * All routes use req.db (user-scoped — never supabaseAdmin).
@@ -105,6 +107,145 @@ router.get('/stats', async (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// GET /api/automations/dashboard — computed KPIs for the DM dashboard.
+//
+// Returns: conversion_rate, funnel (status breakdown), per-automation
+// performance, daily trend (last 14 days), keyword performance.
+// All computed server-side so the frontend doesn't need N+1 queries.
+// ----------------------------------------------------------------
+router.get('/dashboard', async (req, res) => {
+  try {
+    // Fetch all conversations for this user in one query
+    const { data: conversations, error: convErr } = await req.db
+      .from('dm_conversations')
+      .select('id, automation_id, status, platform, created_at, last_reply_at');
+
+    if (convErr) throw convErr;
+
+    const allConvs = conversations || [];
+
+    // --- Funnel: count by status ---
+    const funnel = { active: 0, completed: 0, expired: 0, opted_out: 0, failed: 0 };
+    allConvs.forEach(c => {
+      if (funnel[c.status] !== undefined) funnel[c.status]++;
+    });
+    const totalConvs = allConvs.length;
+    const conversionRate = totalConvs > 0
+      ? Math.round((funnel.completed / totalConvs) * 100)
+      : 0;
+
+    // --- Daily trend: conversations started per day (last 14 days) ---
+    const dailyTrend = [];
+    const now = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const day = new Date(now);
+      day.setDate(day.getDate() - i);
+      const dateStr = day.toISOString().slice(0, 10); // YYYY-MM-DD
+      const count = allConvs.filter(c =>
+        c.created_at && c.created_at.slice(0, 10) === dateStr
+      ).length;
+      dailyTrend.push({ date: dateStr, count });
+    }
+
+    // --- Per-automation performance ---
+    const { data: automations, error: autoErr } = await req.db
+      .from('dm_automations')
+      .select('id, name, trigger_keywords, flow_type, active, posts ( platform )');
+
+    if (autoErr) throw autoErr;
+
+    const automationPerf = (automations || []).map(a => {
+      const autoConvs = allConvs.filter(c => c.automation_id === a.id);
+      const completed = autoConvs.filter(c => c.status === 'completed').length;
+      const total = autoConvs.length;
+      return {
+        id:              a.id,
+        name:            a.name || 'Unnamed',
+        platform:        a.posts?.platform || '—',
+        flow_type:       a.flow_type,
+        active:          a.active,
+        keywords:        a.trigger_keywords || [],
+        total:           total,
+        completed:       completed,
+        expired:         autoConvs.filter(c => c.status === 'expired').length,
+        opted_out:       autoConvs.filter(c => c.status === 'opted_out').length,
+        conversion_rate: total > 0 ? Math.round((completed / total) * 100) : 0
+      };
+    });
+
+    // --- Keyword performance (aggregate across all automations) ---
+    // Map each keyword to the automations that use it, sum their conversations
+    const keywordMap = {};
+    for (const a of automationPerf) {
+      for (const kw of a.keywords) {
+        const key = kw.toLowerCase().trim();
+        if (!keywordMap[key]) {
+          keywordMap[key] = { keyword: kw, total: 0, completed: 0 };
+        }
+        keywordMap[key].total += a.total;
+        keywordMap[key].completed += a.completed;
+      }
+    }
+    const keywordPerf = Object.values(keywordMap)
+      .map(k => ({
+        ...k,
+        conversion_rate: k.total > 0 ? Math.round((k.completed / k.total) * 100) : 0
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10);
+
+    // --- Platform breakdown ---
+    const platformBreakdown = {};
+    allConvs.forEach(c => {
+      if (!platformBreakdown[c.platform]) {
+        platformBreakdown[c.platform] = { total: 0, completed: 0 };
+      }
+      platformBreakdown[c.platform].total++;
+      if (c.status === 'completed') platformBreakdown[c.platform].completed++;
+    });
+
+    // --- Leads count ---
+    const { count: totalLeads } = await req.db
+      .from('dm_collected_data')
+      .select('id', { count: 'exact', head: true });
+
+    // --- Average time to completion (completed conversations only) ---
+    const completedConvs = allConvs.filter(c => c.status === 'completed' && c.last_reply_at && c.created_at);
+    let avgCompletionMinutes = null;
+    if (completedConvs.length > 0) {
+      const totalMs = completedConvs.reduce((sum, c) => {
+        return sum + (new Date(c.last_reply_at) - new Date(c.created_at));
+      }, 0);
+      avgCompletionMinutes = Math.round((totalMs / completedConvs.length) / 60000);
+    }
+
+    // --- Daily usage ---
+    const facebook  = await getDailyUsage(req.user.id, 'facebook');
+    const instagram = await getDailyUsage(req.user.id, 'instagram');
+
+    res.json({
+      summary: {
+        total_conversations: totalConvs,
+        total_leads:         totalLeads || 0,
+        conversion_rate:     conversionRate,
+        avg_completion_min:  avgCompletionMinutes,
+        active_automations:  automationPerf.filter(a => a.active).length,
+        total_automations:   automationPerf.length
+      },
+      funnel,
+      daily_trend:     dailyTrend,
+      automations:     automationPerf,
+      keywords:        keywordPerf,
+      platforms:       platformBreakdown,
+      daily_usage:     { facebook, instagram }
+    });
+  } catch (err) {
+    console.error('[Automations] Dashboard error:', err.message);
+    res.status(500).json({ error: 'Failed to load dashboard' });
+  }
+});
+
+// ----------------------------------------------------------------
 // GET /api/automations/leads/export — CSV export of all collected leads.
 // Query params: automation_id (optional filter), from, to (date range)
 // ----------------------------------------------------------------
@@ -190,6 +331,41 @@ router.get('/leads/export', checkLimit('dm_lead_capture'), async (req, res) => {
   } catch (err) {
     console.error('[Automations] CSV export error:', err.message);
     res.status(500).json({ error: 'Failed to export leads' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /api/automations/leads — list ALL collected leads for the user.
+// Replaces the old N+1 pattern where the frontend looped per automation.
+// Must be defined BEFORE /:id so Express doesn't match "leads" as an ID.
+// ----------------------------------------------------------------
+router.get('/leads', async (req, res) => {
+  try {
+    const { data: conversations, error } = await supabaseAdmin
+      .from('dm_conversations')
+      .select(`
+        id, author_handle, platform, status, current_step, created_at,
+        automation_id,
+        dm_automations!inner ( name ),
+        dm_collected_data ( field_name, field_value, collected_at )
+      `)
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw error;
+
+    // Flatten automation name into each lead
+    const leads = (conversations || []).map(c => ({
+      ...c,
+      automation_name: c.dm_automations?.name || 'Unnamed',
+      dm_automations: undefined // remove nested object from response
+    }));
+
+    res.json({ leads });
+  } catch (err) {
+    console.error('[Automations] All leads error:', err.message);
+    res.status(500).json({ error: 'Failed to list leads' });
   }
 });
 

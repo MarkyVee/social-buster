@@ -778,6 +778,10 @@ async function renderDashboard(el) {
         <div class="stat-label">Leads Captured</div>
         <div class="stat-value" id="dash-leads">—</div>
       </div>
+      <div class="stat-card" onclick="navigate('automations')" style="cursor:pointer;" title="DM conversion rate">
+        <div class="stat-label">DM Conv. Rate</div>
+        <div class="stat-value" id="dash-dm-rate">—</div>
+      </div>
     </div>
 
     <div id="dash-recent-posts" style="margin-bottom:24px;"></div>
@@ -796,9 +800,9 @@ async function renderDashboard(el) {
 
   // Fetch stats in parallel — don't block the page render
   try {
-    const [postsRes, dmStatsRes] = await Promise.all([
+    const [postsRes, dmDashRes] = await Promise.all([
       apiFetch('/posts'),
-      apiFetch('/automations/stats').catch(() => null)
+      apiFetch('/automations/dashboard').catch(() => null)
     ]);
 
     const posts = postsRes?.posts || [];
@@ -810,11 +814,16 @@ async function renderDashboard(el) {
     const scheduledEl = document.getElementById('dash-scheduled');
     const convsEl     = document.getElementById('dash-conversations');
     const leadsEl     = document.getElementById('dash-leads');
+    const rateEl      = document.getElementById('dash-dm-rate');
 
     if (publishedEl) publishedEl.textContent = publishedCount;
     if (scheduledEl) scheduledEl.textContent = scheduledCount;
-    if (convsEl)     convsEl.textContent = dmStatsRes?.conversations?.total ?? '—';
-    if (leadsEl)     leadsEl.textContent = dmStatsRes?.total_leads ?? '—';
+    if (convsEl)     convsEl.textContent = dmDashRes?.summary?.total_conversations ?? '—';
+    if (leadsEl)     leadsEl.textContent = dmDashRes?.summary?.total_leads ?? '—';
+    if (rateEl) {
+      const rate = dmDashRes?.summary?.conversion_rate;
+      rateEl.textContent = rate !== undefined && rate !== null ? rate + '%' : '—';
+    }
 
     // Show recent published posts (last 5)
     const recentContainer = document.getElementById('dash-recent-posts');
@@ -2869,47 +2878,82 @@ function renderNewPasswordScreen(recoveryToken) {
 }
 
 // ============================================================
-// DM AUTOMATIONS VIEW — Leads dashboard + automation overview
+// DM AUTOMATIONS VIEW — Dashboard with KPIs, funnel, trends, leads
 // ============================================================
 
 async function renderAutomationsView(el) {
   el.innerHTML = `
     <div class="page-header">
       <div class="page-title">DM Automations</div>
-      <div class="page-subtitle">Manage comment-to-DM workflows and view collected leads.</div>
+      <div class="page-subtitle">Performance dashboard, workflows, and collected leads.</div>
     </div>
 
-    <!-- Stats cards -->
-    <div id="automation-stats" style="display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap;">
-      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Active Automations</div>
-        <div id="stat-active-automations" style="font-size:1.5rem;font-weight:700;">-</div>
+    <!-- KPI cards row -->
+    <div id="dm-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px;">
+      <div class="card" style="padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Conversion Rate</div>
+        <div id="kpi-conversion" style="font-size:1.8rem;font-weight:700;color:var(--success);">—</div>
+        <div class="text-muted text-sm" id="kpi-conv-detail"></div>
       </div>
-      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+      <div class="card" style="padding:16px;text-align:center;">
         <div class="text-muted text-sm">Total Conversations</div>
-        <div id="stat-total-conversations" style="font-size:1.5rem;font-weight:700;">-</div>
+        <div id="kpi-conversations" style="font-size:1.8rem;font-weight:700;">—</div>
       </div>
-      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
+      <div class="card" style="padding:16px;text-align:center;">
         <div class="text-muted text-sm">Leads Collected</div>
-        <div id="stat-total-leads" style="font-size:1.5rem;font-weight:700;">-</div>
+        <div id="kpi-leads" style="font-size:1.8rem;font-weight:700;">—</div>
       </div>
-      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Facebook DMs Today</div>
-        <div id="stat-fb-usage" style="font-size:1.5rem;font-weight:700;">-</div>
+      <div class="card" style="padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Avg Completion</div>
+        <div id="kpi-avg-time" style="font-size:1.8rem;font-weight:700;">—</div>
       </div>
-      <div class="card" style="flex:1;min-width:140px;padding:16px;text-align:center;">
-        <div class="text-muted text-sm">Instagram DMs Today</div>
-        <div id="stat-ig-usage" style="font-size:1.5rem;font-weight:700;">-</div>
+      <div class="card" style="padding:16px;text-align:center;">
+        <div class="text-muted text-sm">Active Automations</div>
+        <div id="kpi-active" style="font-size:1.8rem;font-weight:700;">—</div>
       </div>
     </div>
 
-    <!-- Automations list -->
+    <!-- DM usage + funnel row -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;">
+      <!-- Funnel -->
+      <div class="card">
+        <div class="card-header"><div class="card-title">Conversation Funnel</div></div>
+        <div id="dm-funnel" style="padding:0 16px 16px;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
+      </div>
+      <!-- Daily usage -->
+      <div class="card">
+        <div class="card-header"><div class="card-title">Daily DM Usage</div></div>
+        <div id="dm-usage-bars" style="padding:0 16px 16px;">
+          <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 14-day trend -->
+    <div class="card" style="margin-bottom:24px;">
+      <div class="card-header"><div class="card-title">Conversations — Last 14 Days</div></div>
+      <div id="dm-trend" style="padding:0 16px 16px;">
+        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+      </div>
+    </div>
+
+    <!-- Per-automation performance table -->
     <div class="card" style="margin-bottom:24px;">
       <div class="card-header">
-        <div class="card-title">All Automations</div>
+        <div class="card-title">Automation Performance</div>
         <div class="text-muted text-sm">Set up automations from the "DM Automation" button on each published post.</div>
       </div>
-      <div id="automations-list">
+      <div id="automations-perf-list">
+        <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
+      </div>
+    </div>
+
+    <!-- Keyword performance -->
+    <div class="card" style="margin-bottom:24px;">
+      <div class="card-header"><div class="card-title">Keyword Performance</div></div>
+      <div id="keyword-perf">
         <div style="padding:12px;"><div class="spinner spinner-sm"></div></div>
       </div>
     </div>
@@ -2919,7 +2963,7 @@ async function renderAutomationsView(el) {
       <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
         <div>
           <div class="card-title">Collected Leads</div>
-          <div class="text-muted text-sm">Data collected from multi-step DM conversations.</div>
+          <div class="text-muted text-sm">Data collected from DM conversations.</div>
         </div>
         <button class="btn btn-sm btn-secondary" onclick="exportLeadsCSV()">Export CSV</button>
       </div>
@@ -2929,114 +2973,270 @@ async function renderAutomationsView(el) {
     </div>
   `;
 
-  // Load all data in parallel
+  // Load dashboard + leads in parallel
   try {
-    const [statsRes, automationsRes] = await Promise.all([
-      apiFetch('/automations/stats'),
-      apiFetch('/automations')
+    const [dashRes, leadsRes] = await Promise.all([
+      apiFetch('/automations/dashboard'),
+      apiFetch('/automations/leads').catch(() => ({ leads: [] }))
     ]);
 
-    // Render stats
-    const s = statsRes;
-    document.getElementById('stat-active-automations').textContent =
-      (automationsRes.automations || []).filter(a => a.active).length;
-    document.getElementById('stat-total-conversations').textContent = s.conversations?.total || 0;
-    document.getElementById('stat-total-leads').textContent = s.total_leads || 0;
-    document.getElementById('stat-fb-usage').textContent =
-      `${s.daily_usage?.facebook?.count || 0}/${s.daily_usage?.facebook?.limit || 100}`;
-    document.getElementById('stat-ig-usage').textContent =
-      `${s.daily_usage?.instagram?.count || 0}/${s.daily_usage?.instagram?.limit || 80}`;
+    renderDmKpis(dashRes);
+    renderDmFunnel(dashRes.funnel);
+    renderDmUsageBars(dashRes.daily_usage);
+    renderDmTrend(dashRes.daily_trend);
+    renderAutomationPerfTable(dashRes.automations);
+    renderKeywordPerf(dashRes.keywords);
+    renderLeadsTableDirect(leadsRes.leads || []);
 
-    // Render automations list
-    const automations = automationsRes.automations || [];
-    const listEl = document.getElementById('automations-list');
+  } catch (err) {
+    console.error('[DM Dashboard] Failed to load:', err);
+    document.getElementById('automations-perf-list').innerHTML =
+      `<div style="padding:12px;color:var(--danger);">Failed to load dashboard: ${err.message}</div>`;
+  }
+}
 
-    if (automations.length === 0) {
-      listEl.innerHTML = `
-        <div style="padding:16px;text-align:center;">
-          <p class="text-muted">No automations yet.</p>
-          <p class="text-muted text-sm">Publish a post to Facebook or Instagram, then click the "DM Automation" button on the post card.</p>
-        </div>
-      `;
+// --- KPI cards ---
+function renderDmKpis(dash) {
+  const s = dash.summary;
+  const convEl = document.getElementById('kpi-conversion');
+  if (convEl) {
+    convEl.textContent = s.total_conversations > 0 ? s.conversion_rate + '%' : '—';
+    convEl.style.color = s.conversion_rate >= 50 ? 'var(--success)' : s.conversion_rate >= 25 ? 'var(--warning, #e67e22)' : 'var(--danger)';
+  }
+  const detailEl = document.getElementById('kpi-conv-detail');
+  if (detailEl && s.total_conversations > 0) {
+    detailEl.textContent = `${dash.funnel.completed} of ${s.total_conversations} completed`;
+  }
+  const convsEl = document.getElementById('kpi-conversations');
+  if (convsEl) convsEl.textContent = s.total_conversations;
+  const leadsEl = document.getElementById('kpi-leads');
+  if (leadsEl) leadsEl.textContent = s.total_leads;
+  const timeEl = document.getElementById('kpi-avg-time');
+  if (timeEl) {
+    if (s.avg_completion_min !== null && s.avg_completion_min !== undefined) {
+      timeEl.textContent = s.avg_completion_min < 60
+        ? s.avg_completion_min + 'm'
+        : Math.round(s.avg_completion_min / 60) + 'h';
     } else {
-      listEl.innerHTML = `
-        <table style="width:100%;border-collapse:collapse;">
-          <thead>
-            <tr style="border-bottom:1px solid var(--border);text-align:left;">
-              <th style="padding:8px;">Name</th>
-              <th style="padding:8px;">Platform</th>
-              <th style="padding:8px;">Keywords</th>
-              <th style="padding:8px;">Type</th>
-              <th style="padding:8px;">Conversations</th>
-              <th style="padding:8px;">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${automations.map(a => `
+      timeEl.textContent = '—';
+    }
+  }
+  const activeEl = document.getElementById('kpi-active');
+  if (activeEl) activeEl.textContent = `${s.active_automations}/${s.total_automations}`;
+}
+
+// --- Funnel visualization ---
+function renderDmFunnel(funnel) {
+  const el = document.getElementById('dm-funnel');
+  if (!el) return;
+  const total = Object.values(funnel).reduce((a, b) => a + b, 0);
+  if (total === 0) {
+    el.innerHTML = '<div class="text-muted" style="padding:12px;text-align:center;">No conversations yet.</div>';
+    return;
+  }
+
+  const stages = [
+    { key: 'completed',  label: 'Completed',  color: '#27ae60' },
+    { key: 'active',     label: 'Active',      color: '#3498db' },
+    { key: 'expired',    label: 'Expired',     color: '#95a5a6' },
+    { key: 'opted_out',  label: 'Opted Out',   color: '#e67e22' },
+    { key: 'failed',     label: 'Failed',      color: '#e74c3c' }
+  ];
+
+  el.innerHTML = stages.map(s => {
+    const count = funnel[s.key] || 0;
+    const pct = Math.round((count / total) * 100);
+    return `
+      <div style="margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span class="text-sm">${s.label}</span>
+          <span class="text-sm text-muted">${count} (${pct}%)</span>
+        </div>
+        <div style="background:var(--bg-secondary);border-radius:4px;height:8px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${s.color};border-radius:4px;transition:width 0.3s;"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// --- Daily DM usage bars (Facebook + Instagram) ---
+function renderDmUsageBars(usage) {
+  const el = document.getElementById('dm-usage-bars');
+  if (!el) return;
+
+  const platforms = [
+    { key: 'facebook',  label: 'Facebook',  color: '#1877f2' },
+    { key: 'instagram', label: 'Instagram', color: '#e1306c' }
+  ];
+
+  el.innerHTML = platforms.map(p => {
+    const data = usage[p.key] || { count: 0, limit: 100 };
+    const pct = Math.min(100, Math.round((data.count / data.limit) * 100));
+    const barColor = pct >= 90 ? '#e74c3c' : pct >= 70 ? '#e67e22' : p.color;
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span class="text-sm" style="font-weight:600;">${p.label}</span>
+          <span class="text-sm">${data.count} / ${data.limit} DMs today</span>
+        </div>
+        <div style="background:var(--bg-secondary);border-radius:4px;height:12px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${barColor};border-radius:4px;transition:width 0.3s;"></div>
+        </div>
+        <div class="text-muted text-sm" style="margin-top:2px;">${data.limit - data.count} remaining</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// --- 14-day trend (CSS bar chart) ---
+function renderDmTrend(trend) {
+  const el = document.getElementById('dm-trend');
+  if (!el || !trend || trend.length === 0) return;
+
+  const maxCount = Math.max(...trend.map(d => d.count), 1);
+  const barWidth = Math.floor(100 / trend.length);
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:flex-end;gap:4px;height:120px;padding-top:8px;">
+      ${trend.map(d => {
+        const heightPct = Math.max(2, (d.count / maxCount) * 100);
+        const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        return `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;" title="${dayLabel}: ${d.count} conversations">
+            <span class="text-sm" style="margin-bottom:4px;font-size:0.65rem;color:var(--text-muted);">${d.count || ''}</span>
+            <div style="width:100%;max-width:40px;height:${heightPct}%;background:var(--primary);border-radius:3px 3px 0 0;min-height:2px;transition:height 0.3s;"></div>
+            <span class="text-sm" style="margin-top:4px;font-size:0.6rem;color:var(--text-muted);white-space:nowrap;">${dayLabel}</span>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+// --- Per-automation performance table ---
+function renderAutomationPerfTable(automations) {
+  const el = document.getElementById('automations-perf-list');
+  if (!el) return;
+
+  if (!automations || automations.length === 0) {
+    el.innerHTML = `
+      <div style="padding:16px;text-align:center;">
+        <p class="text-muted">No automations yet.</p>
+        <p class="text-muted text-sm">Publish a post to Facebook or Instagram, then click the "DM Automation" button on the post card.</p>
+      </div>
+    `;
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);text-align:left;">
+            <th style="padding:8px;">Name</th>
+            <th style="padding:8px;">Platform</th>
+            <th style="padding:8px;">Keywords</th>
+            <th style="padding:8px;">Type</th>
+            <th style="padding:8px;">Convos</th>
+            <th style="padding:8px;">Completed</th>
+            <th style="padding:8px;">Expired</th>
+            <th style="padding:8px;">Opt-outs</th>
+            <th style="padding:8px;">Conv. Rate</th>
+            <th style="padding:8px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${automations.map(a => {
+            const rateColor = a.conversion_rate >= 50 ? 'var(--success)' : a.conversion_rate >= 25 ? '#e67e22' : 'var(--danger)';
+            return `
               <tr style="border-bottom:1px solid var(--border);">
-                <td style="padding:8px;">${escapeHtml(a.name || 'Unnamed')}</td>
+                <td style="padding:8px;">${escapeHtml(a.name)}</td>
                 <td style="padding:8px;">
-                  <span class="platform-chip platform-chip-${a.posts?.platform || 'unknown'}">
-                    ${a.posts?.platform || '—'}
-                  </span>
+                  <span class="platform-chip platform-chip-${a.platform}">${a.platform}</span>
                 </td>
                 <td style="padding:8px;">
-                  ${(a.trigger_keywords || []).map(k =>
+                  ${a.keywords.map(k =>
                     `<span class="badge" style="background:var(--primary-light);color:var(--primary);margin:1px;">${escapeHtml(k)}</span>`
                   ).join(' ')}
                 </td>
                 <td style="padding:8px;">${a.flow_type === 'single' ? 'Single' : 'Multi-step'}</td>
-                <td style="padding:8px;">${a.conversation_count || 0} (${a.completed_count || 0} done)</td>
+                <td style="padding:8px;font-weight:600;">${a.total}</td>
+                <td style="padding:8px;color:var(--success);">${a.completed}</td>
+                <td style="padding:8px;color:var(--text-muted);">${a.expired}</td>
+                <td style="padding:8px;color:#e67e22;">${a.opted_out}</td>
+                <td style="padding:8px;font-weight:700;color:${rateColor};">
+                  ${a.total > 0 ? a.conversion_rate + '%' : '—'}
+                </td>
                 <td style="padding:8px;">
                   <span class="badge badge-${a.active ? 'published' : 'draft'}">
                     ${a.active ? 'Active' : 'Paused'}
                   </span>
                 </td>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      `;
-    }
-
-    // Load leads
-    await loadLeadsTable();
-
-  } catch (err) {
-    console.error('[Automations] Failed to load:', err);
-    document.getElementById('automations-list').innerHTML =
-      `<div style="padding:12px;color:var(--danger);">Failed to load automations: ${err.message}</div>`;
-  }
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-async function loadLeadsTable() {
+// --- Keyword performance ---
+function renderKeywordPerf(keywords) {
+  const el = document.getElementById('keyword-perf');
+  if (!el) return;
+
+  if (!keywords || keywords.length === 0) {
+    el.innerHTML = '<div class="text-muted" style="padding:16px;text-align:center;">No keyword data yet.</div>';
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border);text-align:left;">
+            <th style="padding:8px;">Keyword</th>
+            <th style="padding:8px;">Triggered</th>
+            <th style="padding:8px;">Completed</th>
+            <th style="padding:8px;">Conv. Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${keywords.map(k => {
+            const rateColor = k.conversion_rate >= 50 ? 'var(--success)' : k.conversion_rate >= 25 ? '#e67e22' : 'var(--danger)';
+            return `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px;">
+                  <span class="badge" style="background:var(--primary-light);color:var(--primary);">${escapeHtml(k.keyword)}</span>
+                </td>
+                <td style="padding:8px;">${k.total}</td>
+                <td style="padding:8px;color:var(--success);">${k.completed}</td>
+                <td style="padding:8px;font-weight:700;color:${rateColor};">
+                  ${k.total > 0 ? k.conversion_rate + '%' : '—'}
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// --- Leads table (uses single /automations/leads endpoint, no N+1) ---
+function renderLeadsTableDirect(leads) {
   const tableEl = document.getElementById('leads-table');
   if (!tableEl) return;
 
-  try {
-    const res = await apiFetch('/automations');
-    const automations = res.automations || [];
+  if (!leads || leads.length === 0) {
+    tableEl.innerHTML = '<div style="padding:16px;text-align:center;" class="text-muted">No leads collected yet.</div>';
+    return;
+  }
 
-    // Load leads for each automation
-    let allLeads = [];
-    for (const a of automations) {
-      try {
-        const leadsRes = await apiFetch(`/automations/${a.id}/leads`);
-        const leads = (leadsRes.leads || []).map(l => ({
-          ...l,
-          automation_name: a.name || 'Unnamed'
-        }));
-        allLeads = allLeads.concat(leads);
-      } catch { /* skip */ }
-    }
-
-    if (allLeads.length === 0) {
-      tableEl.innerHTML = '<div style="padding:16px;text-align:center;" class="text-muted">No leads collected yet.</div>';
-      return;
-    }
-
-    // Build leads table — each lead is a dm_conversation with dm_collected_data
-    tableEl.innerHTML = `
+  tableEl.innerHTML = `
+    <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;">
         <thead>
           <tr style="border-bottom:1px solid var(--border);text-align:left;">
@@ -3049,12 +3249,14 @@ async function loadLeadsTable() {
           </tr>
         </thead>
         <tbody>
-          ${allLeads.map(lead => `
+          ${leads.map(lead => `
             <tr style="border-bottom:1px solid var(--border);">
               <td style="padding:8px;" class="text-sm">${new Date(lead.created_at).toLocaleDateString()}</td>
               <td style="padding:8px;">@${escapeHtml(lead.author_handle || '?')}</td>
-              <td style="padding:8px;">${escapeHtml(lead.platform)}</td>
-              <td style="padding:8px;">${escapeHtml(lead.automation_name)}</td>
+              <td style="padding:8px;">
+                <span class="platform-chip platform-chip-${lead.platform}">${escapeHtml(lead.platform)}</span>
+              </td>
+              <td style="padding:8px;">${escapeHtml(lead.automation_name || '—')}</td>
               <td style="padding:8px;">
                 ${(lead.dm_collected_data || []).map(d =>
                   `<span class="text-sm"><strong>${escapeHtml(d.field_name)}:</strong> ${escapeHtml(d.field_value)}</span>`
@@ -3069,9 +3271,18 @@ async function loadLeadsTable() {
           `).join('')}
         </tbody>
       </table>
-    `;
+    </div>
+  `;
+}
+
+// Legacy function name kept for backward compatibility with any callers
+async function loadLeadsTable() {
+  try {
+    const res = await apiFetch('/automations/leads');
+    renderLeadsTableDirect(res.leads || []);
   } catch (err) {
-    tableEl.innerHTML = `<div style="padding:12px;color:var(--danger);">Failed to load leads: ${err.message}</div>`;
+    const tableEl = document.getElementById('leads-table');
+    if (tableEl) tableEl.innerHTML = `<div style="padding:12px;color:var(--danger);">Failed to load leads: ${err.message}</div>`;
   }
 }
 

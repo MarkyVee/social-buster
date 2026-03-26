@@ -20,6 +20,14 @@ What was built, fixed, or shipped — logged per session.
 - **FIXED ISSUE-005:** Logout now clears `active_session_id` from user_profiles
 - **CLOSED ISSUE-014:** False positive — admin.js already escapes all user-controlled fields with `escapeAdminHtml()`
 - **FIXED ISSUE-015:** DM reply text truncated to 2000 chars before DB insert (prevents data bloat)
+- **PII FIX:** Removed `author_handle` from painPointMinerService.js SELECT (over-fetched, never used in LLM)
+- **PII FIX:** Fixed contextBuilder.js — was querying non-existent `post_comments` table, corrected to `comments`
+- **FEAT-013 DONE:** Full DM automation dashboard for users:
+  - New `GET /automations/dashboard` endpoint — computes conversion rate, funnel, 14-day trend, per-automation performance, keyword performance, platform breakdown, avg completion time
+  - New `GET /automations/leads` endpoint — single query for all leads (replaces N+1 per-automation loop)
+  - Frontend: KPI cards (conversion rate, total convos, leads, avg completion, active automations), funnel bars, DM usage meters, 14-day trend chart, automation performance table with per-row conversion rates, keyword performance table, unified leads table
+  - Main dashboard now shows DM conversion rate card
+  - Fixed Express route ordering: `/leads` and `/dashboard` defined before `/:id` to prevent param collision
 
 ## 2026-03-24
 

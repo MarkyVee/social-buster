@@ -16,12 +16,12 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 - **ID:** FEAT-013
 - **Date:** 2026-03-25
-- **Status:** planned
+- **Status:** done
 - **Priority:** HIGH
 - **Description:** DM Automation Dashboard Data for Users
-- **Reason:** Users need to see their DM automation results — conversations, lead data, response rates, conversion metrics — directly in their dashboard. Without this, the DM automation feature is invisible to users. Start with Facebook data, then Instagram after Instagram DM testing is confirmed.
-- **Scope:** Dashboard cards/tables showing: active automations, conversations triggered, leads collected, response rates, recent DM activity. Pull from `dm_conversations`, `dm_collected_data`, `dm_automations` tables.
-- **Files:** `frontend/public/js/app.js` (dashboard section), `backend/routes/automations.js` (stats endpoints)
+- **Reason:** Users need to see their DM automation results — conversations, lead data, response rates, conversion metrics — directly in their dashboard.
+- **Resolution:** Built full DM dashboard with: conversion rate KPI, conversation funnel (completed/active/expired/opted_out/failed), 14-day trend chart, per-automation performance table with conversion rates, keyword performance table, daily DM usage bars (Facebook + Instagram), unified leads table. New backend endpoint `GET /automations/dashboard` computes all KPIs server-side. Also added `GET /automations/leads` to fix N+1 query issue. Main dashboard now shows DM conversion rate card.
+- **Files:** `frontend/public/js/app.js`, `backend/routes/automations.js`
 
 ---
 

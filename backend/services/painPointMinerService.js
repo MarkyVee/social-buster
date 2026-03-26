@@ -106,7 +106,7 @@ async function fetchRecentComments(userId, platform) {
 
     let query = supabaseAdmin
       .from('comments')
-      .select('comment_text, sentiment, platform, author_handle, ingested_at')
+      .select('comment_text, sentiment, platform, ingested_at')
       .eq('user_id', userId)
       .gte('ingested_at', cutoff)
       .order('ingested_at', { ascending: false })
