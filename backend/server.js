@@ -149,6 +149,10 @@ app.use(cors({
 // Parse incoming JSON request bodies (max 10MB for media metadata)
 app.use(express.json({ limit: '10mb' }));
 
+// Parse cookies (used by BullMQ Board auth in admin routes)
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+
 // Log every request: method, path, status, response time
 // Use 'dev' format in development, 'combined' in production
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));

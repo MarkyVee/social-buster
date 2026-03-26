@@ -16,6 +16,25 @@
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
 // ----------------------------------------------------------------
+// Open BullMQ Board in a new tab with proper auth cookie
+async function openBullBoard(e) {
+  e.preventDefault();
+  try {
+    // Call the session endpoint with our JWT — it sets a cookie and returns a redirect
+    await fetch('/admin/queues-session', {
+      headers: { 'Authorization': 'Bearer ' + App.token },
+      redirect: 'manual' // Don't follow the redirect — we want to open it ourselves
+    });
+    // The endpoint returns a 302 redirect to /admin/queues.
+    // Since we used redirect:'manual', we get an opaque redirect response.
+    // Just open the board URL directly — the cookie is now set.
+    window.open('/admin/queues', '_blank');
+  } catch (err) {
+    console.error('[Admin] Failed to open BullMQ Board:', err);
+    showAlert('admin-alerts', 'Failed to open BullMQ Board: ' + err.message, 'error');
+  }
+}
+
 function renderAdminDashboard(el) {
   el.innerHTML = `
     <div class="page-header">
@@ -268,7 +287,7 @@ function buildOverviewHtml(stats, health, watchdog) {
       </table>
     </div>
     <div style="margin-top:10px;">
-      <a href="/admin/queues" target="_blank" class="btn btn-sm">
+      <a href="#" onclick="openBullBoard(event)" class="btn btn-sm">
         🔍 Open BullMQ Board (full job inspector) ↗
       </a>
     </div>
@@ -837,7 +856,7 @@ async function loadAdminQueues() {
 
     panel.innerHTML = `
       <div class="admin-queues-board-link">
-        <a href="/admin/queues" target="_blank" class="btn btn-primary">
+        <a href="#" onclick="openBullBoard(event)" class="btn btn-primary">
           🔍 Open BullMQ Board — Full Queue Inspector ↗
         </a>
         <p class="admin-muted" style="margin-top:8px;">

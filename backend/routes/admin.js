@@ -71,8 +71,66 @@ try {
     serverAdapter
   });
 
-  // Protect the entire /queues sub-path with admin auth, then hand off to Bull Board
-  router.use('/queues', requireAuth, requireAdmin, serverAdapter.getRouter());
+  // Bull Board serves its own UI in a new browser tab, so it can't send
+  // the JWT Authorization header. We use a short-lived signed cookie instead.
+  // Flow: admin clicks link → /admin/queues-session sets cookie → redirects to /admin/queues
+  const crypto = require('crypto');
+  const BOARD_SECRET = process.env.TOKEN_ENCRYPTION_KEY || 'bullboard-fallback-secret';
+
+  // Endpoint: set a 30-min auth cookie then redirect to the board
+  router.get('/queues-session', requireAuth, requireAdmin, (req, res) => {
+    const expires = Date.now() + 30 * 60 * 1000; // 30 minutes
+    const payload = `${req.user.id}:${req.user.email}:${expires}`;
+    const sig = crypto.createHmac('sha256', BOARD_SECRET).update(payload).digest('hex');
+    const cookieVal = `${payload}:${sig}`;
+
+    res.cookie('bull_board_auth', cookieVal, {
+      httpOnly: true,
+      secure:   process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge:   30 * 60 * 1000,
+      path:     '/admin/queues'
+    });
+    return res.redirect('/admin/queues');
+  });
+
+  // Middleware: verify either Authorization header OR bull_board_auth cookie
+  function requireBoardAuth(req, res, next) {
+    // Try normal auth header first (API calls from our frontend)
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      return requireAuth(req, res, () => requireAdmin(req, res, next));
+    }
+
+    // Fall back to cookie (Bull Board UI in a new tab)
+    const cookie = req.cookies?.bull_board_auth;
+    if (!cookie) {
+      return res.status(401).json({ error: 'Not authorized. Open BullMQ Board from the Admin Dashboard.' });
+    }
+
+    const parts = cookie.split(':');
+    if (parts.length < 4) {
+      return res.status(401).json({ error: 'Invalid session.' });
+    }
+
+    const sig = parts.pop();
+    const payload = parts.join(':');
+    const expectedSig = crypto.createHmac('sha256', BOARD_SECRET).update(payload).digest('hex');
+
+    if (sig !== expectedSig) {
+      return res.status(401).json({ error: 'Invalid session signature.' });
+    }
+
+    const expires = parseInt(parts[2]);
+    if (Date.now() > expires) {
+      return res.status(401).json({ error: 'Session expired. Go back and click the link again.' });
+    }
+
+    // Cookie is valid — allow through
+    next();
+  }
+
+  // Protect the entire /queues sub-path, then hand off to Bull Board
+  router.use('/queues', requireBoardAuth, serverAdapter.getRouter());
 
   console.log('[Admin] BullMQ Board mounted at /admin/queues');
 
