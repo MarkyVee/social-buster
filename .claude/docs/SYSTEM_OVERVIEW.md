@@ -17,25 +17,44 @@
 ## Current Focus
 
 ### Completed This Session (2026-03-25)
-- [x] FEAT-013: DM automation dashboard — full KPIs, funnel, trends, keyword perf
+
+**ALL 18 SECURITY ISSUES FROM AUDIT — CLOSED:**
 - [x] ISSUE-001/002: OAuth state injection fixed (cryptographic nonces)
 - [x] ISSUE-003: Webhook signature verification mandatory
 - [x] ISSUE-004: Rate limit in-memory fallback
 - [x] ISSUE-005: Logout clears active_session_id
+- [x] ISSUE-006: OAuth callback rate limiting (authLimiter on all 6 callbacks)
+- [x] ISSUE-007: Helmet CSP enabled (frameguard deny, noSniff, xssFilter)
 - [x] ISSUE-008: Performance indexes (run in Supabase — DONE)
-- [x] ISSUE-013: LLM prompt injection defense
+- [x] ISSUE-009: Won't fix (Supabase client pattern is correct)
+- [x] ISSUE-013: LLM prompt injection defense (sanitizeForPrompt)
+- [x] ISSUE-014: Won't fix (false positive — XSS already escaped)
 - [x] ISSUE-015: DM reply text length validation
-- [x] PII fixes: author_handle removed, contextBuilder table name fixed
+- [x] ISSUE-016: OAuth cookies Secure flag in production
+- [x] ISSUE-017: Startup env var validation (exits with clear error)
+- [x] ISSUE-018: axios updated 1.6.2 → 1.13.6
+
+**Features + Fixes:**
+- [x] FEAT-013: DM automation dashboard — KPIs, funnel, trends, keyword perf
+- [x] PII fixes: author_handle removed, contextBuilder table/column name fixes
 - [x] Support tickets system (admin + user-facing)
 - [x] Database fully verified — 110 checks, all PASS
+- [x] dmAgent error logging for collected data inserts
 
 ### Blockers
 - Meta App Review blocked until Instagram DM test passes
+- DM collected data not populating — needs log investigation after next test
+
+### Still Open — Scalability (not security risks)
+- [ ] ISSUE-010: Admin dashboard N+1 queries (batch with JOINs)
+- [ ] ISSUE-011: performanceAgent loads all posts into memory (needs pagination)
+- [ ] ISSUE-012: No per-account platform API rate limiting (risks bans)
 
 ### Next Action
-- [ ] Instagram DM automation test (read `platform_publishing_guide.md` DM debugging history first)
+- [ ] Fix ISSUE-010/011/012 (scalability)
+- [ ] Instagram DM automation test (read `platform_publishing_guide.md` first)
+- [ ] Investigate DM collected data via Coolify logs after test
 - [ ] Meta App Review submission
-- [ ] Remaining open [[ISSUES]]: ISSUE-006 (OAuth callback rate limiting), ISSUE-007 (CSP/Helmet), ISSUE-010 (admin N+1), ISSUE-011 (performanceAgent pagination), ISSUE-012 (per-account API rate limiting), ISSUE-016 (OAuth cookie Secure flag), ISSUE-017 (env var validation), ISSUE-018 (outdated axios)
 
 ## How to Use This System
 
