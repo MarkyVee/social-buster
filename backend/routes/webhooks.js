@@ -378,14 +378,29 @@ router.all('/data-deletion', async (req, res) => {
             }
             await supabaseAdmin.from('dm_automations').delete().eq('user_id', userId);
 
-            // 3. Comments ingested from Meta (came via Meta API/webhooks)
+            // 3. Comments — ANONYMIZE, not delete.
+            // Comments are public data authored by third-party users (commenters),
+            // not the Page owner requesting deletion. They feed our intelligence
+            // engine (sentiment analysis, research, cohort benchmarks). Deleting
+            // them would break agents and lose irreplaceable research data.
+            // Instead: strip author_handle and unlink from post_id so they can't
+            // be traced back to the disconnected Page. The comment text, sentiment,
+            // and platform remain as anonymous research data points.
             const { data: userPosts } = await supabaseAdmin
               .from('posts')
               .select('id')
               .eq('user_id', userId);
             const postIds = (userPosts || []).map(p => p.id);
             if (postIds.length > 0) {
-              await supabaseAdmin.from('comments').delete().in('post_id', postIds);
+              await supabaseAdmin
+                .from('comments')
+                .update({
+                  author_handle: null,
+                  platform_comment_id: null,
+                  post_id: null
+                })
+                .in('post_id', postIds);
+              console.log(`[Webhooks] Anonymized comments for ${postIds.length} posts (user ${userId})`);
             }
 
             // 4. Platform connections (OAuth tokens — Meta's tokens must be revoked)

@@ -71,3 +71,10 @@
 - Impact: Claude must call out: (1) any new recurring API/LLM calls and their cost at scale, (2) any new DB tables/indexes and their storage impact, (3) any changes to shared files (queues, middleware, server.js) and what they could break, (4) any new Redis keys and their memory footprint. Do this before implementing, not after.
 
 ---
+
+- Date: 2026-03-26
+- Decision: Anonymize comments on Meta data deletion instead of deleting them
+- Reason: Comments are authored by third-party users (commenters), not the Page owner requesting deletion. They are public data that feeds our intelligence engine — sentiment analysis, research agents, cohort benchmarks. Deleting them would destroy irreplaceable research data and break agent functionality. The Page owner's personal data is in their OAuth tokens, DM conversations, and platform connections — not in other people's comments. Anonymization (null out author_handle, platform_comment_id, post_id) removes any link back to the Page while preserving the research value (comment text, sentiment, platform).
+- Impact: Data deletion handler strips identifying fields from comments rather than deleting rows. Privacy policy Section 8 and Terms of Service Section 9 updated to explicitly disclose this practice. Intelligence engine continues to work after a user disconnects. Meta's requirement is satisfied — data tied to the user's account is removed, anonymous research data is retained.
+
+---
