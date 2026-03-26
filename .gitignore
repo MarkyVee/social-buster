@@ -23,5 +23,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Obsidian local config (user-specific workspace settings)
+.obsidian/
+
 # Docker volumes (local data, not code)
 docker/volumes/
