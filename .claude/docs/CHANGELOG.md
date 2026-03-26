@@ -6,6 +6,14 @@ What was built, fixed, or shipped — logged per session.
 
 ## 2026-03-26
 
+- **BUGFIX:** DM multi-step automation — conversation marked completed when SENDING last question (`isFinalStep=true`), dropping the user's final reply. Fixed: only mark completed after RECEIVING the answer. Zip field was not being collected for Sharon's 3-step flow.
+- **UX OVERHAUL:** Power BI-style data visualizations using Chart.js:
+  - **Main Dashboard:** KPI cards with sparkline trends (7-day), delta arrows (▲/▼ vs yesterday), color-coded left borders
+  - **DM Automations:** Doughnut chart (conversation funnel), bar chart (14-day trend), horizontal bar chart (keyword performance), rate gauge bars (automation table), field pills (leads table)
+  - **Intelligence:** KPI cards (posts/likes/comments/reach/impressions), stacked bar chart (engagement by platform), doughnut chart (comment sentiment), chart-card styling throughout
+  - New `GET /posts/dashboard-trends` endpoint for sparkline data
+  - CSP updated for Chart.js CDN (cdn.jsdelivr.net)
+  - Chart instance cleanup on view navigation (prevents canvas reuse errors)
 - **FIXED ISSUE-019:** Cache-busting version on admin.js not bumped after watchdog commit (517 lines added). Broke frontend navigation. Bumped `?v=24` → `?v=25` in index.html. Added "Pre-Commit Rule: Don't Break What's Working" checklist to CLAUDE.md.
 - **FIXED ISSUE-020:** Helmet CSP `useDefaults: true` includes hidden `scriptSrcAttr: ["'none'"]` that silently blocks ALL inline `onclick` handlers. Five-step debugging cascade: (1) whitelisted Cloudflare domain, (2) purged edge cache, (3) added `scriptSrcElem` — which made it WORSE by triggering the hidden default, (4) disabled Cloudflare Web Analytics, (5) set `useDefaults: false` in Helmet CSP — fixed. Documented as a landmine in CLAUDE.md.
 - **Cloudflare Web Analytics disabled** — beacon was being auto-injected and conflicting with CSP. We have our own admin dashboard analytics.
