@@ -113,14 +113,23 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
     const expiresIn  = longTokenRes.data.expires_in || 5184000; // default 60 days
     const expiresAt  = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    // Step 3: Get the user's Facebook Pages (each page has its own permanent token)
-    const pagesRes = await axios.get('https://graph.facebook.com/v21.0/me/accounts', {
-      params: {
-        access_token: longToken,
-        fields:       'id,name,access_token,instagram_business_account'
-      }
-    });
-    const pages = pagesRes.data.data || [];
+    // Step 3: Get ALL of the user's Facebook Pages (paginate through results)
+    // The Graph API returns a limited number per request (often as few as 4).
+    // We must follow pagination cursors to get every Page the user granted access to.
+    let pages = [];
+    let nextUrl = 'https://graph.facebook.com/v21.0/me/accounts?' + new URLSearchParams({
+      access_token: longToken,
+      fields:       'id,name,access_token,instagram_business_account',
+      limit:        '100'   // request max per page
+    }).toString();
+
+    while (nextUrl) {
+      const pagesRes = await axios.get(nextUrl, { timeout: 15000 });
+      const batch = pagesRes.data.data || [];
+      pages = pages.concat(batch);
+      // Graph API provides paging.next URL when more results exist
+      nextUrl = pagesRes.data.paging?.next || null;
+    }
 
     if (pages.length === 0) {
       // No Facebook Pages found — the user may only have a personal profile.
