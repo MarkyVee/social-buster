@@ -125,10 +125,33 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
 
     while (nextUrl) {
       const pagesRes = await axios.get(nextUrl, { timeout: 15000 });
+      console.log(`[Publish] Meta /me/accounts raw response:`, JSON.stringify({
+        data_count: pagesRes.data.data?.length,
+        pages: (pagesRes.data.data || []).map(p => ({
+          id: p.id,
+          name: p.name,
+          has_ig: !!p.instagram_business_account
+        })),
+        paging: pagesRes.data.paging || 'none'
+      }));
       const batch = pagesRes.data.data || [];
       pages = pages.concat(batch);
       // Graph API provides paging.next URL when more results exist
       nextUrl = pagesRes.data.paging?.next || null;
+    }
+
+    // Debug: check what scopes the token actually has
+    try {
+      const debugRes = await axios.get('https://graph.facebook.com/v21.0/debug_token', {
+        params: {
+          input_token: longToken,
+          access_token: `${process.env.META_APP_ID}|${process.env.META_APP_SECRET}`
+        }
+      });
+      const d = debugRes.data.data;
+      console.log(`[Publish] Token debug — scopes: ${d.scopes?.join(', ')}; granular_scopes:`, JSON.stringify(d.granular_scopes));
+    } catch (dbgErr) {
+      console.warn('[Publish] Token debug failed:', dbgErr.message);
     }
 
     if (pages.length === 0) {
