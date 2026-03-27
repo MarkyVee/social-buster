@@ -262,3 +262,15 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 - **Root cause:** Claude failed to update cache-busting version when modifying a frontend JS file. No pre-commit checklist was in place.
 - **Resolution:** Bumped `?v=24` → `?v=25` in index.html. Added "Pre-Commit Rule: Don't Break What's Working" section to CLAUDE.md with a 5-point mental checklist. Updated persistent feedback memory with the incident and checklist. This class of bug is now preventable.
 - **Lesson:** Every frontend JS/CSS file change MUST bump its `?v=` in index.html. This is non-negotiable.
+
+---
+
+- **ID:** ISSUE-022
+- **Date:** 2026-03-27
+- **Status:** resolved
+- **Severity:** HIGH — Meta Page picker only showed 4 of 9 authorized Pages
+- **Description:** After Meta OAuth consent, the Page picker only displayed 4 Pages despite the user granting access to 9. Instagram accounts (patriot_filming, sharonvidano, markvidano) could not be connected because their linked Pages were missing from the picker.
+- **Root cause:** Meta's `/me/accounts` endpoint only returns Pages where the user has an **admin** role. Pages where the user is an editor, moderator, or other role are silently excluded — even though the OAuth consent screen shows them and `granular_scopes` confirms the token has permissions for them.
+- **Found in:** `backend/routes/publish.js` (Meta OAuth callback, `/me/accounts` call)
+- **Resolution:** After calling `/me/accounts`, we now call `debug_token` to get all authorized Page IDs from `granular_scopes` (`pages_show_list`). Any Page IDs present in granular_scopes but missing from `/me/accounts` are fetched individually via `GET /{page_id}?fields=id,name,access_token,instagram_business_account`. All authorized Pages now appear in the picker regardless of the user's role on that Page. Fix is permanent and automatic for all users.
+- **Lesson:** Never trust `/me/accounts` as the complete list of authorized Pages. Always cross-reference with `debug_token` granular_scopes.

@@ -136,13 +136,23 @@ async function publishPost(post) {
     .eq('id', post.id)
     .eq('status', 'scheduled'); // Only update if still scheduled (atomic guard)
 
-  // Look up the platform connection for this user
-  const { data: connection, error: connError } = await supabaseAdmin
+  // Look up the platform connection for this user.
+  // If the post has a platform_page_id (set when user picks a page), use that
+  // to find the exact connection. Otherwise fall back to most recent connection.
+  let connQuery = supabaseAdmin
     .from('platform_connections')
     .select('*')
     .eq('user_id', post.user_id)
-    .eq('platform', post.platform)
-    .single();
+    .eq('platform', post.platform);
+
+  if (post.platform_page_id) {
+    connQuery = connQuery.eq('platform_user_id', post.platform_page_id);
+  } else {
+    connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
+  }
+
+  const { data: connRows, error: connError } = await connQuery;
+  const connection = connRows?.[0] || null;
 
   if (connError || !connection) {
     console.error(`[PublishingAgent] No ${post.platform} connection for user ${post.user_id}`);
@@ -275,12 +285,13 @@ async function publishPost(post) {
         console.log(`[PublishingAgent]    Attempt ${attempt}/${MAX_RETRIES}: calling publish()...`);
         const result = await publish(post, connection);
 
-        // Success
+        // Success — store the page ID so DM/comment agents use the correct token
         await supabaseAdmin
           .from('posts')
           .update({
             status:           'published',
             platform_post_id: result.platformPostId,
+            platform_page_id: connection.platform_user_id,
             published_at:     new Date().toISOString(),
             error_message:    null
           })

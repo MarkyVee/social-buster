@@ -50,8 +50,9 @@ const OPT_OUT_PHRASES = ['stop', 'unsubscribe', 'opt out', 'cancel', 'leave me a
 //   comment        — { platformCommentId, text, authorHandle, authorPlatformId }
 //   platform       — 'facebook' | 'instagram'
 //   accessToken    — decrypted Page Access Token
+//   pageId         — the Facebook Page ID or Instagram account ID (for multi-page token lookup)
 // ----------------------------------------------------------------
-async function startConversation(userId, automation, comment, platform, accessToken) {
+async function startConversation(userId, automation, comment, platform, accessToken, pageId) {
   // Guard: don't DM the same person twice for the same automation.
   // BUT: if a previous attempt FAILED (conversation exists but DM never sent),
   // delete the stale row and allow a retry. This prevents failed attempts from
@@ -103,6 +104,7 @@ async function startConversation(userId, automation, comment, platform, accessTo
       platform,
       platform_user_id: comment.authorPlatformId,
       author_handle:    comment.authorHandle,
+      page_id:          pageId || null,   // which Page/IG account this DM is from (for multi-page token lookup)
       current_step:     1,
       status:           'active',
       last_message_at:  now,
@@ -143,6 +145,7 @@ async function startConversation(userId, automation, comment, platform, accessTo
     conversationId: conversation.id,
     userId,
     platform,
+    pageId,                                     // which Page/IG account to send from
     recipientId:    comment.authorPlatformId,
     commentId:      comment.platformCommentId,  // for Private Replies API
     messageText,
@@ -282,6 +285,7 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
         conversationId: conversation.id,
         userId:         conversation.user_id,
         platform,
+        pageId:         conversation.page_id || null,
         recipientId:    senderPlatformId,
         messageText:    deliveryMessage,
         stepOrder:      conversation.current_step + 1,
@@ -334,24 +338,12 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     })
     .eq('id', conversation.id);
 
-  // Get the access token for sending the next DM
-  const { data: conn } = await supabaseAdmin
-    .from('platform_connections')
-    .select('access_token')
-    .eq('user_id', conversation.user_id)
-    .eq('platform', platform)
-    .single();
-
-  if (!conn) {
-    console.error(`[DMAgent] No ${platform} connection for user ${conversation.user_id}`);
-    return;
-  }
-
-  // Queue the next DM
+  // Queue the next DM — pageId from the conversation ensures the right Page token is used
   await dmQueue.add('send-dm', {
     conversationId: conversation.id,
     userId:         conversation.user_id,
     platform,
+    pageId:         conversation.page_id || null,
     recipientId:    senderPlatformId,
     messageText:    nextMessage,
     stepOrder:      nextStepOrder,

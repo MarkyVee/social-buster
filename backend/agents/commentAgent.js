@@ -40,7 +40,7 @@ async function runCommentCycle() {
 
     const { data: publishedPosts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, platform_post_id, published_at')
+      .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
       .eq('status', 'published')
       .gte('published_at', cutoff)
       .not('platform_post_id', 'is', null);
@@ -100,13 +100,23 @@ async function processUserComments(userId, posts) {
 
   for (const post of posts) {
     try {
-      // Get the decrypted access token for this platform
-      const { data: connection } = await supabaseAdmin
+      // Get the decrypted access token for the Page this post was published to.
+      // If post has platform_page_id, look up that specific connection.
+      // Otherwise fall back to most recent connection for that platform.
+      let connQuery = supabaseAdmin
         .from('platform_connections')
-        .select('access_token, token_expires_at')
+        .select('access_token, platform_user_id, token_expires_at')
         .eq('user_id', userId)
-        .eq('platform', post.platform)
-        .single();
+        .eq('platform', post.platform);
+
+      if (post.platform_page_id) {
+        connQuery = connQuery.eq('platform_user_id', post.platform_page_id);
+      } else {
+        connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
+      }
+
+      const { data: connRows } = await connQuery;
+      const connection = connRows?.[0];
 
       if (!connection) continue;
 
@@ -138,7 +148,7 @@ async function processUserComments(userId, posts) {
         await processComment(
           userId, post, comment,
           postAutomations, activeLegacyTriggers,
-          accessToken
+          accessToken, connection.platform_user_id
         );
       }
 
@@ -154,7 +164,7 @@ async function processUserComments(userId, posts) {
 // ----------------------------------------------------------------
 // processComment — analyzes and stores one comment, starts DM if triggered.
 // ----------------------------------------------------------------
-async function processComment(userId, post, comment, automations, legacyTriggers, accessToken) {
+async function processComment(userId, post, comment, automations, legacyTriggers, accessToken, pageId) {
   // Guard against duplicates — the UNIQUE constraint on platform_comment_id handles this
   // but we check first to avoid wasting a DB call
   const { data: existing } = await supabaseAdmin
@@ -219,7 +229,8 @@ async function processComment(userId, post, comment, automations, legacyTriggers
           authorPlatformId:  comment.authorPlatformId
         },
         post.platform,
-        accessToken
+        accessToken,
+        pageId  // so DM worker uses the right Page's token
       );
     } catch (err) {
       console.error(`[CommentAgent] Failed to start DM conversation for @${comment.authorHandle}:`, err.message);
@@ -337,7 +348,7 @@ async function processRealtimeComment(pageId, platformPostId, commentId, comment
     // Find the internal post by platform_post_id
     const { data: post, error: postErr } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, platform_post_id, published_at')
+      .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
       .eq('platform_post_id', platformPostId)
       .eq('status', 'published')
       .single();
@@ -367,16 +378,27 @@ async function processRealtimeComment(pageId, platformPostId, commentId, comment
       .eq('user_id', userId)
       .eq('active', true);
 
-    // Get the decrypted access token for this platform
-    const { data: connection } = await supabaseAdmin
+    // Get the decrypted access token for the specific Page this comment came from.
+    // The webhook gives us pageId — use it to find the exact connection.
+    let connQuery = supabaseAdmin
       .from('platform_connections')
-      .select('access_token')
+      .select('access_token, platform_user_id')
       .eq('user_id', userId)
-      .eq('platform', post.platform)
-      .single();
+      .eq('platform', post.platform);
+
+    if (pageId) {
+      connQuery = connQuery.eq('platform_user_id', pageId);
+    } else if (post.platform_page_id) {
+      connQuery = connQuery.eq('platform_user_id', post.platform_page_id);
+    } else {
+      connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
+    }
+
+    const { data: connRows } = await connQuery;
+    const connection = connRows?.[0];
 
     if (!connection) {
-      console.warn(`[CommentAgent] Realtime: No ${post.platform} connection for user ${userId}`);
+      console.warn(`[CommentAgent] Realtime: No ${post.platform} connection for user ${userId} (pageId: ${pageId})`);
       return;
     }
 
@@ -401,7 +423,8 @@ async function processRealtimeComment(pageId, platformPostId, commentId, comment
       },
       postAutomations,
       legacyTriggers || [],
-      accessToken
+      accessToken,
+      connection.platform_user_id  // pageId from the webhook's matching connection
     );
 
     console.log(`[CommentAgent] Realtime: Processed comment "${commentText.substring(0, 30)}..." on post ${post.id}`);

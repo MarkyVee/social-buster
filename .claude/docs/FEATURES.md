@@ -236,6 +236,18 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+## MEDIUM PRIORITY — Build Soon
+
+- **ID:** FEAT-019
+- **Date:** 2026-03-27
+- **Status:** idea
+- **Priority:** MEDIUM
+- **Description:** Admin OAuth Token Diagnostics Panel — one-click button on each user profile (admin-only) to inspect their connected platform tokens. Shows: granular scopes (which Pages/Instagram accounts each permission covers), token expiry, and debug info from Meta's `/debug_token` endpoint. Read-only — no Meta approval risk.
+- **Reason:** When users report connection issues, admin currently has to read server logs. This panel gives instant visibility into token health and scope coverage from the admin dashboard.
+- **Related:** [[ISSUES]] ISSUE-022
+
+---
+
 ## Done
 
 _(none yet)_

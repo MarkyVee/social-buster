@@ -54,18 +54,28 @@ const worker = new Worker('dm', async (job) => {
 //   isFinalStep    — if true, mark conversation as 'completed' after sending
 // ----------------------------------------------------------------
 async function processSendDM(job) {
-  const { conversationId, userId, platform, recipientId, commentId, messageText, stepOrder, isFinalStep } = job.data;
+  const { conversationId, userId, platform, pageId, recipientId, commentId, messageText, stepOrder, isFinalStep } = job.data;
 
-  // Get the access token + page ID for this platform
-  const { data: conn, error: connError } = await supabaseAdmin
+  // Get the access token + page ID for this platform.
+  // If pageId is provided (from the comment's Page), look up that specific connection.
+  // Otherwise fall back to most recent connection for that platform.
+  let connQuery = supabaseAdmin
     .from('platform_connections')
     .select('access_token, platform_user_id')
     .eq('user_id', userId)
-    .eq('platform', platform)
-    .single();
+    .eq('platform', platform);
+
+  if (pageId) {
+    connQuery = connQuery.eq('platform_user_id', pageId);
+  } else {
+    connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
+  }
+
+  const { data: connRows, error: connError } = await connQuery;
+  const conn = connRows?.[0] || null;
 
   if (connError || !conn) {
-    throw new Error(`No ${platform} connection found for user ${userId}`);
+    throw new Error(`No ${platform} connection found for user ${userId} (pageId: ${pageId || 'any'})`);
   }
 
   let accessToken;

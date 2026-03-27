@@ -215,7 +215,9 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
 async function saveMetaPageConnection(userId, page, finish) {
   const connectedPlatforms = [];
 
-  // Store the Facebook Page connection using the page's own access token
+  // Store the Facebook Page connection using the page's own access token.
+  // Uses user+platform+page_id constraint so connecting a new Page doesn't
+  // overwrite existing Pages — each Page gets its own row.
   await supabaseAdmin
     .from('platform_connections')
     .upsert({
@@ -227,7 +229,7 @@ async function saveMetaPageConnection(userId, page, finish) {
       platform_user_id:  page.id,
       platform_username: page.name,
       connected_at:      new Date().toISOString()
-    }, { onConflict: 'user_id,platform' });
+    }, { onConflict: 'user_id,platform,platform_user_id' });
 
   connectedPlatforms.push('facebook');
   console.log(`[Publish] Facebook Page "${page.name}" (${page.id}) connected for user ${userId}`);
@@ -273,7 +275,7 @@ async function saveMetaPageConnection(userId, page, finish) {
           platform_user_id:  igAccount.id,
           platform_username: igAccount.username || page.name,
           connected_at:      new Date().toISOString()
-        }, { onConflict: 'user_id,platform' });
+        }, { onConflict: 'user_id,platform,platform_user_id' });
 
       connectedPlatforms.push('instagram');
       console.log(`[Publish] Instagram "@${igAccount.username}" connected for user ${userId}`);
@@ -871,7 +873,7 @@ router.post('/platforms/connect', standardLimiter, checkLimit('platforms_connect
     const encryptedAccess  = encryptToken(access_token);
     const encryptedRefresh = refresh_token ? encryptToken(refresh_token) : null;
 
-    // Upsert — one row per user per platform
+    // Upsert — one row per user per platform per page/account
     const { data, error } = await supabaseAdmin
       .from('platform_connections')
       .upsert({
@@ -882,7 +884,7 @@ router.post('/platforms/connect', standardLimiter, checkLimit('platforms_connect
         token_expires_at:  token_expires_at || null,
         platform_user_id:  platform_user_id || null,
         platform_username: platform_username || null
-      }, { onConflict: 'user_id,platform' })
+      }, { onConflict: 'user_id,platform,platform_user_id' })
       .select('id, platform, platform_username, connected_at')
       .single();
 
