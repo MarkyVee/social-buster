@@ -113,34 +113,29 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
     const expiresIn  = longTokenRes.data.expires_in || 5184000; // default 60 days
     const expiresAt  = new Date(Date.now() + expiresIn * 1000).toISOString();
 
-    // Step 3: Get ALL of the user's Facebook Pages (paginate through results)
-    // The Graph API returns a limited number per request (often as few as 4).
-    // We must follow pagination cursors to get every Page the user granted access to.
+    // Step 3: Get the user's Facebook Pages.
+    // /me/accounts only returns Pages where the user is an admin.
+    // But granular_scopes (from debug_token) lists ALL Pages the user authorized.
+    // We query both, then fetch any missing Pages individually.
     let pages = [];
     let nextUrl = 'https://graph.facebook.com/v21.0/me/accounts?' + new URLSearchParams({
       access_token: longToken,
       fields:       'id,name,access_token,instagram_business_account',
-      limit:        '100'   // request max per page
+      limit:        '100'
     }).toString();
 
     while (nextUrl) {
       const pagesRes = await axios.get(nextUrl, { timeout: 15000 });
-      console.log(`[Publish] Meta /me/accounts raw response:`, JSON.stringify({
-        data_count: pagesRes.data.data?.length,
-        pages: (pagesRes.data.data || []).map(p => ({
-          id: p.id,
-          name: p.name,
-          has_ig: !!p.instagram_business_account
-        })),
-        paging: pagesRes.data.paging || 'none'
-      }));
       const batch = pagesRes.data.data || [];
       pages = pages.concat(batch);
-      // Graph API provides paging.next URL when more results exist
       nextUrl = pagesRes.data.paging?.next || null;
     }
+    const returnedPageIds = new Set(pages.map(p => p.id));
+    console.log(`[Publish] /me/accounts returned ${pages.length} page(s): ${pages.map(p => p.name).join(', ')}`);
 
-    // Debug: check what scopes the token actually has
+    // Step 3b: Check granular_scopes for Pages the user authorized but /me/accounts missed.
+    // This happens when the user has a non-admin role (editor, moderator, etc.) on a Page.
+    // We can still get Page tokens by querying each Page directly with the user token.
     try {
       const debugRes = await axios.get('https://graph.facebook.com/v21.0/debug_token', {
         params: {
@@ -149,9 +144,38 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
         }
       });
       const d = debugRes.data.data;
-      console.log(`[Publish] Token debug — scopes: ${d.scopes?.join(', ')}; granular_scopes:`, JSON.stringify(d.granular_scopes));
+      console.log(`[Publish] Token scopes: ${d.scopes?.join(', ')}`);
+
+      // Find Page IDs from pages_show_list that weren't in /me/accounts
+      const pagesScope = (d.granular_scopes || []).find(s => s.scope === 'pages_show_list');
+      const authorizedPageIds = pagesScope?.target_ids || [];
+      const missingIds = authorizedPageIds.filter(id => !returnedPageIds.has(id));
+
+      if (missingIds.length > 0) {
+        console.log(`[Publish] ${missingIds.length} authorized Page(s) missing from /me/accounts — fetching individually`);
+        // Fetch each missing Page individually — the user token can get Page details
+        // and Page access token for any Page the user has a role on
+        const fetches = missingIds.map(async (pageId) => {
+          try {
+            const r = await axios.get(`https://graph.facebook.com/v21.0/${pageId}`, {
+              params: {
+                access_token: longToken,
+                fields: 'id,name,access_token,instagram_business_account'
+              },
+              timeout: 10000
+            });
+            console.log(`[Publish] Fetched missing Page: ${r.data.name} (${r.data.id}), has_ig: ${!!r.data.instagram_business_account}`);
+            return r.data;
+          } catch (err) {
+            console.warn(`[Publish] Could not fetch Page ${pageId}: ${err.response?.data?.error?.message || err.message}`);
+            return null;
+          }
+        });
+        const extraPages = (await Promise.all(fetches)).filter(Boolean);
+        pages = pages.concat(extraPages);
+      }
     } catch (dbgErr) {
-      console.warn('[Publish] Token debug failed:', dbgErr.message);
+      console.warn('[Publish] Token debug/granular fetch failed:', dbgErr.message);
     }
 
     if (pages.length === 0) {
