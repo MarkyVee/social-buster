@@ -274,3 +274,29 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 - **Found in:** `backend/routes/publish.js` (Meta OAuth callback, `/me/accounts` call)
 - **Resolution:** After calling `/me/accounts`, we now call `debug_token` to get all authorized Page IDs from `granular_scopes` (`pages_show_list`). Any Page IDs present in granular_scopes but missing from `/me/accounts` are fetched individually via `GET /{page_id}?fields=id,name,access_token,instagram_business_account`. All authorized Pages now appear in the picker regardless of the user's role on that Page. Fix is permanent and automatic for all users.
 - **Lesson:** Never trust `/me/accounts` as the complete list of authorized Pages. Always cross-reference with `debug_token` granular_scopes.
+
+---
+
+- **ID:** ISSUE-023
+- **Date:** 2026-03-27
+- **Status:** in-progress
+- **Severity:** CRITICAL — DM automation broken after reconnecting Facebook
+- **Description:** After reconnecting Facebook to test the new 9-Page picker (ISSUE-022 fix), DM automation stopped working. Comments are detected by webhook, conversations are created, but DMWorker fails with: `Cannot read comment — error 100: Tried accessing nonexisting field (text)` and `Private Reply error 1: Please reduce the amount of data you're asking for`. Posts published, but no DMs sent to Sharon on Facebook or Instagram.
+- **Root cause (multi-layered):**
+  1. **Old architecture:** `platform_connections` had `UNIQUE(user_id, platform)` — reconnecting with a different Page overwrote the old token. DMWorker then used the wrong Page's token to reply to comments on the old Page's posts.
+  2. **Bad migration backfill:** When multi-page migration ran, the backfill `UPDATE posts SET platform_page_id = ...` joined against `platform_connections` which already had the WRONG Page's token (from the reconnection). So existing published posts got the wrong `platform_page_id`.
+  3. **Facebook one-private-reply-per-comment rule:** Even after fixing tokens, Sharon's old comments already had failed DM attempts. Facebook counts attempted private replies even if they fail — no second attempt allowed on the same comment.
+  4. **Stale DM conversations:** Failed conversations block the dedup guard, preventing retries even on new comments.
+- **Found in:** `backend/workers/dmWorker.js`, `backend/agents/commentAgent.js`, `backend/data/migration_multi_page_connections.sql`
+- **Partial fixes applied (2026-03-27):**
+  - Multi-page architecture deployed: `UNIQUE(user_id, platform, platform_user_id)` — reconnecting no longer overwrites other Pages
+  - `posts.platform_page_id` and `dm_conversations.page_id` columns added
+  - All token lookups (publishingAgent, commentAgent, dmWorker) now use `pageId` when available
+  - Webhook realtime path uses `entry.id` (actual Page ID from Meta) — correct
+- **Still needed for full resolution:**
+  - Fix bad backfill on existing posts — derive correct `platform_page_id` from `platform_post_id` (Facebook format: `{page_id}_{post_id}`)
+  - Add code fallback: if `platform_page_id` is null, parse from `platform_post_id`
+  - Clean up stale failed DM conversations so dedup guard doesn't block retries
+  - Reconnect with original working Page, publish new post, test with Sharon on new post
+  - Handle "one private reply per comment" error gracefully (detect and log clearly instead of retrying 3 times)
+- **Related:** ISSUE-022, platform_publishing_guide.md (Issues 1-8 DM debugging history)

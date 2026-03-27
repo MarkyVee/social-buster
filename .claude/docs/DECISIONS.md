@@ -72,6 +72,20 @@
 
 ---
 
+- Date: 2026-03-27
+- Decision: platform_connections supports multiple Pages per platform per user (multi-page architecture)
+- Reason: The old UNIQUE(user_id, platform) constraint meant connecting a new Facebook Page overwrote the old token. This broke DM automation for all existing posts because the DM worker used whatever token was currently stored, not the token for the Page the post was published to. Discovered when user reconnected to test the page picker and all DMs started failing.
+- Impact: DB migration required (migration_multi_page_connections.sql — ran 2026-03-27). Every token lookup (publishingAgent, commentAgent, dmWorker) now uses pageId when available. Posts store platform_page_id at publish time. DM conversations store page_id at creation. Frontend settings page unchanged — shows first connection per platform (future: show all Pages with individual disconnect).
+
+---
+
+- Date: 2026-03-27
+- Decision: Derive platform_page_id from platform_post_id as a fallback (Facebook post IDs are `{page_id}_{post_id}`)
+- Reason: The multi-page migration backfill set wrong `platform_page_id` on existing posts because `platform_connections` already had the wrong Page's token at the time of the backfill. Need a way to derive the correct Page ID without relying on potentially stale data. Facebook's `platform_post_id` format embeds the Page ID before the underscore — this is authoritative.
+- Impact: Code fallback in commentAgent and publishingAgent: if `platform_page_id` is null or doesn't match any connection, parse from `platform_post_id.split('_')[0]`. Also need SQL fix to correct the bad backfill on existing posts. ISSUE-023 tracks full resolution. Key lesson: never backfill from a table that might have stale data — derive from authoritative sources.
+
+---
+
 - Date: 2026-03-26
 - Decision: Anonymize comments on Meta data deletion instead of deleting them
 - Reason: Comments are authored by third-party users (commenters), not the Page owner requesting deletion. They are public data that feeds our intelligence engine — sentiment analysis, research agents, cohort benchmarks. Deleting them would destroy irreplaceable research data and break agent functionality. The Page owner's personal data is in their OAuth tokens, DM conversations, and platform connections — not in other people's comments. Anonymization (null out author_handle, platform_comment_id, post_id) removes any link back to the Page while preserving the research value (comment text, sentiment, platform).

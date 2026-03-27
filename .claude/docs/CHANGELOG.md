@@ -4,6 +4,26 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-27
+
+- **FIXED ISSUE-022:** Meta Page picker only showed 4 of 9 authorized Pages. Root cause: `/me/accounts` only returns Pages where user is admin. Fix: cross-reference `debug_token` granular_scopes to find all authorized Page IDs, fetch missing ones individually. Permanent and automatic for all users.
+- **ARCHITECTURE: Multi-Page Platform Connections** — `platform_connections` now supports multiple Pages per platform per user. Previous design (UNIQUE on user_id+platform) meant reconnecting with a different Page overwrote the old token, breaking DM automation for existing posts. New design:
+  - Constraint changed to UNIQUE(user_id, platform, platform_user_id)
+  - `posts.platform_page_id` tracks which Page each post was published to
+  - `dm_conversations.page_id` tracks which Page each DM conversation belongs to
+  - publishingAgent stores page_id on post after publishing
+  - commentAgent + dmWorker look up token by specific pageId
+  - All lookups fall back to most recent connection if no pageId (backward compatible)
+  - Migration: `backend/data/migration_multi_page_connections.sql` (**ran in Supabase SQL Editor**)
+- **FEAT-019 logged:** Admin OAuth Token Diagnostics Panel — one-click button on user profiles to inspect token health, granular scopes, and expiry (idea, not built yet).
+- **Threads moved to "Coming Soon"** — ISSUE-021 (Meta OAuth bug) still unresolved.
+- **TikTok, LinkedIn, X also marked "Coming Soon"** in frontend platform list.
+- **BullMQ Redis fix:** `queues/index.js` now parses REDIS_URL when REDIS_HOST isn't set (Docker Compose compatibility).
+- **Startup env check:** `server.js` accepts either REDIS_HOST or REDIS_URL (not both required).
+- **ISSUE-023 OPENED:** DM automation broken after reconnecting Facebook. Multi-page architecture deployed but existing posts have wrong `platform_page_id` from bad backfill. Still needs: (1) fix backfill by deriving page_id from `platform_post_id`, (2) add code fallback to parse page_id from Facebook post ID format `{page_id}_{post_id}`, (3) clean stale DM conversations, (4) handle one-private-reply-per-comment error gracefully. See ISSUE-023 and DECISIONS.md for full details.
+
+---
+
 ## 2026-03-26
 
 - **BUGFIX:** DM multi-step automation — conversation marked completed when SENDING last question (`isFinalStep=true`), dropping the user's final reply. Fixed: only mark completed after RECEIVING the answer. Zip field was not being collected for Sharon's 3-step flow.
