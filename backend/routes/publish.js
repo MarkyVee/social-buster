@@ -1035,22 +1035,23 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
 // Required Meta App setup: Threads API product added, redirect URI registered
 // ----------------------------------------------------------------
 router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
-  // Threads authorize URL uses the META_APP_ID (main app ID), not the Threads-specific app ID.
-  // The Threads-specific THREADS_APP_ID is used in the callback for token exchange.
-  const authorizeAppId = process.env.META_APP_ID || process.env.THREADS_APP_ID;
-  if (!authorizeAppId) {
+  // Threads OAuth uses the Threads-specific App ID (from Threads API settings in Meta portal).
+  // The authorize URL must go to www.threads.com directly (threads.net 301-redirects and loses context).
+  const threadsAppId = process.env.THREADS_APP_ID || process.env.META_APP_ID;
+  if (!threadsAppId) {
     return res.status(501).json({
-      error: 'Threads is not set up yet. Add META_APP_ID to your .env file.'
+      error: 'Threads is not set up yet. Add THREADS_APP_ID to your .env file.'
     });
   }
 
   const state = crypto.randomBytes(32).toString('hex');
   cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
-  const authUrl = `https://threads.net/oauth/authorize` +
-    `?client_id=${encodeURIComponent(authorizeAppId)}` +
+  // URL-encode the scope (comma-separated) to prevent issues during redirects
+  const authUrl = `https://www.threads.com/oauth/authorize` +
+    `?client_id=${encodeURIComponent(threadsAppId)}` +
     `&redirect_uri=${encodeURIComponent(THREADS_REDIRECT_URI)}` +
-    `&scope=threads_basic,threads_content_publish` +
+    `&scope=${encodeURIComponent('threads_basic,threads_content_publish')}` +
     `&response_type=code` +
     `&state=${state}`;
 
