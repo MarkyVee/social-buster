@@ -186,6 +186,30 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ---
 
+### HIGH — Integration
+
+- **ID:** ISSUE-021
+- **Date:** 2026-03-27
+- **Status:** open (blocked — likely Meta platform bug)
+- **Category:** HIGH / Integration
+- **Description:** Threads OAuth authorize endpoint returns `{"error_message":"Authorization Failed: No app ID was sent with the request.","error_code":4476002}` despite `client_id` being correctly included in the URL query string. The full OAuth redirect flow is non-functional. However, the "Generate Access Token" button in Meta Developer Portal → Threads API → Settings works perfectly for the same app and tester account, proving the App ID, secret, tester config, and permissions are all valid.
+- **Found in:** Threads OAuth flow (`threads.net/oauth/authorize` → `www.threads.com/oauth/authorize`)
+- **What was tried (all failed with same error):**
+  1. `https://threads.net/oauth/authorize?client_id=895936300985012` (Threads App ID) — 301 redirects to `www.threads.com`, then returns error
+  2. `https://www.threads.com/oauth/authorize?client_id=895936300985012` — direct, same error
+  3. Both URLs with Meta App ID `1240290211015400` instead — same error
+  4. `https://graph.threads.net/oauth/authorize?client_id=...` — different error: "Invalid client_id" (not the right endpoint)
+  5. URL-encoding the scope parameter — no difference
+  6. Incognito browser while logged into Threads as tester — same error
+  7. Re-saved Threads API settings in Meta Developer Portal — same error
+  8. Added `social-buster.com` to App domains in App Settings → Advanced — same error
+  9. Verified via browser Network tab that `client_id` IS present in every request URL
+- **Confirmed working:** "Generate Access Token" button in portal, Threads Tester accepted, permissions `threads_basic` + `threads_content_publish` both "Ready for testing", redirect URI matches exactly, app is Published/Live
+- **Suspected cause:** Meta platform bug — the OAuth authorize endpoint on `threads.net`/`www.threads.com` is not reading the `client_id` query parameter. The 301 redirect from `threads.net` → `www.threads.com` may be related. Other developers may be experiencing this.
+- **Resolution:** Pending. Need to research if this is a known Meta bug and/or file a bug report with Meta.
+
+---
+
 ### MEDIUM — Security (Deep Review)
 
 - **ID:** ISSUE-017

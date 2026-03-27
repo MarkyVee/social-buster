@@ -2397,7 +2397,7 @@ async function loadConnectedPlatforms() {
   const platforms = [
     { id: 'instagram', label: 'Instagram',   icon: '📸', group: 'meta',    note: 'Requires an Instagram Professional account linked to a Facebook Page' },
     { id: 'facebook',  label: 'Facebook',    icon: '👥', group: 'meta',    note: 'Requires a Facebook Page (not a personal profile)' },
-    { id: 'threads',   label: 'Threads',     icon: '🧵', group: 'threads', note: 'Requires a Threads account' },
+    { id: 'threads',   label: 'Threads',     icon: '🧵', group: 'coming_soon', note: 'Coming soon — Threads integration (blocked by Meta OAuth issue)' },
     { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'coming_soon', note: 'Coming soon — TikTok for Business integration' },
     { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'coming_soon', note: 'Coming soon — LinkedIn integration' },
     { id: 'x',         label: 'X (Twitter)', icon: '𝕏',  group: 'coming_soon', note: 'Coming soon — X (Twitter) integration' },
