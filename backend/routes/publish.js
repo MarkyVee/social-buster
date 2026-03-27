@@ -1035,19 +1035,20 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
 // Required Meta App setup: Threads API product added, redirect URI registered
 // ----------------------------------------------------------------
 router.post('/oauth/threads/start', standardLimiter, checkLimit('platforms_connected'), (req, res) => {
-  // Threads has its own App ID/Secret, separate from the Facebook Login Meta App.
-  const threadsAppId = process.env.THREADS_APP_ID || process.env.META_APP_ID;
-  if (!threadsAppId) {
+  // Threads authorize URL uses the META_APP_ID (main app ID), not the Threads-specific app ID.
+  // The Threads-specific THREADS_APP_ID is used in the callback for token exchange.
+  const authorizeAppId = process.env.META_APP_ID || process.env.THREADS_APP_ID;
+  if (!authorizeAppId) {
     return res.status(501).json({
-      error: 'Threads is not set up yet. Add THREADS_APP_ID and THREADS_APP_SECRET to your .env file.'
+      error: 'Threads is not set up yet. Add META_APP_ID to your .env file.'
     });
   }
 
   const state = crypto.randomBytes(32).toString('hex');
   cacheSet(`oauth_nonce:${state}`, req.user.id, 600);
 
-  const authUrl = `https://www.threads.com/oauth/authorize` +
-    `?client_id=${encodeURIComponent(threadsAppId)}` +
+  const authUrl = `https://threads.net/oauth/authorize` +
+    `?client_id=${encodeURIComponent(authorizeAppId)}` +
     `&redirect_uri=${encodeURIComponent(THREADS_REDIRECT_URI)}` +
     `&scope=threads_basic,threads_content_publish` +
     `&response_type=code` +
