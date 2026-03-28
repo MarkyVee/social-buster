@@ -756,6 +756,20 @@ After the single-message DM was confirmed working (Issue 5 fix), we moved on to 
   4. **Result: FULL MULTI-STEP FLOW WORKED END-TO-END** ✅
 - **Lesson for future platforms:** `flow_type` alone doesn't determine behavior — the actual number of steps matters. If someone creates a "multi_step" automation with only 1 step, the system correctly treats it as a single message (because there IS only 1 step). This is actually correct behavior, but it's confusing during testing. The frontend could add a warning: "Multi-step flows require at least 2 steps."
 
+#### Issue 9: ManyChat intercepting Instagram comments/DMs + Instagram API differences
+
+- **Symptom:** Sharon commented on an Instagram post, webhook was received (`[Webhooks] Realtime instagram comment from sharonvidano`), but DMAgent never triggered. Sharon received a DM from ManyChat instead of Social Buster. Logs also showed `[Webhooks] Invalid signature — payload rejected` lines from ManyChat's webhook requests.
+- **Root cause (3 issues):**
+  1. **ManyChat still connected** to @patriot_filming Instagram — intercepting comments and sending DMs before Social Buster could process them. Even after the user thought they'd disconnected it, ManyChat persisted through Instagram Apps & Websites, Facebook Page integrations, or Meta Business Suite integrations.
+  2. **Instagram comment field mismatch** — `sendPrivateReply` diagnostic code requested `message` field on Instagram comments, but Instagram uses `text`. Requesting a nonexistent field causes error #100. Fix: try IG fields (`text,from,username`) first, fall back to FB fields (`id,message,from`).
+  3. **Wrong Instagram DM endpoint** — code used `POST /{ig_user_id}/messages` for Instagram (same pattern as Facebook's `POST /{page_id}/messages`). Instagram returns error #3 "Application does not have the capability". Fix: Instagram uses `POST /me/messages`, Facebook uses `POST /{page_id}/messages`.
+- **Fix:**
+  1. User fully disconnected ManyChat from all connection points (2026-03-28)
+  2. `messagingService.js` — comment read tries IG fields first, falls back to FB fields
+  3. `messagingService.js` — `sendPrivateReply` accepts `platform` parameter, routes to correct endpoint
+  4. `dmWorker.js` — passes `platform` to `sendPrivateReply`
+- **Lesson for future platforms:** Each platform's Messaging API has its own endpoint pattern — never assume Platform B works like Platform A. Instagram's `POST /me/messages` vs Facebook's `POST /{page_id}/messages` is a subtle but critical difference. Also: always check for third-party automation tools (ManyChat, Chatfuel, MobileMonkey) that may be connected to the same account and intercepting webhooks.
+
 ### Full Working Multi-Step Flow (CONFIRMED 2026-03-24)
 
 ```

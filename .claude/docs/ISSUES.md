@@ -300,7 +300,7 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 - **ID:** ISSUE-024
 - **Date:** 2026-03-27
-- **Status:** open (in progress — two new fixes deployed, ready for end-to-end test)
+- **Status:** open (ManyChat removed, code fixes deployed — ready for clean end-to-end test)
 - **Category:** HIGH / Integration
 - **Description:** Instagram DM automation cannot be tested. Multiple root causes found and fixed:
   1. `POST /{ig_account_id}/subscribed_apps` was failing with error #3 — endpoint doesn't exist for Instagram (Facebook Pages only). Removed.
@@ -315,14 +315,15 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
   6. **FIXED:** Removed the invalid `POST /{ig_id}/subscribed_apps` call from `publish.js` — that endpoint is Facebook Pages only (commit `8889439`)
   7. **FIXED:** Updated OAuth scopes — `instagram_basic` → `instagram_business_basic`, `instagram_content_publish` → `instagram_business_content_publish`, `instagram_manage_messages` → `instagram_business_manage_messages` (commit `5d70d1b`)
   8. **FIXED:** Instagram Messaging webhook subscriptions in Meta Developer Portal were at "0 fields" for all Pages. Manually subscribed Patriot Films & Studios, Sharon N. Vidano, and Social-Buster to `messages`, `message_reactions`, `comments` via Edit Subscriptions (2026-03-27)
+  9. **BLOCKER FOUND:** ManyChat was still connected to @patriot_filming Instagram — intercepting comments and sending DMs before Social Buster. Webhook logs showed `[Webhooks] Invalid signature — payload rejected` from ManyChat's requests. User disconnected ManyChat (2026-03-28).
+  10. **FIXED:** Instagram comment field mismatch — requesting `message` field on IG comments caused error #100. Now tries IG fields (`text,from,username`) first, falls back to FB fields (`id,message,from`).
+  11. **FIXED:** Instagram DM endpoint — was using `POST /{ig_user_id}/messages` (error #3). Now uses `POST /me/messages` for Instagram, `POST /{page_id}/messages` for Facebook.
 - **What to do next (step by step):**
-  1. Wait for Coolify to deploy commit `5d70d1b` (OAuth scope fix)
-  2. **Reconnect Facebook/Instagram** in Social Buster — so the new `instagram_business_*` scopes are granted
-  3. **Publish a new Instagram post** from Social Buster with a DM automation attached
-  4. **Have Sharon comment** on the Instagram post with the trigger keyword
-  5. **Check Coolify logs** for `[Webhooks] Realtime instagram comment...` lines
-  6. If still no webhook: check `instagram_manage_comments` permission status in Meta Developer Portal → Permissions and Features — must be "Ready for testing"
-  7. If permission is missing: submit for App Review
+  1. Run SQL cleanup: `DELETE FROM dm_conversations;`
+  2. Publish a NEW Instagram post with DM automation attached (trigger keyword set)
+  3. Have Sharon comment with the trigger keyword
+  4. Check Coolify logs for `[DMAgent] Started` and `[MessagingService] Sending private reply via instagram endpoint: .../me/messages`
+  5. If no webhook lines: check Page-level webhook subscriptions in Meta Developer Portal
 - **Key findings:**
   - `/{ig_account_id}/subscribed_apps` does NOT exist — Instagram webhooks rely on (1) app-level webhook config + (2) Facebook Page subscription
   - Instagram Business Login uses different scope names than old Instagram API (`instagram_business_basic` not `instagram_basic`, etc.)

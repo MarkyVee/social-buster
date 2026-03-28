@@ -4,6 +4,17 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-28
+
+- **FIXED:** Instagram image container polling — was only polling video containers, causing error 9007 "media not ready". Now polls both images (3s intervals, 30s max) and videos (10s intervals, 5min max).
+- **FIXED:** Instagram video re-upload — trimmed videos had local path but Instagram requires public URLs. Now re-uploads trimmed video to Supabase before publishing (same pattern as image crop re-upload).
+- **FIXED:** Instagram comment field mismatch — `sendPrivateReply` diagnostic tried requesting `message` field on IG comments (error #100). Now tries IG fields first (`text,from,username`), falls back to FB fields.
+- **FIXED:** Instagram DM endpoint — `sendPrivateReply` used `POST /{ig_user_id}/messages` for all platforms (error #3 on Instagram). Now routes: Instagram → `POST /me/messages`, Facebook → `POST /{page_id}/messages`.
+- **BLOCKER FOUND & RESOLVED:** ManyChat was connected to @patriot_filming Instagram, intercepting comments/DMs before Social Buster. User disconnected ManyChat.
+- **Pending:** Instagram DM end-to-end test — all code fixes deployed, ManyChat removed, awaiting clean test with Sharon.
+
+---
+
 ## 2026-03-27
 
 - **FIXED ISSUE-022:** Meta Page picker only showed 4 of 9 authorized Pages. Root cause: `/me/accounts` only returns Pages where user is admin. Fix: cross-reference `debug_token` granular_scopes to find all authorized Page IDs, fetch missing ones individually. Permanent and automatic for all users.

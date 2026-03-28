@@ -310,15 +310,17 @@ async function publishToInstagram(post, accessToken, connection) {
 
     const statusRes = await igCall(() => axios.get(
       `${API_BASE}/${containerId}`,
-      { params: { fields: 'status_code', access_token: accessToken }, timeout: TIMEOUT }
+      { params: { fields: 'status_code,status', access_token: accessToken }, timeout: TIMEOUT }
     ));
 
     const status = statusRes.data.status_code;
-    console.log(`[PlatformAPIs] IG container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})`);
+    const statusDetail = statusRes.data.status;
+    console.log(`[PlatformAPIs] IG container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})${statusDetail ? ' detail: ' + JSON.stringify(statusDetail) : ''}`);
 
     if (status === 'FINISHED') break;
     if (status === 'ERROR') {
-      throw new Error(`Instagram ${isVideo ? 'video' : 'image'} processing failed. The media may be in an unsupported format or too large.`);
+      const reason = statusDetail?.error_message || statusDetail?.error?.message || 'unknown reason';
+      throw new Error(`Instagram ${isVideo ? 'video' : 'image'} processing failed: ${reason}`);
     }
 
     if (i === MAX_POLLS - 1) {
