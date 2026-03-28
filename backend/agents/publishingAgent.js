@@ -138,15 +138,20 @@ async function publishPost(post) {
 
   // Look up the platform connection for this user.
   // If the post has a platform_page_id (set when user picks a page), use that
-  // to find the exact connection. Otherwise fall back to most recent connection.
+  // to find the exact connection. Fallback: parse from platform_post_id
+  // (Facebook format: {page_id}_{post_id}). Last resort: most recent connection.
+  const effectivePageId = post.platform_page_id
+    || (post.platform_post_id && post.platform_post_id.includes('_')
+        ? post.platform_post_id.split('_')[0] : null);
+
   let connQuery = supabaseAdmin
     .from('platform_connections')
     .select('*')
     .eq('user_id', post.user_id)
     .eq('platform', post.platform);
 
-  if (post.platform_page_id) {
-    connQuery = connQuery.eq('platform_user_id', post.platform_page_id);
+  if (effectivePageId) {
+    connQuery = connQuery.eq('platform_user_id', effectivePageId);
   } else {
     connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
   }

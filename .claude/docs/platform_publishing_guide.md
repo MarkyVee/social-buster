@@ -827,6 +827,43 @@ After the single-message DM was confirmed working (Issue 5 fix), we moved on to 
 - `7f453a2` — Add diagnostic logging for PSID mismatch debugging
 - `af36598` — **THE FIX (multi-step):** `.maybeSingle()` + left join + debug query
 
+### ISSUE-023 Resolution: DM Automation Broken After Reconnecting Facebook (2026-03-27)
+
+#### What Happened
+After reconnecting Facebook to test the new multi-page picker (ISSUE-022 fix), DM automation stopped working entirely. Publishing still worked fine on both Facebook and Instagram.
+
+#### Root Causes (3 layers)
+
+1. **Wrong Page ID mismatch** — The webhook sends `entry.id` (the actual Page ID the comment was posted on). Our `platform_connections` table had a different Page connected than the one the post was published to. The `processRealtimeComment()` function looked up the token using the webhook's `pageId`, found no matching connection, and logged: `No facebook connection for user ... (pageId: ...)`.
+
+2. **Dedup guard blocking retries** — Sharon's old `dm_conversations` row had `status: 'completed'` from the previous working test. The dedup guard in `dmAgent.startConversation()` checked `WHERE automation_id = X AND platform_user_id = Y` and found the completed row, so it logged `Skipping — already DM'd Sharon Vidano` and returned. Even though the old conversation was from a completely different test cycle.
+
+3. **Bad backfill from multi-page migration** — When the `UNIQUE(user_id, platform, platform_user_id)` migration ran, the backfill `UPDATE posts SET platform_page_id = ...` used the wrong Page's token from `platform_connections` (which had already been overwritten by the reconnection).
+
+#### What We Tried That Did NOT Work
+- Checking webhook subscriptions via `GET /{PAGE_ID}/subscribed_apps` — subscription was fine, `feed` was listed
+- Assuming webhooks weren't being delivered — they were, just silently failing downstream
+- Looking at the code for bugs — the code was correct, the data was wrong
+
+#### What Fixed It
+1. **Cleaned the database** — Deleted all old `dm_conversations`, `dm_collected_data`, and `comments` rows to remove stale dedup guards
+2. **Published a new post to the correct Page** — Made sure the post went to the same Page that was actually connected in `platform_connections`
+3. **Had Sharon comment on the new post** — Fresh comment, no dedup conflicts, correct Page token found
+
+#### Code Fixes Applied (preventive)
+- Added `platform_page_id` fallback in `commentAgent.js`, `publishingAgent.js`, and `dmWorker.js` — if `platform_page_id` is null, parse it from `platform_post_id` (Facebook format: `{page_id}_{post_id}`)
+- Added `UnrecoverableError` handling in `dmWorker.js` for "one private reply per comment" errors — BullMQ stops retrying immediately instead of wasting 3 attempts
+- Created `migration_fix_platform_page_id_backfill.sql` to correct bad backfill data
+- Multi-page architecture: `UNIQUE(user_id, platform, platform_user_id)` — reconnecting no longer overwrites other Pages' tokens
+
+#### Lessons for Future Debugging
+1. **"No connection found" + a Page ID in the log = Page ID mismatch.** Compare the webhook's `pageId` against `platform_connections.platform_user_id`. If they don't match, the post was published from a different Page than what's connected.
+2. **Always clean `dm_conversations` between test cycles.** The dedup guard blocks ALL retries for the same (automation, person) pair — even across completely different posts. During testing, run `DELETE FROM dm_conversations WHERE author_handle ILIKE '%testuser%'` before each cycle.
+3. **Check the logs carefully before assuming "nothing is happening."** The first test DID produce logs (`Skipping — already DM'd`), which pointed directly to the dedup guard. The later tests showed `No facebook connection for user ... (pageId: ...)` — pointing to the Page ID mismatch.
+4. **When in doubt, nuke and restart clean:** delete old conversations + comments, publish a brand new post, comment fresh. This eliminates all stale state in under 2 minutes.
+
+---
+
 ### What's Still Pending for DM Automation
 
 1. **Instagram DM testing** — Facebook is confirmed working. Instagram uses a different API path (`POST /me/messages` with IGSID instead of PSID). Needs end-to-end test with an Instagram post + separate account commenting.

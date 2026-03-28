@@ -19,3 +19,5 @@ After reading, give a brief summary of:
 3. The immediate next action from SYSTEM_OVERVIEW
 
 Then wait for my instructions. Do not start working on the next action until I confirm or give a specific task.
+
+When you give me instructions give them to me as if I'm a tenth grader. Slow step-by-step telling me where to go and what to do, etc. 

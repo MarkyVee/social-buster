@@ -279,24 +279,46 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 - **ID:** ISSUE-023
 - **Date:** 2026-03-27
-- **Status:** in-progress
+- **Status:** resolved
 - **Severity:** CRITICAL — DM automation broken after reconnecting Facebook
-- **Description:** After reconnecting Facebook to test the new 9-Page picker (ISSUE-022 fix), DM automation stopped working. Comments are detected by webhook, conversations are created, but DMWorker fails with: `Cannot read comment — error 100: Tried accessing nonexisting field (text)` and `Private Reply error 1: Please reduce the amount of data you're asking for`. Posts published, but no DMs sent to Sharon on Facebook or Instagram.
+- **Description:** After reconnecting Facebook to test the new 9-Page picker (ISSUE-022 fix), DM automation stopped working. Comments were detected by webhook but DMWorker failed due to Page ID mismatch and stale dedup data.
 - **Root cause (multi-layered):**
-  1. **Old architecture:** `platform_connections` had `UNIQUE(user_id, platform)` — reconnecting with a different Page overwrote the old token. DMWorker then used the wrong Page's token to reply to comments on the old Page's posts.
-  2. **Bad migration backfill:** When multi-page migration ran, the backfill `UPDATE posts SET platform_page_id = ...` joined against `platform_connections` which already had the WRONG Page's token (from the reconnection). So existing published posts got the wrong `platform_page_id`.
-  3. **Facebook one-private-reply-per-comment rule:** Even after fixing tokens, Sharon's old comments already had failed DM attempts. Facebook counts attempted private replies even if they fail — no second attempt allowed on the same comment.
-  4. **Stale DM conversations:** Failed conversations block the dedup guard, preventing retries even on new comments.
-- **Found in:** `backend/workers/dmWorker.js`, `backend/agents/commentAgent.js`, `backend/data/migration_multi_page_connections.sql`
-- **Partial fixes applied (2026-03-27):**
-  - Multi-page architecture deployed: `UNIQUE(user_id, platform, platform_user_id)` — reconnecting no longer overwrites other Pages
-  - `posts.platform_page_id` and `dm_conversations.page_id` columns added
-  - All token lookups (publishingAgent, commentAgent, dmWorker) now use `pageId` when available
-  - Webhook realtime path uses `entry.id` (actual Page ID from Meta) — correct
-- **Still needed for full resolution:**
-  - Fix bad backfill on existing posts — derive correct `platform_page_id` from `platform_post_id` (Facebook format: `{page_id}_{post_id}`)
-  - Add code fallback: if `platform_page_id` is null, parse from `platform_post_id`
-  - Clean up stale failed DM conversations so dedup guard doesn't block retries
-  - Reconnect with original working Page, publish new post, test with Sharon on new post
-  - Handle "one private reply per comment" error gracefully (detect and log clearly instead of retrying 3 times)
-- **Related:** ISSUE-022, platform_publishing_guide.md (Issues 1-8 DM debugging history)
+  1. **Page ID mismatch:** Webhook sent Page ID `1010798405456306` (Social Buster Page) but only `101465745099191` (World Wide Treasure Hunt) was connected. Token lookup failed with "No facebook connection for user."
+  2. **Stale dedup guard:** Old `dm_conversations` row with `status: completed` blocked all retries for the same (automation, person) pair.
+  3. **Bad backfill:** Multi-page migration stamped wrong `platform_page_id` on existing posts.
+- **Resolution:**
+  1. Cleaned database: deleted all `dm_conversations`, `dm_collected_data`, and `comments`
+  2. Published new post to the correct connected Page
+  3. Had Sharon comment on the new post — DM delivered successfully
+  4. Code fixes: added `platform_page_id` fallback (parse from `platform_post_id`), `UnrecoverableError` for duplicate private replies, migration SQL for bad backfill
+- **Found in:** `backend/agents/commentAgent.js`, `backend/workers/dmWorker.js`, `backend/agents/publishingAgent.js`
+- **Related:** ISSUE-022, platform_publishing_guide.md (ISSUE-023 Resolution section)
+
+---
+
+### HIGH — Integration
+
+- **ID:** ISSUE-024
+- **Date:** 2026-03-27
+- **Status:** open (blocked — needs App Review or capability investigation)
+- **Category:** HIGH / Integration
+- **Description:** Instagram DM automation cannot be tested. When connecting an Instagram Business Account via OAuth, the `POST /{ig_account_id}/subscribed_apps` call fails with error `(#3) Application does not have the capability to make this API call`. Without this per-account subscription, Instagram comment webhooks may not be delivered despite app-level webhook subscriptions being configured correctly in Meta Developer Portal.
+- **What was tried:**
+  1. Connected Patriot Films & Studios Page (linked to @markvidano Instagram) — Instagram connected successfully, publishing works
+  2. App-level webhook subscription in Meta Developer Portal shows `comments`, `messages`, `message_reactions` all subscribed with correct callback URL
+  3. @markvidano added as Instagram Tester in Meta Developer Portal — accepted
+  4. @sharonvidano added as Instagram Tester — status stuck on "Pending", no invitation appears in Sharon's Instagram settings
+  5. Sharon commented on published Instagram post — zero webhook log lines appeared
+- **Suspected causes:**
+  1. `instagram_manage_comments` permission may need App Review before `subscribed_apps` works at per-account level
+  2. Instagram API may require the "Instagram Business Login" setup (step 4 in Meta portal shows "Set up" button not completed)
+  3. The per-account `subscribed_apps` call may require a different permission than Facebook Pages do
+- **Key difference from Facebook:** Facebook Page webhook subscription (`POST /{page_id}/subscribed_apps`) works with `pages_manage_metadata` in "Ready for testing" mode. Instagram equivalent requires a different capability that our app doesn't have yet.
+- **What to investigate next:**
+  1. Complete "Set up Instagram business login" (step 4 in Meta Developer Portal → Instagram API use case)
+  2. Check `instagram_manage_comments` and `instagram_business_manage_messages` permission status — are they "Ready for testing" or "Not started"?
+  3. Try manually subscribing via Graph API with an app access token instead of Page token
+  4. Research whether Instagram webhooks require App Review even for testing mode
+  5. Check Meta Developer community/forums for error #3 on Instagram `subscribed_apps`
+- **Found in:** `backend/routes/publish.js` (Instagram webhook subscription, line ~287)
+- **Related:** ISSUE-023, platform_publishing_guide.md

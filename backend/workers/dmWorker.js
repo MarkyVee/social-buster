@@ -15,7 +15,7 @@
  * The worker starts when this module is required (by workers/index.js).
  */
 
-const { Worker } = require('bullmq');
+const { Worker, UnrecoverableError } = require('bullmq');
 const { connection } = require('../queues');
 const { sendDM, sendPrivateReply } = require('../services/messagingService');
 const { decryptToken } = require('../services/tokenEncryption');
@@ -58,7 +58,9 @@ async function processSendDM(job) {
 
   // Get the access token + page ID for this platform.
   // If pageId is provided (from the comment's Page), look up that specific connection.
-  // Otherwise fall back to most recent connection for that platform.
+  // Fallback: if no pageId but we have a commentId in Facebook format ({page_id}_{post_id}_{comment_id}),
+  // we can't reliably parse it here — the upstream (commentAgent/dmAgent) should have resolved it.
+  // Last resort: most recent connection for that platform.
   let connQuery = supabaseAdmin
     .from('platform_connections')
     .select('access_token, platform_user_id')
@@ -68,6 +70,7 @@ async function processSendDM(job) {
   if (pageId) {
     connQuery = connQuery.eq('platform_user_id', pageId);
   } else {
+    console.warn(`[DMWorker] No pageId for conversation ${conversationId} — falling back to most recent ${platform} connection`);
     connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
   }
 
@@ -95,10 +98,20 @@ async function processSendDM(job) {
   // ID in the URL: Facebook Page ID vs Instagram Business Account ID.
   // Both are stored in platform_connections.platform_user_id.
   let result;
-  if (stepOrder === 1 && commentId) {
-    result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id);
-  } else {
-    result = await sendDM(platform, accessToken, recipientId, messageText, userId);
+  try {
+    if (stepOrder === 1 && commentId) {
+      result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id);
+    } else {
+      result = await sendDM(platform, accessToken, recipientId, messageText, userId);
+    }
+  } catch (sendErr) {
+    // If the error is non-retryable (e.g. duplicate private reply on same comment),
+    // throw UnrecoverableError so BullMQ skips retries immediately.
+    if (sendErr.nonRetryable) {
+      console.warn(`[DMWorker] Non-retryable error for conversation ${conversationId}: ${sendErr.message}`);
+      throw new UnrecoverableError(sendErr.message);
+    }
+    throw sendErr;
   }
 
   // Update the conversation

@@ -168,6 +168,20 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId)
     if (fbErr) {
       const sub = fbErr.error_subcode ? ` subcode=${fbErr.error_subcode}` : '';
       const msg = fbErr.error_user_msg || fbErr.message;
+
+      // Detect "one private reply per comment" — Facebook only allows a single
+      // private reply per comment, ever. Retrying is pointless.
+      // Known error patterns: code 1 "reduce the amount of data", code 10,
+      // or any message mentioning "already been replied" / "private reply".
+      const isDuplicateReply = (fbErr.code === 1 && /reduce the amount/i.test(fbErr.message))
+        || /already.*(replied|sent|private.?reply)/i.test(fbErr.message || '');
+
+      if (isDuplicateReply) {
+        const error = new Error(`[Non-retryable] Comment ${commentId} already received a private reply — skipping. Original: ${msg}`);
+        error.nonRetryable = true;
+        throw error;
+      }
+
       throw new Error(`Private Reply error ${fbErr.code}${sub}: ${msg}`);
     }
     throw err;
