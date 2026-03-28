@@ -1052,10 +1052,10 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
     'pages_manage_posts',
     'pages_manage_metadata',        // Required for subscribing Page to app webhooks
     'pages_messaging',              // Facebook + Instagram DM automation
-    'instagram_basic',
-    'instagram_content_publish',
+    'instagram_business_basic',
+    'instagram_business_content_publish',
     'instagram_manage_comments',    // Instagram comment monitoring
-    'instagram_manage_messages'     // Instagram DM automation
+    'instagram_business_manage_messages'     // Instagram DM automation
   ].join(',');
 
   const authUrl = `https://www.facebook.com/v21.0/dialog/oauth` +

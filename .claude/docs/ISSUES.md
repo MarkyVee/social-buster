@@ -300,25 +300,24 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 - **ID:** ISSUE-024
 - **Date:** 2026-03-27
-- **Status:** open (blocked — needs App Review or capability investigation)
+- **Status:** open (in progress — error #3 fixed, webhook delivery still untested)
 - **Category:** HIGH / Integration
-- **Description:** Instagram DM automation cannot be tested. When connecting an Instagram Business Account via OAuth, the `POST /{ig_account_id}/subscribed_apps` call fails with error `(#3) Application does not have the capability to make this API call`. Without this per-account subscription, Instagram comment webhooks may not be delivered despite app-level webhook subscriptions being configured correctly in Meta Developer Portal.
+- **Description:** Instagram DM automation cannot be tested. The `POST /{ig_account_id}/subscribed_apps` call was returning error `(#3)` — **root cause found:** that endpoint only exists for Facebook Pages, NOT Instagram accounts. Instagram webhooks are enabled by (1) app-level subscription in Meta Developer Portal + (2) the Facebook Page `subscribed_apps` call. The broken call has been removed. However, Instagram comment webhooks have not yet been verified as arriving.
 - **What was tried:**
   1. Connected Patriot Films & Studios Page (linked to @markvidano Instagram) — Instagram connected successfully, publishing works
   2. App-level webhook subscription in Meta Developer Portal shows `comments`, `messages`, `message_reactions` all subscribed with correct callback URL
   3. @markvidano added as Instagram Tester in Meta Developer Portal — accepted
   4. @sharonvidano added as Instagram Tester — status stuck on "Pending", no invitation appears in Sharon's Instagram settings
   5. Sharon commented on published Instagram post — zero webhook log lines appeared
-- **Suspected causes:**
-  1. `instagram_manage_comments` permission may need App Review before `subscribed_apps` works at per-account level
-  2. Instagram API may require the "Instagram Business Login" setup (step 4 in Meta portal shows "Set up" button not completed)
-  3. The per-account `subscribed_apps` call may require a different permission than Facebook Pages do
-- **Key difference from Facebook:** Facebook Page webhook subscription (`POST /{page_id}/subscribed_apps`) works with `pages_manage_metadata` in "Ready for testing" mode. Instagram equivalent requires a different capability that our app doesn't have yet.
-- **What to investigate next:**
-  1. Complete "Set up Instagram business login" (step 4 in Meta Developer Portal → Instagram API use case)
-  2. Check `instagram_manage_comments` and `instagram_business_manage_messages` permission status — are they "Ready for testing" or "Not started"?
-  3. Try manually subscribing via Graph API with an app access token instead of Page token
-  4. Research whether Instagram webhooks require App Review even for testing mode
-  5. Check Meta Developer community/forums for error #3 on Instagram `subscribed_apps`
-- **Found in:** `backend/routes/publish.js` (Instagram webhook subscription, line ~287)
+  6. **FIXED:** Removed the invalid `POST /{ig_id}/subscribed_apps` call from `publish.js` — that endpoint is Facebook Pages only (commit `8889439`)
+- **What to do next (step by step):**
+  1. **Fix Sharon's tester role:** Go to Meta Developer Portal → App roles → delete sharonvidano's pending Instagram Tester invite → re-add Sharon as a regular **Tester** (not "Instagram Tester") using her Facebook account. Facebook Testers can interact with Instagram features in testing mode.
+  2. **Reconnect Facebook** in Social Buster: disconnect then reconnect Patriot Films & Studios — this re-runs the Page `subscribed_apps` call (now without the broken Instagram call)
+  3. **Publish a new Instagram post** from Social Buster with a DM automation attached
+  4. **Have Sharon comment** on the Instagram post with the trigger keyword
+  5. **Check Coolify logs** for `[Webhooks] Realtime instagram comment...` lines
+  6. If still no webhook: check `instagram_manage_comments` permission status in Meta Developer Portal → Permissions and Features — must be "Ready for testing"
+  7. If permission is missing: complete "Set up Instagram business login" (step 4 in portal) and/or submit for App Review
+- **Key finding:** `/{ig_account_id}/subscribed_apps` does NOT exist. Instagram webhooks rely entirely on (1) app-level webhook config in the portal + (2) Facebook Page subscription. No per-Instagram-account call needed.
+- **Found in:** `backend/routes/publish.js` (removed invalid Instagram subscribed_apps call)
 - **Related:** ISSUE-023, platform_publishing_guide.md
