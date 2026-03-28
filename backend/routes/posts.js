@@ -8,6 +8,9 @@
 const express = require('express');
 const router = express.Router();
 
+// Platform specs for content validation (character limits, etc.)
+const PLATFORM_SPECS = require('../../frontend/public/data/platformSpecs.json');
+
 const { requireAuth } = require('../middleware/auth');
 const { enforceTenancy } = require('../middleware/tenancy');
 const { standardLimiter } = require('../middleware/rateLimit');
@@ -242,7 +245,9 @@ router.put('/:id', standardLimiter, async (req, res) => {
       }
     }
 
-    return res.json({ message: 'Post updated', post: data });
+    // Check text lengths against platform specs and return warnings
+    const warnings = validatePostText(data);
+    return res.json({ message: 'Post updated', post: data, warnings });
 
   } catch (err) {
     console.error('[Posts] Update error:', err.message);
@@ -472,5 +477,51 @@ router.delete('/:id', standardLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete post' });
   }
 });
+
+// ----------------------------------------------------------------
+// validatePostText
+// Checks a post's text fields against the platform's character limits
+// from platformSpecs.json. Returns an array of warning strings.
+// ----------------------------------------------------------------
+function validatePostText(post) {
+  const warnings = [];
+  const spec = PLATFORM_SPECS[post.platform];
+  if (!spec?.text) return warnings;
+
+  // YouTube has separate title/description limits
+  if (spec.text.title && spec.text.description) {
+    const titleLen = (post.hook || '').length;
+    const descLen = [post.caption, _hashtagString(post.hashtags), post.cta]
+      .filter(Boolean).join('\n\n').length;
+    if (titleLen > spec.text.title) {
+      warnings.push(`Title is ${titleLen}/${spec.text.title} chars for ${post.platform}`);
+    }
+    if (descLen > spec.text.description) {
+      warnings.push(`Description is ${descLen}/${spec.text.description} chars for ${post.platform}`);
+    }
+    return warnings;
+  }
+
+  // All other platforms: combined text limit
+  if (spec.text.combined) {
+    const fields = spec.text.fields || ['hook', 'caption', 'hashtags', 'cta'];
+    const parts = fields.map(f => {
+      if (f === 'hashtags') return _hashtagString(post.hashtags);
+      return post[f] || '';
+    });
+    const totalLen = parts.filter(Boolean).join('\n\n').length;
+    if (totalLen > spec.text.combined) {
+      warnings.push(`${spec.text.label || 'Text'} is ${totalLen}/${spec.text.combined} chars for ${post.platform}`);
+    }
+  }
+
+  return warnings;
+}
+
+// Helper: convert hashtags array to display string
+function _hashtagString(hashtags) {
+  if (!Array.isArray(hashtags) || !hashtags.length) return '';
+  return hashtags.map(h => `#${h}`).join(' ');
+}
 
 module.exports = router;

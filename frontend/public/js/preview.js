@@ -25,6 +25,16 @@ let _previewPosts   = null;  // All generated post objects
 let _activePlatform = null;  // Which platform tab is currently active
 
 // ----------------------------------------------------------------
+// Platform specs — loaded from the centralized specs file so both
+// frontend and backend use the same limits. Loaded once on init.
+// ----------------------------------------------------------------
+let PLATFORM_SPECS = null;
+fetch('/data/platformSpecs.json')
+  .then(r => r.json())
+  .then(s => { PLATFORM_SPECS = s; })
+  .catch(err => console.warn('[Preview] Could not load platform specs:', err));
+
+// ----------------------------------------------------------------
 // renderGeneratedPosts
 // OVERRIDES the version in brief.js (this file loads after it in index.html).
 // Called by brief.js after AI generation completes, and by app.js when
@@ -102,6 +112,9 @@ function renderGeneratedPosts(brief, posts) {
   if (typeof updateSidebarActiveState === 'function') {
     updateSidebarActiveState('posts');
   }
+
+  // Initialize character counters for all visible cards
+  _initCharCounters();
 }
 
 // ----------------------------------------------------------------
@@ -121,6 +134,9 @@ function switchPreviewTab(platform) {
   if (container) {
     container.innerHTML = renderPlatformCards(byPlatform[platform] || [], platform);
   }
+
+  // Initialize character counters for newly rendered cards
+  _initCharCounters();
 }
 
 // ----------------------------------------------------------------
@@ -386,17 +402,80 @@ function liveUpdatePreview(postId, field, inputEl) {
   if (field === 'hook') {
     const ytTitle = preview.querySelector('.preview-youtube-title');
     if (ytTitle) ytTitle.textContent = newText;
-
-    // Update X character count warning in real time
-    const charCount = preview.querySelector('.x-char-count');
-    if (charCount) {
-      const len = newText.trim().length;
-      charCount.textContent = `${len}/280`;
-      charCount.style.color = len > 280 ? '#ef4444' : '#94a3b8';
-    }
   }
 
   targetEl.textContent = newText;
+
+  // Update character counter for this platform (all platforms, not just X)
+  updateCharCounter(card);
+}
+
+// ----------------------------------------------------------------
+// updateCharCounter
+// Reads all editable fields in a card, computes total text length,
+// and updates the .char-counter element in the mockup preview.
+// Works for ALL platforms using specs from platformSpecs.json.
+// ----------------------------------------------------------------
+function updateCharCounter(card) {
+  if (!PLATFORM_SPECS || !card) return;
+
+  const platform = card.dataset.platform;
+  const spec = PLATFORM_SPECS[platform];
+  if (!spec?.text) return;
+
+  const counterEl = card.querySelector('.char-counter');
+  if (!counterEl) return;
+
+  // YouTube has two separate limits (title + description)
+  if (spec.text.title && spec.text.description) {
+    const titleLen = _getFieldsTextLength(card, spec.text.titleFields || ['hook']);
+    const descLen  = _getFieldsTextLength(card, spec.text.descriptionFields || ['caption', 'hashtags', 'cta']);
+    const titleOver = titleLen > spec.text.title;
+    const descOver  = descLen > spec.text.description;
+    const anyOver   = titleOver || descOver;
+
+    counterEl.innerHTML =
+      `<span style="color:${titleOver ? '#ef4444' : '#94a3b8'}">Title: ${titleLen}/${spec.text.title}</span>` +
+      ` &middot; ` +
+      `<span style="color:${descOver ? '#ef4444' : '#94a3b8'}">Desc: ${descLen}/${spec.text.description}</span>`;
+    counterEl.dataset.over = anyOver ? 'true' : 'false';
+    return;
+  }
+
+  // All other platforms: one combined limit
+  const limit  = spec.text.combined;
+  const fields = spec.text.fields || ['hook', 'caption', 'hashtags', 'cta'];
+  const len    = _getFieldsTextLength(card, fields);
+  const over   = len > limit;
+
+  counterEl.textContent = `${len}/${limit}${over ? ' — over limit' : ''}`;
+  counterEl.style.color = over ? '#ef4444' : '#94a3b8';
+  counterEl.dataset.over = over ? 'true' : 'false';
+}
+
+// Helper: sum text length of specified fields from the editable divs in a card
+function _getFieldsTextLength(card, fields) {
+  let total = 0;
+  for (const field of fields) {
+    const el = card.querySelector(`.editable[data-field="${field}"]`);
+    if (el) {
+      const text = el.innerText.trim();
+      // For hashtags, include the # prefixes and spaces as they'll appear in the final post
+      total += text.length;
+    }
+  }
+  return total;
+}
+
+// Initialize char counters on all visible cards. Called after rendering
+// and also retried briefly if PLATFORM_SPECS hasn't loaded yet.
+function _initCharCounters() {
+  if (!PLATFORM_SPECS) {
+    // Specs file may still be loading — retry once after a short delay
+    setTimeout(_initCharCounters, 300);
+    return;
+  }
+  document.querySelectorAll('.wysiwyg-card').forEach(card => updateCharCounter(card));
 }
 
 // ================================================================
@@ -506,6 +585,30 @@ function updatePreviewMediaZone(postId, mediaItem) {
     zone.innerHTML = `<span class="preview-media-icon">🖼️</span>
                       <span class="preview-media-text" style="color:#4ade80;">Image attached</span>`;
   }
+
+  // Check image aspect ratio against platform specs and show warning if needed
+  if (mediaItem.file_type === 'image' && PLATFORM_SPECS) {
+    const spec = PLATFORM_SPECS[platform];
+    if (spec?.image?.minAspect && spec?.image?.maxAspect && thumbUrl) {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.naturalWidth / img.naturalHeight;
+        if (ratio < spec.image.minAspect || ratio > spec.image.maxAspect) {
+          // Remove any existing warning before adding a new one
+          const existingWarn = zone.parentElement.querySelector('.aspect-ratio-warning');
+          if (existingWarn) existingWarn.remove();
+
+          const warning = document.createElement('div');
+          warning.className = 'aspect-ratio-warning';
+          warning.textContent = `Image will be auto-cropped to fit ${capitalize(platform)} requirements (ratio ${ratio.toFixed(2)}, allowed ${spec.image.minAspect}–${spec.image.maxAspect})`;
+          zone.parentElement.insertBefore(warning, zone.nextSibling);
+        }
+      };
+      img.src = thumbUrl.includes('drive.google.com')
+        ? thumbUrl
+        : `/media/proxy?url=${encodeURIComponent(thumbUrl)}`;
+    }
+  }
 }
 
 // ---- Instagram ----
@@ -544,6 +647,7 @@ function renderInstagramMockup(post) {
         <div class="preview-caption-text" data-preview="caption">${escapeHtml(post.caption)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
     </div>
   `;
@@ -568,6 +672,7 @@ function renderFacebookMockup(post) {
         <div class="preview-caption-text" data-preview="caption">${escapeHtml(post.caption)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
 
       <div class="preview-media">
@@ -606,6 +711,7 @@ function renderTiktokMockup(post) {
         <div class="preview-caption-text" data-preview="caption">${escapeHtml(post.caption)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
 
       <div class="preview-tiktok-sidebar">
@@ -637,6 +743,7 @@ function renderLinkedinMockup(post) {
         <div class="preview-caption-text" data-preview="caption">${escapeHtml(post.caption)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
 
       <div class="preview-media">
@@ -655,9 +762,7 @@ function renderLinkedinMockup(post) {
 
 // ---- X (Twitter) ----
 function renderXMockup(post) {
-  const tags    = _hashtagsText(post);
-  const hookLen = (post.hook || '').length;
-  const over    = hookLen > 280;
+  const tags = _hashtagsText(post);
   return `
     <div class="preview-card preview-x">
       <div class="preview-header">
@@ -673,9 +778,7 @@ function renderXMockup(post) {
         <div class="preview-hook" data-preview="hook">${escapeHtml(post.hook)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
-        <div class="x-char-count" style="font-size:10px;margin-top:4px;color:${over ? '#ef4444' : '#94a3b8'};">
-          ${hookLen}/280${over ? ' ⚠️ Too long — trim the hook' : ''}
-        </div>
+        <div class="char-counter"></div>
       </div>
 
       <div class="preview-x-actions">
@@ -707,6 +810,7 @@ function renderThreadsMockup(post) {
         <!-- Threads doesn't use hashtags — keep the update target hidden -->
         <span data-preview="hashtags" style="display:none;">${escapeHtml(_hashtagsText(post))}</span>
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
 
       <div class="preview-threads-actions">
@@ -736,6 +840,7 @@ function renderYoutubeMockup(post) {
         <div class="preview-caption-text" data-preview="caption">${escapeHtml(post.caption)}</div>
         ${tags ? `<div class="preview-hashtags" data-preview="hashtags">${escapeHtml(tags)}</div>` : ''}
         ${post.cta ? `<div class="preview-cta" data-preview="cta">${escapeHtml(post.cta)}</div>` : ''}
+        <div class="char-counter"></div>
       </div>
     </div>
   `;
@@ -935,17 +1040,17 @@ async function generateAllImages(postIds, platform) {
 // longer than the platform allows.
 // ================================================================
 
-// Platform video duration limits in seconds — mirrors ffmpegService.PLATFORM_LIMITS
-const PLATFORM_VIDEO_LIMITS = {
-  tiktok:    60,
-  instagram: 90,
-  whatsapp:  120,
-  telegram:  120,
-  facebook:  180,
-  linkedin:  600,
-  x:         140,
-  threads:   300
-};
+// Platform video duration limits — derived from the centralized specs file.
+// Falls back to an empty object if specs haven't loaded yet (trim warning
+// will just skip the duration check in that edge case).
+function _getVideoLimits() {
+  if (!PLATFORM_SPECS) return {};
+  const limits = {};
+  for (const [p, s] of Object.entries(PLATFORM_SPECS)) {
+    if (s.video?.maxDuration) limits[p] = s.video.maxDuration;
+  }
+  return limits;
+}
 
 // ----------------------------------------------------------------
 // buildTrimWarningHtml
@@ -960,7 +1065,7 @@ function buildTrimWarningHtml(postId, platform, mediaType, durationSeconds, trim
   // Only show for video attachments on platforms with a limit
   if (mediaType !== 'video') return '';
 
-  const limit = PLATFORM_VIDEO_LIMITS[platform];
+  const limit = _getVideoLimits()[platform];
   if (!limit) return '';
 
   // Read analysis_status from the card dataset so we can show the Smart Clip button

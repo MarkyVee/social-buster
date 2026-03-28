@@ -324,6 +324,30 @@
   color: #6366f1;
 }
 
+/* Character counter — shows current/max chars, turns red when over limit */
+.char-counter {
+  font-size: 10px;
+  margin-top: 6px;
+  color: #94a3b8;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.char-counter[data-over="true"] {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+/* Aspect ratio warning — shown when attached image doesn't match platform specs */
+.aspect-ratio-warning {
+  font-size: 10px;
+  padding: 4px 8px;
+  margin: 4px 0;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 4px;
+  text-align: center;
+}
+
 /* ============================================================
    4a. INSTAGRAM
    Square image, gradient avatar ring, like/comment/share/save row

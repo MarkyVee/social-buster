@@ -871,3 +871,24 @@ After reconnecting Facebook to test the new multi-page picker (ISSUE-022 fix), D
 3. **Remove diagnostic logging** — Once Instagram is also confirmed, remove the verbose `FULL RESPONSE` and debug query logs to reduce log noise in production.
 4. **Frontend improvement** — Add a warning when creating a "multi_step" automation with only 1 step: "Multi-step flows require at least 2 steps to work correctly."
 5. **Comment polling fallback** — `pages_read_engagement` returns error 10 for comment polling (needs Standard Access via App Review). Realtime webhooks work, but the 15-minute polling backup does not yet.
+
+---
+
+### ISSUE-024 Failure: Instagram Business Scopes Break Facebook Login OAuth (2026-03-27)
+
+#### What Happened
+The Meta Developer Portal's Instagram API setup page shows permissions named `instagram_business_basic`, `instagram_manage_comments`, and `instagram_business_manage_messages`. We assumed the OAuth scope strings should match these names, so we changed the scopes in `publish.js` from `instagram_basic` → `instagram_business_basic`, `instagram_content_publish` → `instagram_business_content_publish`, and `instagram_manage_messages` → `instagram_business_manage_messages`.
+
+#### What Broke
+Facebook Login OAuth dialog immediately showed **"Invalid Scopes: instagram_business_basic, instagram_business_content_publish, instagram_business_manage_messages"** — completely blocking ALL OAuth connections (Facebook AND Instagram). No user could connect any account.
+
+#### Root Cause
+The `instagram_business_*` scopes belong to **Instagram Business Login**, which is a completely separate OAuth product with its own OAuth flow and endpoints. They CANNOT be mixed into the Facebook Login for Business OAuth flow (`facebook.com/v21.0/dialog/oauth`). Facebook Login only accepts the original scope names: `instagram_basic`, `instagram_content_publish`, `instagram_manage_comments`, `instagram_manage_messages`.
+
+The permission names shown in the Meta Developer Portal (Permissions and Features section) do NOT always match the scope strings used in the OAuth URL. This is a Meta naming inconsistency.
+
+#### Fix
+Reverted to original scope names (commit `834e15b`). OAuth restored immediately.
+
+#### Rule (PROVEN FAILURE — DO NOT REPEAT)
+**NEVER change OAuth scope names without first testing in a non-production environment or verifying against Meta's official Facebook Login permissions documentation.** The scope names shown in the Meta Developer Portal UI do NOT always match the scope strings accepted by the OAuth endpoint. Two separate OAuth products (Facebook Login vs Instagram Business Login) use different scope naming conventions for the same underlying permissions.

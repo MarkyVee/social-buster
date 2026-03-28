@@ -121,6 +121,7 @@ We maintain a strict adapter pattern so external providers can be swapped by cha
 11. Do not remove `knownLength` from Facebook multipart video upload.
 12. Do not move `access_token` from URL params to form body for video uploads.
 13. Do not call `queueVideoAnalysis()` without first removing the existing BullMQ job.
+14. Do not use `instagram_business_*` scope names in the Facebook Login OAuth flow — they belong to a separate Instagram Business Login product and will break ALL OAuth connections with "Invalid Scopes" error.
 
 ---
 
@@ -132,3 +133,5 @@ Before suggesting any significant change:
 - Respect past decisions in [[DECISIONS]]
 
 If your suggestion conflicts with documented decisions, ask for confirmation before proceeding.
+
+It is okay to not have the answer. If you don't ASK how to proceed. 

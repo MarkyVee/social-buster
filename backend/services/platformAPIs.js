@@ -484,7 +484,11 @@ async function publishToTikTok(post, accessToken, connection) {
   const hashtags = Array.isArray(post.hashtags)
     ? post.hashtags.map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
     : '';
-  const caption = [post.hook, hashtags].filter(Boolean).join(' ').slice(0, 2200);
+  const rawCaption = [post.hook, hashtags].filter(Boolean).join(' ');
+  if (rawCaption.length > 2200) {
+    console.warn(`[PlatformAPIs] TikTok caption is ${rawCaption.length}/2200 chars — truncating. User should shorten content.`);
+  }
+  const caption = rawCaption.slice(0, 2200);
 
   const TIMEOUT = 30_000;
 
@@ -736,7 +740,11 @@ async function publishToX(post, accessToken, connection) {
     ? post.hashtags.slice(0, 3).map(h => (h.startsWith('#') ? h : `#${h}`)).join(' ')
     : '';
   const parts = [post.hook, hashtags, post.cta].filter(Boolean);
-  const text = parts.join(' ').slice(0, 280).trim();
+  const rawText = parts.join(' ').trim();
+  if (rawText.length > 280) {
+    console.warn(`[PlatformAPIs] X post is ${rawText.length}/280 chars — truncating. User should shorten content.`);
+  }
+  const text = rawText.slice(0, 280).trim();
 
   if (!text) {
     throw new Error('X requires text content. The post has no hook, hashtags, or CTA.');
@@ -915,7 +923,11 @@ async function publishToThreads(post, accessToken, connection) {
   };
 
   // Build text — no hashtags on Threads (they don't render), max 500 chars
-  const text = [post.hook, post.caption, post.cta].filter(Boolean).join('\n\n').slice(0, 500);
+  const rawText = [post.hook, post.caption, post.cta].filter(Boolean).join('\n\n');
+  if (rawText.length > 500) {
+    console.warn(`[PlatformAPIs] Threads post is ${rawText.length}/500 chars — truncating. User should shorten content.`);
+  }
+  const text = rawText.slice(0, 500);
 
   if (!text && !post.media_url) {
     throw new Error('Threads requires either text or media content.');

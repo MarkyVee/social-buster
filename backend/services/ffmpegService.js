@@ -32,34 +32,25 @@ if (process.env.FFMPEG_PATH) {
 }
 
 // ----------------------------------------------------------------
-// Platform-specific maximum video durations in seconds.
-// Videos longer than these limits will be trimmed before publishing.
+// Platform specs — single source of truth for all platform limits.
+// Loaded from frontend/public/data/platformSpecs.json so both
+// backend and frontend read from the same file.
 // ----------------------------------------------------------------
-const PLATFORM_LIMITS = {
-  tiktok:    60,
-  instagram: 90,
-  whatsapp:  120,
-  telegram:  120,
-  facebook:  180,
-  linkedin:  600,
-  x:         140,
-  threads:   300
-};
+const PLATFORM_SPECS = require('../../frontend/public/data/platformSpecs.json');
 
-// ----------------------------------------------------------------
-// Platform-specific maximum image file sizes in bytes.
-// Images larger than these limits will be downsampled before publishing.
-// ----------------------------------------------------------------
-const PLATFORM_IMAGE_LIMITS = {
-  facebook:  4  * 1024 * 1024,  // 4 MB
-  instagram: 8  * 1024 * 1024,  // 8 MB
-  x:         5  * 1024 * 1024,  // 5 MB
-  linkedin:  10 * 1024 * 1024,  // 10 MB
-  tiktok:    10 * 1024 * 1024,  // 10 MB
-  threads:   8  * 1024 * 1024,  // 8 MB
-  whatsapp:  16 * 1024 * 1024,  // 16 MB (WhatsApp Cloud API limit)
-  telegram:  10 * 1024 * 1024   // 10 MB (Telegram Bot API URL limit)
-};
+// Derive video duration limits from specs (backwards-compatible object shape)
+const PLATFORM_LIMITS = Object.fromEntries(
+  Object.entries(PLATFORM_SPECS)
+    .filter(([, s]) => s.video?.maxDuration)
+    .map(([p, s]) => [p, s.video.maxDuration])
+);
+
+// Derive image file size limits from specs (backwards-compatible object shape)
+const PLATFORM_IMAGE_LIMITS = Object.fromEntries(
+  Object.entries(PLATFORM_SPECS)
+    .filter(([, s]) => s.image?.maxBytes)
+    .map(([p, s]) => [p, s.image.maxBytes])
+);
 
 // Max pixel length of the longest side after downsampling.
 // 2048px preserves high quality while keeping most photos well under 4 MB.
@@ -343,6 +334,91 @@ function cleanupOldTempFiles(maxAgeHours = 24) {
 // The caller is responsible for adding the returned path to
 // tempFilePaths so it gets cleaned up after publishing.
 // ----------------------------------------------------------------
+// ----------------------------------------------------------------
+// cropImageToAspectRange
+// Checks the image's aspect ratio against the platform's allowed range
+// (from platformSpecs.json). If outside the range, center-crops to the
+// nearest valid ratio using FFmpeg's crop filter.
+//
+// Returns the path to the cropped file, or the original path if no
+// crop was needed.
+// ----------------------------------------------------------------
+async function cropImageToAspectRange(inputPath, platform) {
+  const spec = PLATFORM_SPECS[platform];
+  if (!spec?.image?.minAspect || !spec?.image?.maxAspect) return inputPath;
+
+  const { minAspect, maxAspect } = spec.image;
+
+  // Probe image dimensions using ffprobe
+  const { width, height } = await new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) return reject(new Error(`Failed to probe image: ${err.message}`));
+      const stream = metadata.streams.find(s => s.codec_type === 'video');
+      if (!stream) return reject(new Error('No image stream found'));
+      resolve({ width: stream.width, height: stream.height });
+    });
+  });
+
+  const ratio = width / height;
+
+  // Already within the allowed range — no crop needed
+  if (ratio >= minAspect && ratio <= maxAspect) {
+    console.log(`[FFmpeg] Image ${width}x${height} (ratio ${ratio.toFixed(2)}) is within ${platform} range [${minAspect}–${maxAspect}] — no crop needed`);
+    return inputPath;
+  }
+
+  ensureTempDir();
+
+  let cropW, cropH;
+  if (ratio < minAspect) {
+    // Too tall — crop height to fit minAspect (keep full width)
+    cropW = width;
+    cropH = Math.floor(width / minAspect);
+  } else {
+    // Too wide — crop width to fit maxAspect (keep full height)
+    cropW = Math.floor(height * maxAspect);
+    cropH = height;
+  }
+
+  const ext = path.extname(inputPath).replace('.', '') || 'jpg';
+  const outputPath = path.join(TEMP_DIR, `cropped_${uuidv4()}.${ext}`);
+
+  console.log(
+    `[FFmpeg] Image ${width}x${height} (ratio ${ratio.toFixed(2)}) outside ${platform} ` +
+    `range [${minAspect}–${maxAspect}] — center-cropping to ${cropW}x${cropH}...`
+  );
+
+  await new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      // Center-crop: crop=w:h:x:y — x/y center the crop area
+      .videoFilters(`crop=${cropW}:${cropH}`)
+      .outputOptions([
+        '-q:v', '2',
+        '-frames:v', '1'
+      ])
+      .output(outputPath)
+      .on('end', resolve)
+      .on('error', (err) => reject(new Error(`Image crop failed: ${err.message}`)))
+      .run();
+  });
+
+  console.log(`[FFmpeg] Image cropped: ${width}x${height} → ${cropW}x${cropH}`);
+  return outputPath;
+}
+
+// ----------------------------------------------------------------
+// processImageForPlatform
+// Full image processing pipeline: aspect ratio crop → file size check.
+// Replaces the old resizeImageIfNeeded as the main entry point.
+// ----------------------------------------------------------------
+async function processImageForPlatform(inputPath, platform) {
+  // Step 1: Crop to valid aspect ratio if needed
+  const croppedPath = await cropImageToAspectRange(inputPath, platform);
+
+  // Step 2: Resize if file is too large
+  return await resizeImageIfNeeded(croppedPath, platform);
+}
+
 async function resizeImageIfNeeded(inputPath, platform) {
   const limitBytes = PLATFORM_IMAGE_LIMITS[platform];
 
@@ -399,6 +475,8 @@ module.exports = {
   probeVideo,
   trimVideo,
   resizeImageIfNeeded,
+  cropImageToAspectRange,
+  processImageForPlatform,
   cleanupTemp,
   cleanupOldTempFiles
 };

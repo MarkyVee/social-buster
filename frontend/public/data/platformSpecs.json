@@ -1,0 +1,112 @@
+{
+  "instagram": {
+    "text": {
+      "combined": 2200,
+      "fields": ["hook", "caption", "hashtags", "cta"],
+      "label": "Caption"
+    },
+    "image": {
+      "minAspect": 0.8,
+      "maxAspect": 1.91,
+      "minWidth": 320,
+      "maxWidth": 1440,
+      "maxBytes": 8388608
+    },
+    "video": { "maxDuration": 90 }
+  },
+  "facebook": {
+    "text": {
+      "combined": 63206,
+      "fields": ["hook", "caption", "hashtags", "cta"],
+      "label": "Post"
+    },
+    "image": {
+      "minAspect": 0.333,
+      "maxAspect": 3.0,
+      "maxBytes": 4194304
+    },
+    "video": { "maxDuration": 180 }
+  },
+  "tiktok": {
+    "text": {
+      "combined": 2200,
+      "fields": ["hook", "hashtags"],
+      "label": "Caption"
+    },
+    "image": {
+      "maxBytes": 10485760
+    },
+    "video": { "maxDuration": 60 }
+  },
+  "linkedin": {
+    "text": {
+      "combined": 3000,
+      "fields": ["hook", "caption", "hashtags", "cta"],
+      "label": "Post"
+    },
+    "image": {
+      "minAspect": 0.5,
+      "maxAspect": 2.0,
+      "maxBytes": 10485760
+    },
+    "video": { "maxDuration": 600 }
+  },
+  "x": {
+    "text": {
+      "combined": 280,
+      "fields": ["hook", "hashtags", "cta"],
+      "label": "Post"
+    },
+    "image": {
+      "minAspect": 0.667,
+      "maxAspect": 2.0,
+      "maxBytes": 5242880
+    },
+    "video": { "maxDuration": 140 }
+  },
+  "threads": {
+    "text": {
+      "combined": 500,
+      "fields": ["hook", "caption", "cta"],
+      "label": "Post"
+    },
+    "image": {
+      "minAspect": 0.8,
+      "maxAspect": 1.91,
+      "maxBytes": 8388608
+    },
+    "video": { "maxDuration": 300 }
+  },
+  "youtube": {
+    "text": {
+      "title": 100,
+      "description": 5000,
+      "titleFields": ["hook"],
+      "descriptionFields": ["caption", "hashtags", "cta"],
+      "label": "Title / Description"
+    },
+    "video": { "maxDuration": null }
+  },
+  "whatsapp": {
+    "text": {
+      "combined": 1024,
+      "fields": ["hook", "caption", "hashtags", "cta"],
+      "label": "Caption"
+    },
+    "image": {
+      "maxBytes": 16777216
+    },
+    "video": { "maxDuration": 120 }
+  },
+  "telegram": {
+    "text": {
+      "combined": 1024,
+      "fields": ["hook", "caption", "hashtags", "cta"],
+      "label": "Caption"
+    },
+    "image": {
+      "maxBytes": 10485760
+    },
+    "video": { "maxDuration": 120 }
+  }
+}

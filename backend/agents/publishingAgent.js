@@ -231,8 +231,17 @@ async function publishPost(post) {
         const downloadedPath = await downloadToTemp(mediaItem.processed_url, extension);
         tempFilePaths.push(downloadedPath);
 
-        post.media_local_path = downloadedPath;
-        console.log(`[PublishingAgent]    Image ready → ${downloadedPath}`);
+        // Crop image to platform's required aspect ratio if needed.
+        // This prevents errors like Instagram 36003 (invalid aspect ratio).
+        const { cropImageToAspectRange } = require('../services/ffmpegService');
+        const croppedPath = await cropImageToAspectRange(downloadedPath, post.platform);
+        if (croppedPath !== downloadedPath) {
+          tempFilePaths.push(croppedPath);
+          console.log(`[PublishingAgent]    Image cropped for ${post.platform} → ${croppedPath}`);
+        }
+
+        post.media_local_path = croppedPath;
+        console.log(`[PublishingAgent]    Image ready → ${croppedPath}`);
       } catch (imgErr) {
         // Non-fatal: fall back to URL-based upload if download fails.
         console.warn(`[PublishingAgent]    Image download failed, falling back to URL: ${imgErr.message}`);
