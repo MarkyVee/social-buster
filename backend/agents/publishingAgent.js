@@ -313,6 +313,36 @@ async function publishPost(post) {
         post.media_local_path = reEncodedPath;
         console.log(`[PublishingAgent]    Video ready → ${reEncodedPath}`);
 
+        // Instagram only accepts public URLs (no multipart upload for video).
+        // Re-upload the trimmed/re-encoded video to Supabase so the API can fetch it.
+        if (post.platform === 'instagram' || post.platform === 'threads') {
+          const videoSize = fs.statSync(reEncodedPath).size;
+          const storagePath = `${post.user_id}/${uuidv4()}.mp4`;
+          const storageUrl = `${process.env.SUPABASE_URL}/storage/v1/object/processed-media/${storagePath}`;
+
+          console.log(`[PublishingAgent]    Re-uploading trimmed video (${Math.round(videoSize / 1024)}KB) to Supabase for Instagram...`);
+          const uploadRes = await axios.post(storageUrl, fs.createReadStream(reEncodedPath), {
+            headers: {
+              'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+              'Content-Type': 'video/mp4',
+              'Content-Length': videoSize,
+              'x-upsert': 'false'
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            timeout: 120_000,   // Videos can be large — 2 min timeout
+            validateStatus: () => true
+          });
+
+          if (uploadRes.status === 200) {
+            const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/processed-media/${storagePath}`;
+            post.media_url = publicUrl;
+            console.log(`[PublishingAgent]    Trimmed video uploaded → ${publicUrl}`);
+          } else {
+            console.warn(`[PublishingAgent]    Trimmed video upload failed (${uploadRes.status}), using original URL`);
+          }
+        }
+
       } catch (videoErr) {
         // Non-fatal: fall back to the cloud URL and let the platform API try to
         // fetch it directly. Facebook/TikTok support file_url= for videos.
