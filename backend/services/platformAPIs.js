@@ -295,34 +295,34 @@ async function publishToInstagram(post, accessToken, connection) {
   const containerId = containerRes.data.id;
   console.log(`[PlatformAPIs] IG container created — id=${containerId}`);
 
-  // ---- Step 2: For video, poll until container is ready ----
-  // Instagram processes video asynchronously. The container goes through:
+  // ---- Step 2: Poll until container is ready ----
+  // Instagram processes media asynchronously. The container goes through:
   //   IN_PROGRESS → FINISHED (ready to publish)
   //   IN_PROGRESS → ERROR (upload/encoding failed)
-  // Images are ready immediately — skip polling.
-  if (isVideo) {
-    const MAX_POLLS = 30;         // 30 polls × 10 seconds = 5 minutes max wait
-    const POLL_INTERVAL_MS = 10_000;
+  // Images fetched from URLs also need processing time — Instagram must
+  // download and validate the image before it's publishable. Skipping this
+  // poll causes error 9007/2207027 "media is not ready for publishing".
+  const MAX_POLLS = isVideo ? 30 : 10;   // Video: 5 min, Image: 30 sec
+  const POLL_INTERVAL_MS = isVideo ? 10_000 : 3_000;
 
-    for (let i = 0; i < MAX_POLLS; i++) {
-      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
 
-      const statusRes = await igCall(() => axios.get(
-        `${API_BASE}/${containerId}`,
-        { params: { fields: 'status_code', access_token: accessToken }, timeout: TIMEOUT }
-      ));
+    const statusRes = await igCall(() => axios.get(
+      `${API_BASE}/${containerId}`,
+      { params: { fields: 'status_code', access_token: accessToken }, timeout: TIMEOUT }
+    ));
 
-      const status = statusRes.data.status_code;
-      console.log(`[PlatformAPIs] IG container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})`);
+    const status = statusRes.data.status_code;
+    console.log(`[PlatformAPIs] IG container ${containerId} status: ${status} (poll ${i + 1}/${MAX_POLLS})`);
 
-      if (status === 'FINISHED') break;
-      if (status === 'ERROR') {
-        throw new Error('Instagram video processing failed. The video may be in an unsupported format or too large.');
-      }
+    if (status === 'FINISHED') break;
+    if (status === 'ERROR') {
+      throw new Error(`Instagram ${isVideo ? 'video' : 'image'} processing failed. The media may be in an unsupported format or too large.`);
+    }
 
-      if (i === MAX_POLLS - 1) {
-        throw new Error('Instagram video processing timed out after 5 minutes. Try a shorter video.');
-      }
+    if (i === MAX_POLLS - 1) {
+      throw new Error(`Instagram ${isVideo ? 'video' : 'image'} processing timed out. Try ${isVideo ? 'a shorter video' : 'a smaller image'}.`);
     }
   }
 
