@@ -64,6 +64,15 @@ async function processQueue() {
       .eq('status', 'publishing')
       .lte('updated_at', twoMinutesAgo);
 
+    // Also check for posts stuck in 'publishing' that haven't timed out yet (debug)
+    const { data: inProgress } = await supabaseAdmin
+      .from('posts')
+      .select('id, updated_at, platform')
+      .eq('status', 'publishing');
+    if (inProgress?.length > 0) {
+      inProgress.forEach(p => console.log(`[PublishingAgent] Post ${p.id} stuck in 'publishing' since ${p.updated_at} (${p.platform})`));
+    }
+
     if (stale?.length > 0) {
       const staleIds = stale.map(p => p.id);
       await supabaseAdmin
@@ -87,7 +96,20 @@ async function processQueue() {
       return;
     }
 
-    if (!posts || posts.length === 0) return;
+    if (!posts || posts.length === 0) {
+      // Debug: check if there ARE scheduled posts but with future dates
+      const { data: allScheduled } = await supabaseAdmin
+        .from('posts')
+        .select('id, status, scheduled_at, platform')
+        .eq('status', 'scheduled')
+        .limit(5);
+      if (allScheduled?.length > 0) {
+        const now = new Date().toISOString();
+        console.log(`[PublishingAgent] No overdue posts, but ${allScheduled.length} scheduled post(s) exist. Server time: ${now}`);
+        allScheduled.forEach(p => console.log(`[PublishingAgent]   → ${p.id} scheduled_at=${p.scheduled_at} platform=${p.platform}`));
+      }
+      return;
+    }
 
     console.log(`[PublishingAgent] Processing ${posts.length} post(s)...`);
 
