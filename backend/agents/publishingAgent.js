@@ -24,6 +24,8 @@
  *   Videos still need a local download + FFmpeg trim (platform-specific).
  */
 
+const fs                 = require('fs');
+const { v4: uuidv4 }    = require('uuid');
 const axios              = require('axios');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { publish }        = require('../services/platformAPIs');
@@ -238,6 +240,37 @@ async function publishPost(post) {
         if (croppedPath !== downloadedPath) {
           tempFilePaths.push(croppedPath);
           console.log(`[PublishingAgent]    Image cropped for ${post.platform} → ${croppedPath}`);
+
+          // Instagram only accepts public URLs (no multipart upload).
+          // Re-upload the cropped image to Supabase so the API can fetch it.
+          if (post.platform === 'instagram' || post.platform === 'threads') {
+            const croppedExt = (croppedPath.split('.').pop() || 'jpg').toLowerCase();
+            const croppedSize = fs.statSync(croppedPath).size;
+            const storagePath = `${post.user_id}/${uuidv4()}.${croppedExt}`;
+            const storageUrl = `${process.env.SUPABASE_URL}/storage/v1/object/processed-media/${storagePath}`;
+
+            console.log(`[PublishingAgent]    Re-uploading cropped image (${Math.round(croppedSize / 1024)}KB) to Supabase...`);
+            const uploadRes = await axios.post(storageUrl, fs.createReadStream(croppedPath), {
+              headers: {
+                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+                'Content-Type': `image/${croppedExt === 'jpg' ? 'jpeg' : croppedExt}`,
+                'Content-Length': croppedSize,
+                'x-upsert': 'false'
+              },
+              maxBodyLength: Infinity,
+              maxContentLength: Infinity,
+              timeout: 60_000,
+              validateStatus: () => true
+            });
+
+            if (uploadRes.status === 200) {
+              const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/processed-media/${storagePath}`;
+              post.media_url = publicUrl;
+              console.log(`[PublishingAgent]    Cropped image uploaded → ${publicUrl}`);
+            } else {
+              console.warn(`[PublishingAgent]    Cropped image upload failed (${uploadRes.status}), using original URL`);
+            }
+          }
         }
 
         post.media_local_path = croppedPath;
