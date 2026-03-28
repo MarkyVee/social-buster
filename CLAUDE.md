@@ -125,6 +125,30 @@ We maintain a strict adapter pattern so external providers can be swapped by cha
 
 ---
 
+## Do Not Break What's Working (Sacred Rule)
+
+If a feature is confirmed working in production, **do not change it** without a clear reason AND explicit warning to the user. Before every code change, ask yourself:
+
+1. **Is this already working?** If yes, leave it alone unless there's a specific bug to fix.
+2. **Could this change break something that works?** If yes, flag it with an **⚠️ IMPORTANT** warning before proceeding.
+3. **Am I adding diagnostic code that could have side effects?** Keep diagnostics log-only — never change behavior.
+4. **Am I going in circles?** If the same area has been "fixed" multiple times, STOP and talk to the user instead of adding more code.
+
+When debugging, always check the docs first to see if the problem was already solved. If you find yourself re-fixing something, you're probably looking at the wrong problem.
+
+---
+
+## When You Don't Have the Answer
+
+It is okay to not have the answer. If you don't, **say so clearly** and suggest:
+- Getting a second opinion (another LLM, Stack Overflow, platform docs)
+- Testing in the platform's API Explorer to isolate code vs config issues
+- Talking through the problem together to narrow down the cause
+
+**Do not guess and push code changes when you're not sure.** A wrong fix is worse than no fix — it wastes time and can break working features. When uncertain, ask the user how they'd like to proceed.
+
+---
+
 ## Project Awareness Rule
 
 Before suggesting any significant change:
@@ -133,5 +157,3 @@ Before suggesting any significant change:
 - Respect past decisions in [[DECISIONS]]
 
 If your suggestion conflicts with documented decisions, ask for confirmation before proceeding.
-
-It is okay to not have the answer. If you don't ASK how to proceed. 
