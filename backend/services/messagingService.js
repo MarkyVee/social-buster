@@ -126,14 +126,25 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId)
   // "can't see it" (permissions) vs "can see it but can't reply" (unsupported).
   // Works for both Facebook and Instagram comments — Graph API uses the same
   // GET /{comment_id} pattern. Field names differ: Facebook uses 'message',
-  // Instagram uses 'text'. We request both to handle either platform.
+  // Instagram uses 'text'. Requesting a nonexistent field causes error #100
+  // on Instagram, so we try Instagram fields first, then fall back to Facebook.
   try {
-    const checkRes = await axios.get(
-      `${API_BASE}/${commentId}`,
-      { params: { access_token: accessToken, fields: 'id,text,message,from,username' }, timeout: TIMEOUT }
-    );
+    let checkRes;
+    try {
+      // Try Instagram fields first (text, username)
+      checkRes = await axios.get(
+        `${API_BASE}/${commentId}`,
+        { params: { access_token: accessToken, fields: 'id,text,from,username' }, timeout: TIMEOUT }
+      );
+    } catch (igErr) {
+      // If that fails, try Facebook fields (message, from)
+      checkRes = await axios.get(
+        `${API_BASE}/${commentId}`,
+        { params: { access_token: accessToken, fields: 'id,message,from' }, timeout: TIMEOUT }
+      );
+    }
     const authorName = checkRes.data.from?.name || checkRes.data.from?.username || checkRes.data.username || 'unknown';
-    const commentBody = checkRes.data.message || checkRes.data.text || '';
+    const commentBody = checkRes.data.text || checkRes.data.message || '';
     console.log(`[MessagingService] Comment ${commentId} readable — from: ${authorName}, text: "${commentBody.substring(0, 50)}"`);
   } catch (checkErr) {
     const fb = checkErr.response?.data?.error;
