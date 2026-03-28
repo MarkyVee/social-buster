@@ -69,7 +69,7 @@ All issues resolved. Key protected patterns:
 - **Upload:** Multipart to `graph-video.facebook.com/v21.0/{page-id}/videos`
 - **Gotcha:** Error 351 in Testing mode = app not published to Live
 
-### Instagram ✅ PUBLISHING WORKS, DM IN PROGRESS
+### Instagram ✅ PUBLISHING + DM CONFIRMED WORKING
 - **Token:** Page Access Token (same as Facebook, different endpoint)
 - **Publish:** 2-step: `POST /{ig-user-id}/media` → poll container status → `POST /{ig-user-id}/media_publish`
 - **Video:** `media_type: 'REELS'`, must be public URL (no multipart). Re-upload to Supabase after FFmpeg trim.
@@ -96,7 +96,7 @@ All issues resolved. Key protected patterns:
 
 ---
 
-## DM Automation Pipeline (Facebook ✅ CONFIRMED, Instagram 🔄 IN PROGRESS)
+## DM Automation Pipeline (Facebook ✅ CONFIRMED, Instagram ✅ CONFIRMED 2026-03-28)
 
 ### Working Pipeline
 ```
@@ -174,7 +174,7 @@ The Meta Developer Portal shows permissions named `instagram_business_basic` etc
 
 ## What's Still Pending
 
-1. **Instagram DM end-to-end test** — code fixes deployed, ManyChat removed, needs clean test
+1. ~~Instagram DM end-to-end test~~ — ✅ CONFIRMED WORKING (2026-03-28, full 3-step multi-step flow)
 2. **Meta App Review** — `pages_messaging` and `instagram_manage_messages` need approval for non-admin users
 3. **Remove diagnostic logging** — after Instagram DM confirmed, clean verbose logs
 4. **Comment polling fallback** — `pages_read_engagement` returns error 10 for polling (needs Standard Access). Webhooks work.

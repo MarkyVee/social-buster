@@ -27,22 +27,11 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 - **ID:** ISSUE-024
 - **Date:** 2026-03-27
-- **Status:** open (ManyChat removed, code fixes deployed — ready for clean end-to-end test)
+- **Status:** resolved (2026-03-28)
 - **Category:** HIGH / Integration
-- **Description:** Instagram DM automation — multiple issues found and fixed:
-  1. Removed invalid `POST /{ig_id}/subscribed_apps` call (Facebook Pages only)
-  2. Instagram comment field mismatch — uses `text` not `message` (error #100). Fixed: try IG fields first, fall back to FB.
-  3. Instagram DM endpoint — uses `POST /me/messages` not `POST /{ig_user_id}/messages` (error #3). Fixed.
-  4. ManyChat was intercepting webhooks — user disconnected (2026-03-28)
-  5. OAuth scopes: `instagram_business_*` names break Facebook Login — reverted to `instagram_*` names. See CLAUDE.md "Do Not Attempt" #14.
-- **What to do next:**
-  1. Run SQL cleanup: `DELETE FROM dm_conversations;`
-  2. Publish NEW Instagram post with DM automation attached
-  3. Have Sharon comment with trigger keyword
-  4. Check Coolify logs for `[DMAgent] Started` and `[MessagingService] Sending private reply via instagram`
-  5. If no webhook: check Page-level webhook subscriptions in Meta Developer Portal
+- **Description:** Instagram DM automation — 5 issues found and fixed: invalid subscribed_apps endpoint, comment field mismatch (`text` vs `message`), wrong DM endpoint (`/me/messages` not `/{id}/messages`), ManyChat intercepting webhooks, wrong OAuth scope names.
+- **Resolution:** All fixes deployed. Full 3-step multi-step DM flow confirmed working on Instagram (2026-03-28): trigger comment → name → zip → email → resource URL delivered.
 - **Found in:** `backend/services/messagingService.js`, `backend/workers/dmWorker.js`
-- **Related:** ISSUE-023, platform_publishing_guide.md
 
 ---
 

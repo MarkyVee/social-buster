@@ -11,7 +11,7 @@ What was built, fixed, or shipped — logged per session.
 - **FIXED:** Instagram comment field mismatch — `sendPrivateReply` diagnostic tried requesting `message` field on IG comments (error #100). Now tries IG fields first (`text,from,username`), falls back to FB fields.
 - **FIXED:** Instagram DM endpoint — `sendPrivateReply` used `POST /{ig_user_id}/messages` for all platforms (error #3 on Instagram). Now routes: Instagram → `POST /me/messages`, Facebook → `POST /{page_id}/messages`.
 - **BLOCKER FOUND & RESOLVED:** ManyChat was connected to @patriot_filming Instagram, intercepting comments/DMs before Social Buster. User disconnected ManyChat.
-- **Pending:** Instagram DM end-to-end test — all code fixes deployed, ManyChat removed, awaiting clean test with Sharon.
+- **✅ CONFIRMED:** Instagram DM automation — full 3-step multi-step flow working end-to-end (trigger comment → name → zip → email → resource URL delivered). Both Facebook and Instagram DM automation now confirmed.
 
 ---
 
