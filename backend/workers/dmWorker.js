@@ -100,7 +100,7 @@ async function processSendDM(job) {
   let result;
   try {
     if (stepOrder === 1 && commentId) {
-      result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id);
+      result = await sendPrivateReply(accessToken, commentId, messageText, conn.platform_user_id, platform);
     } else {
       result = await sendDM(platform, accessToken, recipientId, messageText, userId);
     }

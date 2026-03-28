@@ -121,7 +121,7 @@ async function sendFacebookDM(accessToken, recipientPSID, messageText) {
 //   - Requires pages_messaging permission
 //   - In dev mode, recipient must be an app Tester
 // ----------------------------------------------------------------
-async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId) {
+async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId, platform = 'facebook') {
   // Diagnostic: try to read the comment first to distinguish
   // "can't see it" (permissions) vs "can see it but can't reply" (unsupported).
   // Works for both Facebook and Instagram comments — Graph API uses the same
@@ -154,12 +154,15 @@ async function sendPrivateReply(accessToken, commentId, messageText, pageOrIgId)
 
   try {
     // Use the Send API with comment_id as recipient.
-    // Works for both Facebook Pages and Instagram Business Accounts:
-    //   Facebook:  POST /{page_id}/messages
-    //   Instagram: POST /{ig_user_id}/messages
+    // Facebook:  POST /{page_id}/messages
+    // Instagram: POST /me/messages (NOT /{ig_user_id}/messages — that returns error #3)
     // Both use: { recipient: { comment_id }, message: { text } }
+    const endpoint = platform === 'instagram'
+      ? `${API_BASE}/me/messages`
+      : `${API_BASE}/${pageOrIgId}/messages`;
+    console.log(`[MessagingService] Sending private reply via ${platform} endpoint: ${endpoint}`);
     const res = await axios.post(
-      `${API_BASE}/${pageOrIgId}/messages`,
+      endpoint,
       {
         recipient: { comment_id: commentId },
         message:   { text: messageText }
