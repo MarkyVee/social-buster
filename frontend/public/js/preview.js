@@ -25,6 +25,13 @@ let _previewPosts   = null;  // All generated post objects
 let _activePlatform = null;  // Which platform tab is currently active
 
 // ----------------------------------------------------------------
+// Cross-platform sync — editing one card updates sibling cards
+// (same option_number, different platform) automatically.
+// All posts start linked. Users can unlink individual cards.
+// ----------------------------------------------------------------
+let _unlinkedPosts = new Set();  // Post IDs that opted out of sync
+
+// ----------------------------------------------------------------
 // Platform specs — loaded from the centralized specs file so both
 // frontend and backend use the same limits. Loaded once on init.
 // ----------------------------------------------------------------
@@ -43,6 +50,7 @@ fetch('/data/platformSpecs.json')
 function renderGeneratedPosts(brief, posts) {
   _previewBrief   = brief;
   _previewPosts   = posts;
+  _unlinkedPosts  = new Set();  // Reset sync state for new brief
 
   const contentEl = document.getElementById('main-content-area');
   if (!contentEl) return;
@@ -202,6 +210,12 @@ function renderWysiwygCard(post, platform) {
 
         <div class="wysiwyg-edit-header">
           <span class="post-card-option">Option ${post.option_number}</span>
+          ${_hasMultiplePlatforms() ? `<button
+            class="btn-link-toggle ${_unlinkedPosts.has(post.id) ? 'unlinked' : 'linked'}"
+            data-post-id="${post.id}"
+            onclick="togglePostLink('${post.id}')"
+            title="${_unlinkedPosts.has(post.id) ? 'Click to sync edits across platforms' : 'Synced — edits update all platforms. Click to unlink.'}"
+          >${_unlinkedPosts.has(post.id) ? '🔓' : '🔗'}</button>` : ''}
           <div class="post-card-actions">
             <button
               class="btn btn-sm btn-secondary save-post-btn"
@@ -408,6 +422,21 @@ function liveUpdatePreview(postId, field, inputEl) {
 
   // Update character counter for this platform (all platforms, not just X)
   updateCharCounter(card);
+
+  // Also update the in-memory post object so tab switches render fresh text
+  const sourcePost = _previewPosts?.find(p => p.id === postId);
+  if (sourcePost) {
+    if (field === 'hashtags') {
+      sourcePost.hashtags = newText.split(/\s+/).map(h => h.replace(/^#/, '').trim()).filter(Boolean);
+    } else {
+      sourcePost[field] = newText;
+    }
+  }
+
+  // Cross-platform sync: update sibling cards if this post is linked
+  if (!_unlinkedPosts.has(postId)) {
+    _syncSiblingPosts(postId, field, newText);
+  }
 }
 
 // ----------------------------------------------------------------
@@ -476,6 +505,89 @@ function _initCharCounters() {
     return;
   }
   document.querySelectorAll('.wysiwyg-card').forEach(card => updateCharCounter(card));
+}
+
+// ----------------------------------------------------------------
+// _hasMultiplePlatforms — true if this brief generated posts for 2+ platforms
+// ----------------------------------------------------------------
+function _hasMultiplePlatforms() {
+  if (!_previewPosts || !_previewPosts.length) return false;
+  const platforms = new Set(_previewPosts.map(p => p.platform));
+  return platforms.size > 1;
+}
+
+// ----------------------------------------------------------------
+// togglePostLink — link/unlink a card from cross-platform sync
+// ----------------------------------------------------------------
+function togglePostLink(postId) {
+  if (_unlinkedPosts.has(postId)) {
+    _unlinkedPosts.delete(postId);
+  } else {
+    _unlinkedPosts.add(postId);
+  }
+
+  const btn = document.querySelector(`.btn-link-toggle[data-post-id="${postId}"]`);
+  if (btn) {
+    const linked = !_unlinkedPosts.has(postId);
+    btn.classList.toggle('linked', linked);
+    btn.classList.toggle('unlinked', !linked);
+    btn.textContent = linked ? '🔗' : '🔓';
+    btn.title = linked
+      ? 'Synced — edits update all platforms. Click to unlink.'
+      : 'Click to sync edits across platforms';
+  }
+}
+
+// ----------------------------------------------------------------
+// _syncSiblingPosts — updates the same field on sibling posts
+// (same option_number, different platforms) when both are linked.
+// Updates in-memory _previewPosts so tab switches render fresh data.
+// If a sibling card is in the DOM, updates it live too.
+// ----------------------------------------------------------------
+function _syncSiblingPosts(sourcePostId, field, newText) {
+  if (!_previewPosts) return;
+
+  const sourcePost = _previewPosts.find(p => p.id === sourcePostId);
+  if (!sourcePost) return;
+
+  // Find sibling posts: same option_number, different platform, still linked
+  const siblings = _previewPosts.filter(p =>
+    p.id !== sourcePostId &&
+    p.option_number === sourcePost.option_number &&
+    !_unlinkedPosts.has(p.id)
+  );
+
+  for (const sib of siblings) {
+    // Update in-memory post data so tab switches render the synced text
+    if (field === 'hashtags') {
+      sib.hashtags = newText.split(/\s+/).map(h => h.replace(/^#/, '').trim()).filter(Boolean);
+    } else {
+      sib[field] = newText;
+    }
+
+    // If sibling card is in the DOM (same tab), update it live
+    const sibCard = document.querySelector(`.wysiwyg-card[data-post-id="${sib.id}"]`);
+    if (sibCard) {
+      // Update the editable field
+      const editEl = sibCard.querySelector(`.editable[data-field="${field}"]`);
+      if (editEl) editEl.innerText = newText;
+
+      // Update the mockup preview
+      const preview  = sibCard.querySelector('.wysiwyg-preview');
+      const targetEl = preview?.querySelector(`[data-preview="${field}"]`);
+      if (targetEl) targetEl.textContent = newText;
+
+      // YouTube title special case
+      if (field === 'hook') {
+        const ytTitle = preview?.querySelector('.preview-youtube-title');
+        if (ytTitle) ytTitle.textContent = newText;
+      }
+
+      // Mark dirty + update char counter
+      sibCard.dataset.dirty = 'true';
+      updateCharCounter(sibCard);
+    }
+  }
 }
 
 // ================================================================

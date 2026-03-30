@@ -126,6 +126,28 @@
   flex-wrap: wrap;
 }
 
+/* Cross-platform sync toggle (link/unlink) */
+.btn-link-toggle {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+.btn-link-toggle.linked {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+.btn-link-toggle.unlinked {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  opacity: 0.7;
+}
+.btn-link-toggle:hover { opacity: 1; transform: scale(1.1); }
+
 /* Action button group — Save Draft, Schedule, Publish Now, Delete */
 .post-card-actions {
   display: flex;
