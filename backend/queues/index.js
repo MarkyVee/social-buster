@@ -206,6 +206,21 @@ const emailQueue = new Queue('email', {
   }
 });
 
+// Evaluation queue — AI avatar evaluations of post fields (hook, caption, hashtags, CTA, media).
+// Concurrency 5 in the worker — each job runs 3-5 parallel LLM calls, so 5 jobs = 15-25 LLM calls max.
+// 2 attempts: evaluation failures are non-critical — user can re-trigger.
+const evaluationQueue = new Queue('evaluation', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 2,
+    backoff: {
+      type:  'exponential',
+      delay: 3000       // Quick retry — evaluations should feel fast
+    }
+  }
+});
+
 // Watchdog queue — system health monitoring, anomaly detection, auto-pause.
 // Runs every 5 minutes. Concurrency 1 (only one check at a time).
 // Does not need retries — if a check fails, the next scheduled run will try again.
@@ -227,6 +242,7 @@ module.exports = {
   mediaProcessQueue,
   dmQueue,
   emailQueue,
+  evaluationQueue,
   watchdogQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

@@ -388,4 +388,4 @@ async function generatePosts(brief, userContext) {
   return allPosts;
 }
 
-module.exports = { generatePosts };
+module.exports = { generatePosts, sanitizeForPrompt };

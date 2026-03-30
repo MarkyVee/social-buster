@@ -55,6 +55,7 @@ function renderAdminDashboard(el) {
       <button class="admin-tab"        data-tab="revenue"   onclick="switchAdminTab('revenue')">Revenue</button>
       <button class="admin-tab"        data-tab="email"     onclick="switchAdminTab('email')">Email</button>
       <button class="admin-tab"        data-tab="plans"     onclick="switchAdminTab('plans')">Plans</button>
+      <button class="admin-tab"        data-tab="avatars"   onclick="switchAdminTab('avatars')">Avatars</button>
       <button class="admin-tab"        data-tab="watchdog"  onclick="switchAdminTab('watchdog')">
         Watchdog
         <span id="admin-watchdog-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
@@ -78,6 +79,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-revenue"   class="admin-panel hidden"></div>
     <div id="admin-tab-email"     class="admin-panel hidden"></div>
     <div id="admin-tab-plans"     class="admin-panel hidden"></div>
+    <div id="admin-tab-avatars"    class="admin-panel hidden"></div>
     <div id="admin-tab-watchdog"   class="admin-panel hidden"></div>
     <div id="admin-tab-issues"    class="admin-panel hidden"></div>
     <div id="admin-tab-diagnostics" class="admin-panel hidden"></div>
@@ -116,6 +118,7 @@ function switchAdminTab(tab) {
   if (tab === 'revenue')   loadAdminRevenue();
   if (tab === 'email')     loadAdminEmail();
   if (tab === 'plans')     loadAdminPlans();
+  if (tab === 'avatars')      loadAdminAvatars();
   if (tab === 'watchdog')     loadAdminWatchdog();
   if (tab === 'issues')       loadAdminIssues();
   if (tab === 'diagnostics')  loadAdminDiagnostics();
@@ -3998,6 +4001,336 @@ async function adminRetryPost(postId) {
     alert(result.message);
     const panel = document.getElementById('admin-tab-diagnostics');
     if (panel) { panel.dataset.loaded = ''; loadAdminDiagnostics(); }
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ================================================================
+// FEAT-001: Avatars Tab — Avatar Management + Prompt Suggestions
+// ================================================================
+
+async function loadAdminAvatars() {
+  const panel = document.getElementById('admin-tab-avatars');
+  if (!panel) return;
+
+  panel.innerHTML = '<div class="loading-overlay"><div class="spinner spinner-lg"></div></div>';
+
+  try {
+    // Fetch avatars and pending suggestions in parallel
+    const [avatarsRes, suggestionsRes] = await Promise.all([
+      apiFetch('/evaluation/admin/avatars'),
+      apiFetch('/evaluation/admin/suggestions')
+    ]);
+
+    const avatars = avatarsRes?.avatars || [];
+    const suggestions = suggestionsRes?.suggestions || [];
+
+    // Build avatar table
+    const avatarRows = avatars.map(a => `
+      <tr>
+        <td>${a.icon} ${escapeAdminHtml(a.name)}</td>
+        <td>${a.active ? '<span style="color:#16a34a;">Active</span>' : '<span style="color:#94a3b8;">Inactive</span>'}</td>
+        <td>${(a.field_focus || []).map(f => `<span class="admin-badge">${escapeAdminHtml(f)}</span>`).join(' ') || 'All'}</td>
+        <td>${(a.post_type_focus || []).map(f => `<span class="admin-badge" style="background:#e0f2fe;">${escapeAdminHtml(f)}</span>`).join(' ') || 'Universal'}</td>
+        <td>
+          <button class="btn btn-xs btn-secondary" onclick="openAvatarEditor('${a.id}')">Edit</button>
+          <button class="btn btn-xs ${a.active ? 'btn-danger' : 'btn-primary'}"
+            onclick="toggleAvatarActive('${a.id}', ${!a.active})">${a.active ? 'Disable' : 'Enable'}</button>
+        </td>
+      </tr>
+    `).join('');
+
+    // Build suggestions cards
+    const suggestionsHtml = suggestions.length === 0
+      ? '<p class="text-muted">No pending prompt suggestions.</p>'
+      : suggestions.map(s => `
+        <div class="admin-card" style="border-left:4px solid #f59e0b;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong>${s.evaluation_avatars?.icon || '🤖'} ${escapeAdminHtml(s.evaluation_avatars?.name || 'Avatar')}</strong>
+            <span class="text-muted" style="font-size:0.8rem;">${new Date(s.created_at).toLocaleDateString()}</span>
+          </div>
+          <div style="margin-bottom:8px;">
+            <div style="font-size:0.85rem;font-weight:600;margin-bottom:4px;">Reason:</div>
+            <div style="font-size:0.85rem;color:#555;">${escapeAdminHtml(s.reason || 'No reason provided')}</div>
+          </div>
+          <details style="margin-bottom:8px;">
+            <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;">View suggested prompt</summary>
+            <pre style="font-size:0.8rem;background:#f8f9fa;padding:8px;border-radius:4px;max-height:200px;overflow-y:auto;white-space:pre-wrap;margin-top:4px;">${escapeAdminHtml(s.suggested_prompt)}</pre>
+          </details>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-xs btn-primary" onclick="approvePromptSuggestion('${s.id}')">Approve & Apply</button>
+            <button class="btn btn-xs btn-danger" onclick="rejectPromptSuggestion('${s.id}')">Reject</button>
+          </div>
+        </div>
+      `).join('');
+
+    panel.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="margin:0;">Evaluation Avatars</h3>
+        <button class="btn btn-sm btn-primary" id="btn-run-meta-analysis" onclick="runAvatarMetaAnalysis()">
+          🧠 Analyze & Suggest Improvements
+        </button>
+      </div>
+      <div id="meta-analysis-results" style="display:none;margin-bottom:16px;"></div>
+
+      <div class="admin-card" style="margin-bottom:20px;">
+        <h4 style="margin-bottom:12px;">Avatar Roster</h4>
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Avatar</th>
+              <th>Status</th>
+              <th>Field Focus</th>
+              <th>Post Type Focus</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${avatarRows}</tbody>
+        </table>
+      </div>
+
+      <div class="admin-card" style="margin-bottom:20px;">
+        <h4 style="margin-bottom:12px;">Pending Prompt Suggestions</h4>
+        ${suggestionsHtml}
+      </div>
+
+      <div class="admin-card">
+        <h4 style="margin-bottom:12px;">Evaluation Settings</h4>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <label style="font-size:0.9rem;">Retention (days):</label>
+          <input type="number" id="eval-retention-days" min="1" max="365" value="60"
+                 class="form-control" style="width:80px;" />
+          <button class="btn btn-sm btn-primary" onclick="saveEvalSettings()">Save</button>
+        </div>
+        <div class="text-muted text-sm" style="margin-top:4px;">
+          Evaluation results older than this are automatically deleted. Range: 1-365 days.
+        </div>
+      </div>
+
+      <!-- Hidden editor modal -->
+      <div id="avatar-editor-modal" class="eval-popup-overlay" style="display:none;">
+        <div class="eval-popup" style="max-width:700px;">
+          <div class="eval-popup-header">
+            <h3 id="avatar-editor-title">Edit Avatar</h3>
+            <button class="eval-popup-close" onclick="closeAvatarEditor()">&times;</button>
+          </div>
+          <div style="padding:16px 20px;">
+            <input type="hidden" id="avatar-editor-id" />
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+              <div>
+                <label class="form-label">Name</label>
+                <input type="text" id="avatar-editor-name" class="form-control" />
+              </div>
+              <div>
+                <label class="form-label">Icon (emoji)</label>
+                <input type="text" id="avatar-editor-icon" class="form-control" style="width:60px;" />
+              </div>
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <label class="form-label">Description</label>
+              <input type="text" id="avatar-editor-desc" class="form-control" />
+            </div>
+
+            <div style="margin-bottom:12px;">
+              <label class="form-label">System Prompt</label>
+              <textarea id="avatar-editor-prompt" class="form-control" rows="12"
+                style="font-family:monospace;font-size:0.85rem;"></textarea>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+              <div>
+                <label class="form-label">Field Focus (comma-separated)</label>
+                <input type="text" id="avatar-editor-field-focus" class="form-control"
+                  placeholder="hook, caption, hashtags, cta, media" />
+                <div class="text-muted text-sm">Leave empty = all fields</div>
+              </div>
+              <div>
+                <label class="form-label">Post Type Focus (comma-separated)</label>
+                <input type="text" id="avatar-editor-posttype-focus" class="form-control"
+                  placeholder="educational, promotional, storytelling" />
+                <div class="text-muted text-sm">Leave empty = universal (all post types)</div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button class="btn btn-secondary" onclick="closeAvatarEditor()">Cancel</button>
+              <button class="btn btn-primary" onclick="saveAvatarEditor()">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Store avatars data for the editor
+    panel._avatarsData = avatars;
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load avatars: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ----------------------------------------------------------------
+// Avatar editor — open/close/save
+// ----------------------------------------------------------------
+function openAvatarEditor(avatarId) {
+  const panel = document.getElementById('admin-tab-avatars');
+  const avatars = panel?._avatarsData || [];
+  const avatar = avatars.find(a => a.id === avatarId);
+  if (!avatar) return;
+
+  document.getElementById('avatar-editor-id').value = avatar.id;
+  document.getElementById('avatar-editor-name').value = avatar.name;
+  document.getElementById('avatar-editor-icon').value = avatar.icon;
+  document.getElementById('avatar-editor-desc').value = avatar.description || '';
+  document.getElementById('avatar-editor-prompt').value = avatar.system_prompt;
+  document.getElementById('avatar-editor-field-focus').value = (avatar.field_focus || []).join(', ');
+  document.getElementById('avatar-editor-posttype-focus').value = (avatar.post_type_focus || []).join(', ');
+  document.getElementById('avatar-editor-title').textContent = `Edit: ${avatar.icon} ${avatar.name}`;
+
+  document.getElementById('avatar-editor-modal').style.display = 'flex';
+}
+
+function closeAvatarEditor() {
+  document.getElementById('avatar-editor-modal').style.display = 'none';
+}
+
+async function saveAvatarEditor() {
+  const id = document.getElementById('avatar-editor-id').value;
+  if (!id) return;
+
+  const parseArray = (val) => val.split(',').map(s => s.trim()).filter(Boolean);
+
+  const body = {
+    name: document.getElementById('avatar-editor-name').value.trim(),
+    icon: document.getElementById('avatar-editor-icon').value.trim(),
+    description: document.getElementById('avatar-editor-desc').value.trim(),
+    system_prompt: document.getElementById('avatar-editor-prompt').value,
+    field_focus: parseArray(document.getElementById('avatar-editor-field-focus').value),
+    post_type_focus: parseArray(document.getElementById('avatar-editor-posttype-focus').value)
+  };
+
+  try {
+    await apiFetch(`/evaluation/admin/avatars/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+
+    closeAvatarEditor();
+    loadAdminAvatars(); // Refresh the table
+    showToast('Avatar updated successfully.', 'success');
+  } catch (err) {
+    alert('Failed to save: ' + err.message);
+  }
+}
+
+async function toggleAvatarActive(avatarId, active) {
+  try {
+    await apiFetch(`/evaluation/admin/avatars/${avatarId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ active })
+    });
+    loadAdminAvatars();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ----------------------------------------------------------------
+// Prompt suggestion approve/reject
+// ----------------------------------------------------------------
+async function approvePromptSuggestion(suggestionId) {
+  if (!confirm('Apply this suggested prompt to the avatar? This replaces the current prompt.')) return;
+
+  try {
+    await apiFetch(`/evaluation/admin/suggestions/${suggestionId}/approve`, { method: 'POST' });
+    loadAdminAvatars();
+    showToast('Prompt suggestion approved and applied.', 'success');
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+async function rejectPromptSuggestion(suggestionId) {
+  try {
+    await apiFetch(`/evaluation/admin/suggestions/${suggestionId}/reject`, { method: 'POST' });
+    loadAdminAvatars();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ----------------------------------------------------------------
+// Evaluation settings
+// ----------------------------------------------------------------
+// ----------------------------------------------------------------
+// Meta-analysis — trigger avatar self-improvement agent
+// ----------------------------------------------------------------
+async function runAvatarMetaAnalysis() {
+  const btn = document.getElementById('btn-run-meta-analysis');
+  const resultsDiv = document.getElementById('meta-analysis-results');
+  if (!btn || !resultsDiv) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner spinner-sm"></span> Analyzing...';
+  resultsDiv.style.display = 'block';
+  resultsDiv.innerHTML = '<div class="text-muted">Running meta-analysis across all avatars. This may take 30-60 seconds...</div>';
+
+  try {
+    const data = await apiFetch('/evaluation/admin/analyze', { method: 'POST' });
+    const results = data?.results || [];
+
+    if (results.length === 0) {
+      resultsDiv.innerHTML = '<div class="text-muted">No avatars to analyze.</div>';
+    } else {
+      const statusColors = {
+        suggested: '#16a34a',
+        no_change: '#3b82f6',
+        skipped: '#94a3b8',
+        error: '#dc2626'
+      };
+
+      resultsDiv.innerHTML = `
+        <div class="admin-card" style="border-left:4px solid #8b5cf6;">
+          <h4 style="margin-bottom:8px;">Analysis Results</h4>
+          ${results.map(r => `
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border, #e5e7eb);">
+              <span style="font-size:1.2rem;">${r.icon || '🤖'}</span>
+              <div style="flex:1;">
+                <strong>${escapeAdminHtml(r.avatar)}</strong>
+                <span class="admin-badge" style="background:${statusColors[r.status] || '#94a3b8'};color:#fff;margin-left:6px;">${r.status}</span>
+                <div style="font-size:0.85rem;color:#555;margin-top:2px;">${escapeAdminHtml(r.reason || '')}</div>
+                ${r.changes ? `<div style="font-size:0.8rem;color:#888;margin-top:2px;">Changes: ${r.changes.map(c => escapeAdminHtml(c)).join(', ')}</div>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+
+      // If any suggestions were created, refresh the suggestions section
+      if (results.some(r => r.status === 'suggested')) {
+        // Reload after a brief delay so user sees the results first
+        setTimeout(() => loadAdminAvatars(), 2000);
+      }
+    }
+  } catch (err) {
+    resultsDiv.innerHTML = `<div class="admin-error">Analysis failed: ${escapeAdminHtml(err.message)}</div>`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🧠 Analyze & Suggest Improvements';
+}
+
+async function saveEvalSettings() {
+  const days = document.getElementById('eval-retention-days')?.value;
+  try {
+    await apiFetch('/evaluation/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ retention_days: parseInt(days, 10) })
+    });
+    showToast('Evaluation settings saved.', 'success');
   } catch (err) {
     alert('Failed: ' + err.message);
   }

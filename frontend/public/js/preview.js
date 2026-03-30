@@ -333,7 +333,9 @@ function renderWysiwygCard(post, platform) {
 
         <!-- Media attachment — lets the user link a file from their media library -->
         <div class="post-field" style="margin-top:4px;">
-          <div class="post-field-label">📎 Media</div>
+          <div class="post-field-label">📎 Media
+            ${post.media_id ? `<button class="eval-trigger-btn" onclick="triggerFieldEval('${post.id}', 'media')" title="AI evaluation">&#128270;</button>` : ''}
+          </div>
           ${post.media_id
             ? `<div class="post-media-attached" id="post-media-${post.id}">
                  <div class="post-media-preview">
@@ -382,7 +384,9 @@ function renderWysiwygCard(post, platform) {
 function editableField(postId, field, label, value, extraClass = '') {
   return `
     <div class="post-field">
-      <div class="post-field-label">${label}</div>
+      <div class="post-field-label">${label}
+        <button class="eval-trigger-btn" onclick="triggerFieldEval('${postId}', '${field}')" title="AI evaluation">&#128270;</button>
+      </div>
       <div
         class="post-field-content editable ${extraClass}"
         data-field="${field}"
@@ -2387,5 +2391,213 @@ function formatNum(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(n);
+}
+
+// ================================================================
+// FEAT-001: Avatar-Based Content Evaluation
+// ================================================================
+
+// ----------------------------------------------------------------
+// triggerFieldEval — called when user clicks the 🔍 button next to a field.
+// Reads the field content, posts to /evaluation/evaluate, starts polling.
+// ----------------------------------------------------------------
+async function triggerFieldEval(postId, field) {
+  // Find the button and show spinner
+  const card = document.querySelector(`.wysiwyg-card[data-post-id="${postId}"]`);
+  if (!card) return;
+
+  // Get field content from the editable div (or media URL for media field)
+  let fieldContent = '';
+  let mediaUrl = null;
+
+  if (field === 'media') {
+    // For media, we need the thumbnail URL or public URL
+    const post = _previewPosts.find(p => p.id === postId);
+    mediaUrl = post?.media_public_url || post?.media_thumbnail_url || null;
+    if (!mediaUrl) {
+      showToast('No media attached to evaluate.', 'warning');
+      return;
+    }
+    fieldContent = 'media attachment';
+  } else {
+    const editDiv = card.querySelector(`[data-field="${field}"][data-id="${postId}"]`);
+    if (!editDiv) return;
+    fieldContent = editDiv.innerText.trim();
+    if (!fieldContent) {
+      showToast(`The ${field} field is empty — write something first.`, 'warning');
+      return;
+    }
+  }
+
+  // Find and disable the eval button, show spinner
+  const btn = card.querySelector(`[data-field="${field}"]`)?.closest('.post-field')?.querySelector('.eval-trigger-btn')
+    || (field === 'media' ? card.querySelector('.post-field-label .eval-trigger-btn') : null);
+
+  if (btn) {
+    btn.disabled = true;
+    btn._origHtml = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner spinner-sm"></span>';
+  }
+
+  try {
+    const res = await apiFetch('/evaluation/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({ postId, field, fieldContent, mediaUrl })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to start evaluation');
+    }
+
+    const { jobId } = await res.json();
+    pollEvalStatus(jobId, postId, field, btn, 0);
+
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = btn._origHtml || '&#128270;';
+    }
+  }
+}
+
+// ----------------------------------------------------------------
+// pollEvalStatus — polls /evaluation/status/:jobId every 500ms.
+// Max 30 attempts (15 seconds). Shows popup on completion.
+// ----------------------------------------------------------------
+function pollEvalStatus(jobId, postId, field, btn, attempt) {
+  if (attempt > 30) {
+    showToast('Evaluation timed out. Try again.', 'warning');
+    if (btn) { btn.disabled = false; btn.innerHTML = btn._origHtml || '&#128270;'; }
+    return;
+  }
+
+  setTimeout(async () => {
+    try {
+      const res = await apiFetch(`/evaluation/status/${jobId}`);
+      const data = await res.json();
+
+      if (data.status === 'completed') {
+        if (btn) { btn.disabled = false; btn.innerHTML = btn._origHtml || '&#128270;'; }
+        renderEvalPopup(data.results, postId, field);
+        return;
+      }
+
+      if (data.status === 'failed') {
+        showToast(data.error || 'Evaluation failed.', 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = btn._origHtml || '&#128270;'; }
+        return;
+      }
+
+      // Still pending — keep polling
+      pollEvalStatus(jobId, postId, field, btn, attempt + 1);
+
+    } catch (err) {
+      showToast('Error checking evaluation status.', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = btn._origHtml || '&#128270;'; }
+    }
+  }, 500);
+}
+
+// ----------------------------------------------------------------
+// renderEvalPopup — shows a modal with avatar evaluation cards.
+// Each card has the avatar icon, name, evaluation text, and
+// clickable suggestion chips with "Apply" buttons.
+// ----------------------------------------------------------------
+function renderEvalPopup(results, postId, field) {
+  // Remove any existing popup
+  closeEvalPopup();
+
+  if (!results || results.length === 0) {
+    showToast('No evaluation results returned.', 'warning');
+    return;
+  }
+
+  // Avatar color palette for card borders
+  const colors = ['#e74c3c', '#f39c12', '#e91e8b', '#3498db', '#27ae60', '#9b59b6', '#1abc9c', '#e67e22', '#2ecc71'];
+
+  const cardsHtml = results.map((r, i) => {
+    const color = colors[i % colors.length];
+    const suggestionsHtml = (r.suggestions || []).map((s, si) => `
+      <div class="eval-suggestion-chip">
+        <div class="eval-suggestion-text">${escapeHtml(s.text || '')}</div>
+        ${s.replacement && field !== 'media'
+          ? `<button class="btn btn-xs btn-primary eval-apply-btn"
+               data-replacement="${escapeHtml(s.replacement)}"
+               onclick="applyEvalSuggestion('${postId}', '${field}', this)">Apply</button>`
+          : ''}
+      </div>
+    `).join('');
+
+    return `
+      <div class="eval-avatar-card" style="border-left:4px solid ${color};">
+        <div class="eval-avatar-header">
+          <span class="eval-avatar-icon">${r.icon || '🤖'}</span>
+          <span class="eval-avatar-name">${escapeHtml(r.name || 'Avatar')}</span>
+        </div>
+        <div class="eval-avatar-text">${escapeHtml(r.evaluation || '')}</div>
+        ${suggestionsHtml ? `<div class="eval-suggestions">${suggestionsHtml}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'eval-popup-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeEvalPopup(); };
+
+  // Store results on the overlay so Apply can access replacements
+  overlay._evalResults = results;
+
+  overlay.innerHTML = `
+    <div class="eval-popup">
+      <div class="eval-popup-header">
+        <h3>AI Evaluation — ${escapeHtml(field.charAt(0).toUpperCase() + field.slice(1))}</h3>
+        <button class="eval-popup-close" onclick="closeEvalPopup()">&times;</button>
+      </div>
+      <div class="eval-popup-grid">
+        ${cardsHtml}
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+// ----------------------------------------------------------------
+// applyEvalSuggestion — writes replacement text into the editable field.
+// Also triggers live preview sync and cross-platform sync.
+// ----------------------------------------------------------------
+function applyEvalSuggestion(postId, field, btnEl) {
+  const replacement = btnEl?.dataset?.replacement;
+  if (!replacement) {
+    showToast('Could not find replacement text.', 'warning');
+    return;
+  }
+
+  // Write into the editable div
+  const editDiv = document.querySelector(`[data-field="${field}"][data-id="${postId}"]`);
+  if (editDiv) {
+    editDiv.innerText = replacement;
+    // Trigger live update (syncs mockup preview + cross-platform)
+    liveUpdatePreview(postId, field, editDiv);
+    // Mark card dirty
+    const card = document.querySelector(`.wysiwyg-card[data-post-id="${postId}"]`);
+    if (card) card.dataset.dirty = 'true';
+  }
+
+  // Visual feedback on button
+  if (btnEl) {
+    btnEl.textContent = 'Applied ✓';
+    btnEl.disabled = true;
+  }
+}
+
+// ----------------------------------------------------------------
+// closeEvalPopup — removes the evaluation popup overlay.
+// ----------------------------------------------------------------
+function closeEvalPopup() {
+  const overlay = document.querySelector('.eval-popup-overlay');
+  if (overlay) overlay.remove();
 }
 

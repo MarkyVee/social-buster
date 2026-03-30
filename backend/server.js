@@ -59,6 +59,7 @@ const automationsRoutes = require('./routes/automations');    // DM automation C
 const webhooksRoutes    = require('./routes/webhooks');       // Meta webhook receiver (DM replies)
 const emailRoutes       = require('./routes/email');          // Admin bulk email (groups + campaigns)
 const ticketsRoutes     = require('./routes/tickets');        // User support ticket submission
+const evaluationRoutes  = require('./routes/evaluation');     // FEAT-001: AI avatar field evaluations
 
 // ----------------------------------------------------------------
 // BullMQ worker orchestrator (Phase 5)
@@ -189,6 +190,7 @@ app.use('/messages', messagesRoutes);     // User inbox + messaging (protected b
 app.use('/automations', automationsRoutes); // DM automation CRUD + leads export
 app.use('/email', emailRoutes);            // Admin bulk email (groups + campaigns)
 app.use('/tickets', ticketsRoutes);        // User support tickets (report issues)
+app.use('/evaluation', evaluationRoutes);  // FEAT-001: AI avatar field evaluations
 
 // ----------------------------------------------------------------
 // Health check endpoint — Docker and load balancers use this

@@ -1968,3 +1968,147 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
+/* ================================================================
+   FEAT-001: Evaluation Buttons + Popup
+   ================================================================ */
+
+/* Small inline eval trigger button next to field labels */
+.eval-trigger-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  opacity: 0.5;
+  padding: 0 4px;
+  margin-left: 4px;
+  transition: opacity 0.2s, transform 0.2s;
+  vertical-align: middle;
+}
+.eval-trigger-btn:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+.eval-trigger-btn:disabled {
+  opacity: 0.3;
+  cursor: wait;
+}
+
+/* Fullscreen overlay backdrop */
+.eval-popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* Centered popup modal */
+.eval-popup {
+  background: var(--card-bg, #fff);
+  border-radius: 12px;
+  max-width: 900px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.eval-popup-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.eval-popup-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.eval-popup-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  line-height: 1;
+}
+.eval-popup-close:hover {
+  color: var(--text, #333);
+}
+
+/* Grid of avatar evaluation cards */
+.eval-popup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+/* Individual avatar card */
+.eval-avatar-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  padding: 12px;
+  /* border-left color is set inline per avatar */
+}
+
+.eval-avatar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.eval-avatar-icon {
+  font-size: 1.3rem;
+}
+.eval-avatar-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.eval-avatar-text {
+  font-size: 0.88rem;
+  color: var(--text-muted, #555);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+/* Suggestion chips */
+.eval-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.eval-suggestion-chip {
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.eval-suggestion-text {
+  flex: 1;
+  color: var(--text, #333);
+}
+.eval-apply-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Responsive: single column on mobile */
+@media (max-width: 600px) {
+  .eval-popup-grid {
+    grid-template-columns: 1fr;
+  }
+  .eval-popup {
+    max-height: 90vh;
+  }
+}

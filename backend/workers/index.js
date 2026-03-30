@@ -29,6 +29,7 @@ const {
   mediaProcessQueue,
   dmQueue,
   emailQueue,
+  evaluationQueue,
   watchdogQueue
 } = require('../queues');
 
@@ -42,6 +43,7 @@ const mediaAnalysisWorker = require('./mediaAnalysisWorker');   // Video segment
 const mediaProcessWorker  = require('./mediaProcessWorker');    // Media pre-processing: Drive → Supabase Storage
 const dmWorker            = require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
 const emailWorker         = require('./emailWorker');           // Admin bulk email campaigns via Resend
+const evaluationWorker    = require('./evaluationWorker');      // FEAT-001: AI avatar field evaluations
 require('./watchdogWorker');        // System health watchdog: anomaly detection + auto-pause
 
 // ---- Watchdog instrumentation ----
@@ -70,6 +72,7 @@ instrumentWorker(mediaAnalysisWorker, 'media-analysis');
 instrumentWorker(mediaProcessWorker,  'media-process');
 instrumentWorker(dmWorker,            'dm');
 instrumentWorker(emailWorker,         'email');
+instrumentWorker(evaluationWorker,    'evaluation');
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -142,7 +145,17 @@ async function registerRepeatableJobs() {
     }
   );
 
-  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire, watchdog)');
+  // Evaluation cleanup — deletes old evaluation_results daily based on retention_days setting
+  await evaluationQueue.add(
+    'cleanup-old-evaluations',
+    {},
+    {
+      repeat: { every: 24 * 60 * 60 * 1000 }, // once per day
+      jobId: 'repeatable:eval-cleanup'
+    }
+  );
+
+  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire, watchdog, eval-cleanup)');
 }
 
 // ----------------------------------------------------------------

@@ -180,4 +180,13 @@ const authLimiter = createLimiter({
   getIdentifier: (req) => getIp(req)
 });
 
-module.exports = { standardLimiter, aiLimiter, videoLimiter, authLimiter };
+// Evaluation: 7 per minute per authenticated user
+// Each evaluation triggers 3-5 parallel LLM calls, so 7/min = ~35 LLM calls/min max per user
+const evaluationLimiter = createLimiter({
+  limit: 7,
+  windowSec: 60,
+  tier: 'evaluation',
+  getIdentifier: (req) => req.user?.id
+});
+
+module.exports = { standardLimiter, aiLimiter, videoLimiter, authLimiter, evaluationLimiter };
