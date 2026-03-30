@@ -156,7 +156,8 @@ router.get('/performance', standardLimiter, async (req, res) => {
       .from('post_metrics')
       .select('platform, likes, comments, shares, saves, reach, impressions, video_views, recorded_at')
       .gte('recorded_at', cutoff)
-      .order('recorded_at', { ascending: false });
+      .order('recorded_at', { ascending: false })
+      .limit(5000);
 
     if (error) throw new Error(error.message);
 

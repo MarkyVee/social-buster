@@ -864,15 +864,14 @@ async function renderDashboard(el) {
 
   // Fetch stats + trends in parallel — don't block the page render
   try {
-    const [postsRes, dmDashRes, trendsRes] = await Promise.all([
-      apiFetch('/posts'),
+    const [dmDashRes, trendsRes] = await Promise.all([
       apiFetch('/automations/dashboard').catch(() => null),
       apiFetch('/posts/dashboard-trends').catch(() => null)
     ]);
 
-    const posts = postsRes?.posts || [];
-    const publishedCount = posts.filter(p => p.status === 'published').length;
-    const scheduledCount = posts.filter(p => ['scheduled', 'approved'].includes(p.status)).length;
+    // KPI counts come from dashboard-trends (lightweight count queries)
+    const publishedCount = trendsRes?.kpi?.publishedTotal ?? 0;
+    const scheduledCount = trendsRes?.kpi?.scheduledTotal ?? 0;
 
     // Update KPI card values
     const publishedEl = document.getElementById('dash-published');
@@ -904,13 +903,10 @@ async function renderDashboard(el) {
       });
     }
 
-    // Show recent published posts (last 5)
+    // Show recent published posts (last 5) — from dashboard-trends KPI data
     const recentContainer = document.getElementById('dash-recent-posts');
     if (recentContainer) {
-      const recentPublished = posts
-        .filter(p => p.status === 'published')
-        .sort((a, b) => new Date(b.published_at || b.created_at) - new Date(a.published_at || a.created_at))
-        .slice(0, 5);
+      const recentPublished = trendsRes?.kpi?.recentPosts || [];
 
       if (recentPublished.length > 0) {
         recentContainer.innerHTML = `

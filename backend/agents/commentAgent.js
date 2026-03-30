@@ -35,37 +35,46 @@ async function runCommentCycle() {
   console.log('[CommentAgent] Starting comment cycle...');
 
   try {
-    // Scan published posts from the last 30 days only
+    // Scan published posts from the last 30 days only, paginated in batches of 500
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const PAGE_SIZE = 500;
+    let offset = 0;
 
-    const { data: publishedPosts, error } = await supabaseAdmin
-      .from('posts')
-      .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
-      .eq('status', 'published')
-      .gte('published_at', cutoff)
-      .not('platform_post_id', 'is', null);
+    while (true) {
+      const { data: batch, error } = await supabaseAdmin
+        .from('posts')
+        .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
+        .eq('status', 'published')
+        .gte('published_at', cutoff)
+        .not('platform_post_id', 'is', null)
+        .order('published_at', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1);
 
-    if (error) {
-      console.error('[CommentAgent] Failed to fetch published posts:', error.message);
-      return;
-    }
-
-    if (!publishedPosts || publishedPosts.length === 0) return;
-
-    // Group posts by user
-    const byUser = {};
-    publishedPosts.forEach(post => {
-      if (!byUser[post.user_id]) byUser[post.user_id] = [];
-      byUser[post.user_id].push(post);
-    });
-
-    // Process each user (errors are isolated per user)
-    for (const [userId, posts] of Object.entries(byUser)) {
-      try {
-        await processUserComments(userId, posts);
-      } catch (err) {
-        console.error(`[CommentAgent] Error for user ${userId}:`, err.message);
+      if (error) {
+        console.error('[CommentAgent] Failed to fetch published posts:', error.message);
+        return;
       }
+
+      if (!batch || batch.length === 0) break;
+
+      // Group this batch by user
+      const byUser = {};
+      batch.forEach(post => {
+        if (!byUser[post.user_id]) byUser[post.user_id] = [];
+        byUser[post.user_id].push(post);
+      });
+
+      // Process each user (errors are isolated per user)
+      for (const [userId, posts] of Object.entries(byUser)) {
+        try {
+          await processUserComments(userId, posts);
+        } catch (err) {
+          console.error(`[CommentAgent] Error for user ${userId}:`, err.message);
+        }
+      }
+
+      if (batch.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
     }
 
   } catch (err) {

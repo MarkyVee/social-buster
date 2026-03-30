@@ -43,7 +43,21 @@ const {
 const PROCESSED_MEDIA_BUCKET = 'processed-media';
 
 const MAX_RETRIES = 3;
-const BATCH_CAP   = 50;  // Max posts processed per BullMQ job cycle
+const BATCH_CAP   = 100;  // Max posts processed per BullMQ job cycle
+
+// Concurrency limiter — prevents too many users publishing simultaneously
+// (each user pipeline may run FFmpeg for video processing, which is CPU-heavy)
+const MAX_CONCURRENT_USERS = 10;
+function createLimiter(concurrency) {
+  let active = 0;
+  const queue = [];
+  const next = () => { if (queue.length > 0 && active < concurrency) queue.shift()(); };
+  return (fn) => new Promise((resolve, reject) => {
+    const run = () => { active++; fn().then(resolve, reject).finally(() => { active--; next(); }); };
+    active < concurrency ? run() : queue.push(run);
+  });
+}
+const limitUser = createLimiter(MAX_CONCURRENT_USERS);
 
 // ----------------------------------------------------------------
 // processQueue — finds all posts due for publishing and processes them.
@@ -121,7 +135,7 @@ async function processQueue() {
     });
 
     await Promise.allSettled(
-      Object.values(byUser).map(userPosts => processUserQueue(userPosts))
+      Object.values(byUser).map(userPosts => limitUser(() => processUserQueue(userPosts)))
     );
 
   } catch (err) {

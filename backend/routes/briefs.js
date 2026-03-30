@@ -218,7 +218,8 @@ router.get('/', standardLimiter, async (req, res) => {
     const { data, error } = await req.db
       .from('briefs')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (error) throw new Error(error.message);
 

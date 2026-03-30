@@ -36,7 +36,7 @@ router.get('/dashboard-trends', standardLimiter, async (req, res) => {
       days.push(d.toISOString().slice(0, 10));
     }
 
-    // Fetch posts created in the last 7 days
+    // Fetch posts created in the last 7 days (for sparkline trends)
     const { data: posts } = await req.db
       .from('posts')
       .select('status, published_at, created_at')
@@ -47,6 +47,16 @@ router.get('/dashboard-trends', standardLimiter, async (req, res) => {
       .from('dm_conversations')
       .select('created_at, status')
       .gte('created_at', days[0] + 'T00:00:00Z');
+
+    // Total counts (all-time) for KPI cards — uses head:true so no rows are loaded
+    const [publishedCount, scheduledCount, recentPublished] = await Promise.all([
+      req.db.from('posts').select('id', { count: 'exact', head: true }).eq('status', 'published'),
+      req.db.from('posts').select('id', { count: 'exact', head: true }).in('status', ['scheduled', 'approved']),
+      req.db.from('posts').select('id, platform, hook, published_at')
+        .eq('status', 'published')
+        .order('published_at', { ascending: false })
+        .limit(5)
+    ]);
 
     // Helper: count items per day by filter
     const countPerDay = (items, filterFn, dateField) =>
@@ -71,7 +81,13 @@ router.get('/dashboard-trends', standardLimiter, async (req, res) => {
       published:     { trend: published,     ...delta(published) },
       scheduled:     { trend: scheduled,     ...delta(scheduled) },
       conversations: { trend: conversations, ...delta(conversations) },
-      leads:         { trend: leads,         ...delta(leads) }
+      leads:         { trend: leads,         ...delta(leads) },
+      // KPI totals — all-time counts (not just 7 days)
+      kpi: {
+        publishedTotal: publishedCount.count || 0,
+        scheduledTotal: scheduledCount.count || 0,
+        recentPosts:    recentPublished.data || []
+      }
     });
   } catch (err) {
     console.error('[Posts] Dashboard trends error:', err.message);
@@ -89,7 +105,8 @@ router.get('/', standardLimiter, async (req, res) => {
     let query = req.db
       .from('posts')
       .select('*, briefs(post_type, objective, tone, created_at)')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(200);
 
     // Apply optional filters from query string
     if (req.query.status)   query = query.eq('status', req.query.status);

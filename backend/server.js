@@ -71,6 +71,9 @@ const { startAllWorkers } = require('./workers');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust one proxy hop (Cloudflare) — required for accurate req.ip in rate limiting
+app.set('trust proxy', 1);
+
 // ----------------------------------------------------------------
 // IMPORTANT: Mount the Stripe webhook BEFORE express.json().
 // Stripe requires the raw request body Buffer for signature verification.

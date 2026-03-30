@@ -36,7 +36,7 @@ const worker = new Worker('dm', async (job) => {
   connection,
   concurrency: 2,      // Max 2 DMs sending at once
   limiter: {
-    max:      10,       // Max 10 DM jobs per minute across all users
+    max:      30,       // Max 30 DM jobs per minute across all users (daily per-user limits are the real safety net)
     duration: 60_000
   }
 });
