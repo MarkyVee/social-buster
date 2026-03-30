@@ -253,7 +253,8 @@ function renderBriefForm(el) {
         <div class="brief-section-label">4. Which platforms should we generate posts for?</div>
         <div class="platform-grid">
           ${PLATFORMS.map(p => {
-            const comingSoon = p.value === 'whatsapp' || p.value === 'telegram';
+            const activePlatforms = ['instagram', 'facebook'];
+            const comingSoon = !activePlatforms.includes(p.value);
             return `
             <label class="platform-option${comingSoon ? ' platform-coming-soon' : ''}"
                    style="${comingSoon ? 'opacity:0.4;pointer-events:none;position:relative;' : ''}">
