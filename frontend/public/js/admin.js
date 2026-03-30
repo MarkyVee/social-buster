@@ -4026,6 +4026,8 @@ async function loadAdminAvatars() {
     const avatars = avatarsRes?.avatars || [];
     const suggestions = suggestionsRes?.suggestions || [];
 
+    panel.dataset.loaded = 'true';
+
     // Build avatar table
     const avatarRows = avatars.map(a => `
       <tr>
@@ -4168,7 +4170,12 @@ async function loadAdminAvatars() {
     panel._avatarsData = avatars;
 
   } catch (err) {
-    panel.innerHTML = `<div class="admin-error">Failed to load avatars: ${escapeAdminHtml(err.message)}</div>`;
+    panel.innerHTML = `<div class="admin-error">
+      <p>Failed to load avatars: ${escapeAdminHtml(err.message)}</p>
+      <p class="text-muted" style="margin-top:8px;font-size:0.85rem;">
+        If you see "relation does not exist", run <code>migration_evaluation_system.sql</code> in Supabase SQL Editor first.
+      </p>
+    </div>`;
   }
 }
 
