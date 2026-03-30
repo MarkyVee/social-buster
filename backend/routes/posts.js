@@ -335,7 +335,10 @@ router.post('/:id/schedule', standardLimiter, checkLimit('scheduled_queue_size')
     const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
     if (scheduledDate <= fiveMinutesFromNow) {
       try {
-        await publishQueue.add('scan-and-publish', {}, { priority: 1 });
+        // 2-second delay gives the DB write time to commit before the scan runs.
+        // Without this, the priority job can run before the post is visible in the DB,
+        // find nothing, and complete empty — leaving the post for the next 60s cycle.
+        await publishQueue.add('scan-and-publish', {}, { priority: 1, delay: 2000 });
       } catch (qErr) {
         // Non-fatal — the repeatable scan will still pick it up within 60s
         console.warn('[Posts] Could not trigger immediate publish scan:', qErr.message);
@@ -428,7 +431,7 @@ router.post('/:id/resume', standardLimiter, async (req, res) => {
     if (scheduledAt <= fiveMinutesFromNow) {
       try {
         const { publishQueue } = require('../queues');
-        await publishQueue.add('scan-and-publish', {}, { priority: 1 });
+        await publishQueue.add('scan-and-publish', {}, { priority: 1, delay: 2000 });
       } catch (qErr) {
         console.warn('[Posts] Could not trigger immediate publish scan:', qErr.message);
       }

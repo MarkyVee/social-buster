@@ -24,7 +24,7 @@
   <a href="/" class="back-link">&larr; Back to Social Buster</a>
 
   <h1>Privacy Policy</h1>
-  <p class="date">Last updated: March 25, 2026</p>
+  <p class="date">Last updated: March 28, 2026</p>
 
   <p>Social Buster ("we," "us," or "our") operates the Social Buster platform at <strong>socialbuster.com</strong>, an AI-powered social media marketing tool. This Privacy Policy explains how we collect, use, store, and protect your information when you use our service.</p>
 
@@ -45,7 +45,7 @@
     <li><strong>OAuth access tokens</strong> — encrypted using AES-256-GCM before storage. Used solely to act on your behalf (publish posts, read comments, send messages).</li>
     <li><strong>Page/account identifiers</strong> — your Page ID and account name, used to route content to the correct destination.</li>
     <li><strong>Post engagement data</strong> — likes, comments, shares, reach, and impressions on posts you publish through our platform. Used to provide you with performance analytics.</li>
-    <li><strong>Comments on your posts</strong> — text, author name, and timestamp of comments on posts published through Social Buster. Used to power the comment-to-DM automation feature you configure.</li>
+    <li><strong>Comments on your posts</strong> — text, author name, and timestamp of comments on posts published through Social Buster, received via real-time webhook notifications from the platform. Used to power the comment-to-DM automation feature you configure.</li>
     <li><strong>Direct message conversations</strong> — when you enable DM automation, we send messages on your behalf and store conversation state (message text, timestamps, and any information the recipient voluntarily provides such as email, phone number, or name). We only message users who have interacted with your content.</li>
   </ul>
 
@@ -73,7 +73,7 @@
   <ul>
     <li><strong>Publish content</strong> — to create and publish posts to your connected social media accounts on your behalf, at the times you schedule.</li>
     <li><strong>Generate AI content</strong> — to produce post suggestions, captions, hashtags, and images based on the briefs and preferences you provide.</li>
-    <li><strong>Monitor comments</strong> — to scan comments on your published posts for trigger keywords you define, so the DM automation you configured can respond.</li>
+    <li><strong>Monitor comments</strong> — to receive real-time notifications from the platform when someone comments on your published posts, and check those comments for trigger keywords you define so the DM automation you configured can respond.</li>
     <li><strong>Send direct messages</strong> — to send automated DMs on your behalf to users who comment on your posts with trigger phrases you set. Messages are only sent within each platform's allowed messaging window (24 hours for Meta platforms).</li>
     <li><strong>Collect leads</strong> — when a user responds to your automated DM with information (email, phone, name), we store that data in your account so you can export it.</li>
     <li><strong>Show performance analytics</strong> — to display engagement metrics, posting recommendations, and intelligence insights based on your own post performance.</li>
@@ -96,7 +96,15 @@
       </tr>
       <tr>
         <td><code>pages_read_engagement</code></td>
-        <td>Read engagement metrics (likes, comments, shares, reach) on your published posts. Read comments to check for DM automation trigger keywords you configured.</td>
+        <td>Read engagement metrics (likes, comments, shares, reach) on your published posts.</td>
+      </tr>
+      <tr>
+        <td><code>pages_read_user_content</code></td>
+        <td>Read comments on your published posts to check for DM automation trigger keywords you configured.</td>
+      </tr>
+      <tr>
+        <td><code>pages_manage_metadata</code></td>
+        <td>Subscribe your Page to receive real-time webhook notifications when someone comments on your posts or sends a message. Required for DM automation to respond promptly.</td>
       </tr>
       <tr>
         <td><code>pages_messaging</code></td>
@@ -113,6 +121,10 @@
       <tr>
         <td><code>instagram_content_publish</code></td>
         <td>Publish image and video (Reels) content to your Instagram account on your behalf.</td>
+      </tr>
+      <tr>
+        <td><code>instagram_manage_comments</code></td>
+        <td>Read comments on your Instagram posts to check for DM automation trigger keywords you configured.</td>
       </tr>
       <tr>
         <td><code>instagram_manage_messages</code></td>
@@ -134,10 +146,12 @@
   <h2>4. DM Automation and Messaging</h2>
   <p>Social Buster includes a comment-to-DM automation feature. Here is exactly how it works and what data is involved:</p>
 
+  <p><strong>Important:</strong> AI is used only to <em>suggest</em> post content (captions, hooks, hashtags). You review, edit, and approve every post and every DM message template before anything is published or sent. No content is ever posted or messaged without your explicit approval.</p>
+
   <ol>
-    <li><strong>You configure triggers</strong> — for each post, you define trigger keywords (e.g., "interested," "info") and the message(s) to send.</li>
-    <li><strong>We monitor comments</strong> — our system periodically checks comments on your published posts for your trigger keywords.</li>
-    <li><strong>We send DMs on your behalf</strong> — when a match is found, we send the message you wrote from your connected Page/account to the commenter. We respect each platform's 24-hour messaging window policy.</li>
+    <li><strong>You configure triggers</strong> — for each post, you define trigger keywords (e.g., "interested," "info") and write the message templates to send. These are your words, not AI-generated messages.</li>
+    <li><strong>We monitor comments</strong> — our system receives real-time webhook notifications from the platform when someone comments on your published posts, and checks those comments for your trigger keywords.</li>
+    <li><strong>We send DMs on your behalf</strong> — when a match is found, we send the message template you wrote from your connected Page/account to the commenter. We respect each platform's 24-hour messaging window policy.</li>
     <li><strong>Lead collection</strong> — if your automation includes follow-up questions (e.g., "What's your email?"), the recipient's responses are stored as lead data in your account. You can export this data as CSV.</li>
     <li><strong>Rate limits</strong> — we enforce daily sending limits (100 DMs/day for Facebook, 80 DMs/day for Instagram) to protect your account from platform restrictions.</li>
   </ol>
@@ -199,7 +213,7 @@
     <li><strong>Email:</strong> Send an email to <a href="mailto:mark@markseminko.com">mark@markseminko.com</a> with the subject line "Data Deletion Request." We will process your request within 30 days.</li>
     <li><strong>Platform revocation:</strong> You can revoke Social Buster's access to your Facebook/Instagram data at any time via <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Facebook Settings &rarr; Apps and Websites</a>. This immediately revokes our access tokens — we can no longer access your platform data.</li>
   </ul>
-  <p>When you revoke access via Facebook/Instagram settings, we delete: DM conversations, collected lead data, DM automation configurations, connected platform tokens, and any direct messaging history. Your posts, briefs, media library, user profile, and billing data are preserved — these were created by you on our platform, not obtained via Meta's APIs.</p>
+  <p><strong>Automatic deauthorization handling:</strong> When you revoke Social Buster's access via Facebook or Instagram settings, Meta sends us a deauthorization callback. We automatically process this by deleting: DM conversations, collected lead data, DM automation configurations, connected platform tokens, and any direct messaging history. Your posts, briefs, media library, user profile, and billing data are preserved — these were created by you on our platform, not obtained via Meta's APIs.</p>
   <p><strong>Comment data:</strong> Comments on your posts are authored by third-party users (the people who commented), not by you. When you revoke access, we anonymize these comments by removing the commenter's handle, the platform comment ID, and the link to the original post. The comment text, sentiment classification, and platform remain as anonymous, de-identified data points used to improve our collective intelligence engine for all users. No individual commenter can be identified from this anonymized data.</p>
   <p><strong>Full account deletion:</strong> If you request full account deletion via email, we remove all data including your account, posts, briefs, media, and anonymized comment data.</p>
   <p>Anonymized aggregated metrics (performance benchmarks, cohort averages) that have already been computed are not reversed, as they contain no identifying information.</p>

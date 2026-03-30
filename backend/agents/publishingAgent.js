@@ -77,7 +77,7 @@ async function processQueue() {
       const staleIds = stale.map(p => p.id);
       await supabaseAdmin
         .from('posts')
-        .update({ status: 'failed', error_message: 'Publish timed out (2 min) — please retry.' })
+        .update({ status: 'failed', error_message: 'Publish timed out (15 min) — video may be too large or format unsupported. Please retry.' })
         .in('id', staleIds);
       console.warn(`[PublishingAgent] Reset ${staleIds.length} stale publishing post(s) to failed.`);
     }

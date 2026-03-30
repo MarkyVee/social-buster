@@ -214,7 +214,19 @@ async function trimVideo(inputPath, platform, startTime = 0, forceReencode = fal
   console.log(`[FFmpeg] Trimming video: start=${startTime}s duration=${outputDuration}s (platform limit: ${maxDuration}s) for ${platform}`);
 
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
+    let settled = false;
+
+    // 3-minute timeout — prevents FFmpeg from hanging indefinitely.
+    // Worst case: 90s video re-encode at ultrafast should take ~60-90s.
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try { proc.kill('SIGKILL'); } catch (_) {}
+        reject(new Error(`FFmpeg trim timed out after 3 minutes (${platform})`));
+      }
+    }, 3 * 60 * 1000);
+
+    const proc = ffmpeg(inputPath)
       .setStartTime(startTime)
       .setDuration(outputDuration)
       .videoCodec('copy')
@@ -226,21 +238,30 @@ async function trimVideo(inputPath, platform, startTime = 0, forceReencode = fal
       .output(outputPath)
       .on('start', cmd => console.log(`[FFmpeg] Command: ${cmd}`))
       .on('end', () => {
-        console.log(`[FFmpeg] Trim complete → ${outputFilename}`);
-        resolve(outputPath);
-      })
-      .on('error', (err) => {
-        console.error('[FFmpeg] Trim error:', err.message);
-        if (err.message.includes('Invalid data')) {
-          console.log('[FFmpeg] Stream copy failed, retrying with re-encode...');
-          trimWithReencode(inputPath, outputPath, startTime, outputDuration)
-            .then(resolve)
-            .catch(reject);
-        } else {
-          reject(new Error(`FFmpeg trim failed: ${err.message}`));
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          console.log(`[FFmpeg] Trim complete → ${outputFilename}`);
+          resolve(outputPath);
         }
       })
-      .run();
+      .on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          console.error('[FFmpeg] Trim error:', err.message);
+          if (err.message.includes('Invalid data')) {
+            console.log('[FFmpeg] Stream copy failed, retrying with re-encode...');
+            trimWithReencode(inputPath, outputPath, startTime, outputDuration)
+              .then(resolve)
+              .catch(reject);
+          } else {
+            reject(new Error(`FFmpeg trim failed: ${err.message}`));
+          }
+        }
+      });
+
+    proc.run();
   });
 }
 
@@ -251,7 +272,19 @@ async function trimVideo(inputPath, platform, startTime = 0, forceReencode = fal
 // ----------------------------------------------------------------
 async function trimWithReencode(inputPath, outputPath, startTime = 0, durationSeconds) {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
+    let settled = false;
+
+    // 3-minute timeout — re-encoding a 90s video at ultrafast should take ~60-90s.
+    // If it takes longer, something is wrong (corrupt file, disk full, etc).
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try { proc.kill('SIGKILL'); } catch (_) {}
+        reject(new Error(`FFmpeg re-encode timed out after 3 minutes`));
+      }
+    }, 3 * 60 * 1000);
+
+    const proc = ffmpeg(inputPath)
       .setStartTime(startTime)
       .setDuration(durationSeconds)
       .videoCodec('libx264')
@@ -267,9 +300,22 @@ async function trimWithReencode(inputPath, outputPath, startTime = 0, durationSe
         '-movflags +faststart' // Optimise for streaming: move moov atom to front of file
       ])
       .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', err => reject(new Error(`FFmpeg re-encode failed: ${err.message}`)))
-      .run();
+      .on('end', () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          resolve(outputPath);
+        }
+      })
+      .on('error', err => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error(`FFmpeg re-encode failed: ${err.message}`));
+        }
+      });
+
+    proc.run();
   });
 }
 

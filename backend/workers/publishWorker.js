@@ -8,9 +8,11 @@
  *                        that are due and publishes them. This is the main
  *                        recurring job that replaces the old setInterval loop.
  *
- * Concurrency: 2 (two scan-and-publish cycles can overlap if one runs long,
- * but processQueue has DB-level locking via the 'publishing' status update
- * that prevents the same post from being picked up twice).
+ * Concurrency: 1 — only one scan cycle runs at a time. Inside that scan,
+ * posts from different users still publish in parallel (Promise.allSettled).
+ * Concurrency 2 caused a race condition where two overlapping scans could
+ * both pick up the same post, resulting in posts stuck in 'publishing'
+ * with zero publish logs (2026-03-29).
  *
  * Retry: 5 attempts with exponential backoff (set in queues/index.js).
  * Failed jobs land in the BullMQ failed list where the admin can review them.
@@ -42,7 +44,7 @@ const publishWorker = new Worker(
 
   {
     connection,
-    concurrency: 2  // Allow 2 overlapping scan cycles (DB locking prevents double-publish)
+    concurrency: 1  // One scan at a time — posts within a scan still publish in parallel
   }
 );
 
