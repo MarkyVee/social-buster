@@ -93,6 +93,13 @@
 
 ---
 
+- Date: 2026-03-30
+- Decision: Skip 4 of 12 scalability fixes — dashboard-trends (already per-user), axios keep-alive (risk of stale connections), webhook queueing (fast enough, would hurt DM latency), session cache TTL (already has 60-day TTL)
+- Reason: Each was evaluated against the actual code. Dashboard-trends and session cache were already handled. Axios keep-alive and webhook queueing carry implementation risks that outweigh benefits at current scale. Monitor for port exhaustion (EADDRNOTAVAIL) and webhook timeouts as triggers to revisit.
+- Impact: 8 of 12 fixes deployed. Deferred items documented as watch-for signals. No premature optimization.
+
+---
+
 - Date: 2026-03-26
 - Decision: Anonymize comments on Meta data deletion instead of deleting them
 - Reason: Comments are authored by third-party users (commenters), not the Page owner requesting deletion. They are public data that feeds our intelligence engine — sentiment analysis, research agents, cohort benchmarks. Deleting them would destroy irreplaceable research data and break agent functionality. The Page owner's personal data is in their OAuth tokens, DM conversations, and platform connections — not in other people's comments. Anonymization (null out author_handle, platform_comment_id, post_id) removes any link back to the Page while preserving the research value (comment text, sentiment, platform).

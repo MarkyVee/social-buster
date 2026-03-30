@@ -4,6 +4,23 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-30
+
+- **SCALABILITY:** 8-fix health check for 5,000 concurrent users:
+  - Trust proxy (`trust proxy: 1`) — rate limiting now uses real client IP behind Cloudflare
+  - Dashboard no longer loads all posts — uses lightweight count queries (`head: true`) + last 5 recent posts
+  - `GET /posts` capped at 200 rows, `GET /briefs` capped at 100 rows
+  - `/intelligence/performance` capped at 5,000 metric rows (was unbounded)
+  - commentAgent paginated in 500-post batches (was loading ALL published posts from 30 days in one query)
+  - Publish BATCH_CAP 50→100 with 10-user concurrency guard (prevents FFmpeg OOM)
+  - DM worker limiter 10→30 jobs/min (daily per-user limits are the real safety net)
+  - New index on `posts(platform_page_id)` — migration SQL created (**needs Supabase SQL Editor run**)
+- **UX:** Cross-platform WYSIWYG sync — editing a field on one platform card auto-updates the matching card on other platforms. Link/unlink toggle per card. Only appears when 2+ platforms selected.
+- **UX:** Non-active platforms (TikTok, LinkedIn, X, Threads, WhatsApp, Telegram) now show "Coming Soon" in the brief form, matching Settings & Billing.
+- **DOCS:** Meta App Review guide finalized — added Instagram DM endpoint, updated status table, marked all features working.
+
+---
+
 ## 2026-03-29
 
 - **FIXED:** Publish race condition — concurrency 2 on publish worker caused overlapping scans that left posts stuck in 'publishing' with zero logs. Reduced to concurrency 1 (posts still publish in parallel within a scan).
