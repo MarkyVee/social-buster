@@ -4,6 +4,18 @@ What was built, fixed, or shipped — logged per session.
 
 ---
 
+## 2026-03-29
+
+- **FIXED:** Publish race condition — concurrency 2 on publish worker caused overlapping scans that left posts stuck in 'publishing' with zero logs. Reduced to concurrency 1 (posts still publish in parallel within a scan).
+- **FIXED:** Priority publish job race — "Publish Now" triggered immediate scan before DB write committed. Added 2-second delay.
+- **FIXED:** FFmpeg hang — no timeout on video trim/re-encode. Added 3-minute kill timeout to both functions.
+- **FIXED:** Stale recovery error message said "2 min" but timeout was 15 min. Corrected.
+- **FEAT-020 DONE:** Admin Diagnostics & Maintenance panel — new tab with KPI cards (failed/stuck/stale DMs), error category badges, stuck posts reset, failed post retry, stale DM expiry, numbered order-of-execution guide.
+- **UPDATED:** Privacy policy — added 3 missing Meta permissions, deauthorization callback handling, AI-suggestions-only clarification, webhook accuracy.
+- **TRIMMED:** feature-roadmap-handoff.md from 1,250 → 130 lines.
+
+---
+
 ## 2026-03-28
 
 - **FIXED:** Instagram image container polling — was only polling video containers, causing error 9007 "media not ready". Now polls both images (3s intervals, 30s max) and videos (10s intervals, 5min max).

@@ -23,6 +23,13 @@
 
 ---
 
+- Date: 2026-03-29
+- Decision: Reduce publish worker concurrency from 2 to 1
+- Reason: Two overlapping processQueue() scans caused a race condition — both could pick up the same post, one sets it to 'publishing' while the other completes empty, leaving the post stuck with no publish logs. Concurrency 1 eliminates the race. Posts from different users still publish in parallel via Promise.allSettled inside a single scan.
+- Impact: Slightly longer worst-case pickup time (up to 60s vs ~30s), but eliminates stuck-post failures entirely. Priority jobs with 2-second delay handle "Publish Now" within 3 seconds.
+
+---
+
 - Date: 2026-03-25
 - Decision: Adopt R.A.I.L.G.U.A.R.D. framework for CLAUDE.md security posture
 - Reason: Cloud Security Alliance framework designed for AI coding assistants. CLAUDE.md already covers 6 of 8 pillars organically. Need to add Uncertainty Disclosure and Auditability sections.
