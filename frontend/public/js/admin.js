@@ -63,6 +63,10 @@ function renderAdminDashboard(el) {
         Issues
         <span id="admin-issues-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
       </button>
+      <button class="admin-tab"        data-tab="diagnostics" onclick="switchAdminTab('diagnostics')">
+        Diagnostics
+        <span id="admin-diag-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
+      </button>
     </div>
 
     <!-- Tab panels -->
@@ -76,6 +80,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-plans"     class="admin-panel hidden"></div>
     <div id="admin-tab-watchdog"   class="admin-panel hidden"></div>
     <div id="admin-tab-issues"    class="admin-panel hidden"></div>
+    <div id="admin-tab-diagnostics" class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -111,8 +116,9 @@ function switchAdminTab(tab) {
   if (tab === 'revenue')   loadAdminRevenue();
   if (tab === 'email')     loadAdminEmail();
   if (tab === 'plans')     loadAdminPlans();
-  if (tab === 'watchdog')  loadAdminWatchdog();
-  if (tab === 'issues')    loadAdminIssues();
+  if (tab === 'watchdog')     loadAdminWatchdog();
+  if (tab === 'issues')       loadAdminIssues();
+  if (tab === 'diagnostics')  loadAdminDiagnostics();
 }
 
 // ================================================================
@@ -3811,5 +3817,178 @@ async function resolveWatchdogEvent(eventId) {
     if (panel) { panel.dataset.loaded = ''; loadAdminWatchdog(); }
   } catch (err) {
     alert('Failed to resolve: ' + err.message);
+  }
+}
+
+// ================================================================
+// DIAGNOSTICS TAB (FEAT-020)
+// Publishing failures, error categories, maintenance actions
+// ================================================================
+
+async function loadAdminDiagnostics() {
+  const panel = document.getElementById('admin-tab-diagnostics');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading diagnostics…</div>`;
+
+  try {
+    const data = await apiFetch('/admin/diagnostics');
+
+    // Update badge if there are stuck posts or recent failures
+    const badge = document.getElementById('admin-diag-badge');
+    if (badge) {
+      const total = data.summary.stuck_now + data.summary.failed_7d;
+      if (total > 0) {
+        badge.textContent = total;
+        badge.style.display = 'inline';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // Error category summary cards
+    const catCards = Object.entries(data.error_categories || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, count]) => {
+        const color = cat === 'Timeout' ? '#f59e0b'
+          : cat === 'Token Expired' ? '#dc2626'
+          : cat === 'Video Processing' ? '#8b5cf6'
+          : cat === 'Permission Error' ? '#ef4444'
+          : '#6b7280';
+        return `<div style="display:inline-block;padding:8px 14px;margin:4px;border-radius:8px;background:${color}15;border:1px solid ${color}40;font-size:13px;">
+          <strong style="color:${color}">${count}</strong> ${escapeAdminHtml(cat)}
+        </div>`;
+      }).join('');
+
+    // Stuck posts section
+    const stuckRows = (data.stuck_posts || []).map(p => {
+      const mins = Math.round((Date.now() - new Date(p.updated_at).getTime()) / 60000);
+      return `<tr>
+        <td><code style="font-size:11px;">${escapeAdminHtml(p.id.slice(0, 8))}</code></td>
+        <td>${escapeAdminHtml(p.platform)}</td>
+        <td style="color:#f59e0b;font-weight:600;">${mins} min</td>
+        <td>
+          <button class="btn btn-sm" style="font-size:11px;" onclick="adminResetStuckPosts()">Reset</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    // Failed posts table
+    const failedRows = (data.failed_posts || []).map(p => {
+      const when = new Date(p.updated_at).toLocaleString();
+      const catColor = p.error_category === 'Timeout' ? '#f59e0b'
+        : p.error_category === 'Token Expired' ? '#dc2626'
+        : p.error_category === 'Video Processing' ? '#8b5cf6'
+        : '#6b7280';
+      return `<tr>
+        <td><code style="font-size:11px;">${escapeAdminHtml(p.id.slice(0, 8))}</code></td>
+        <td>${escapeAdminHtml(p.user_name)}</td>
+        <td>${escapeAdminHtml(p.platform)}</td>
+        <td><span style="color:${catColor};font-weight:600;font-size:12px;">${escapeAdminHtml(p.error_category)}</span></td>
+        <td style="font-size:12px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeAdminHtml(p.error_message || '')}">${escapeAdminHtml(p.error_message || 'No details')}</td>
+        <td style="font-size:11px;white-space:nowrap;">${when}</td>
+        <td>
+          <button class="btn btn-sm" style="font-size:11px;" onclick="adminRetryPost('${p.id}')">Retry</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    panel.innerHTML = `
+      <!-- Summary Cards -->
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">
+        <div class="admin-kpi-card" style="border-left:4px solid #dc2626;">
+          <div class="admin-kpi-value">${data.summary.failed_7d}</div>
+          <div class="admin-kpi-label">Failed (7 days)</div>
+        </div>
+        <div class="admin-kpi-card" style="border-left:4px solid #f59e0b;">
+          <div class="admin-kpi-value">${data.summary.stuck_now}</div>
+          <div class="admin-kpi-label">Stuck Now</div>
+        </div>
+        <div class="admin-kpi-card" style="border-left:4px solid #6366f1;">
+          <div class="admin-kpi-value">${data.summary.stale_dms}</div>
+          <div class="admin-kpi-label">Stale DMs</div>
+        </div>
+      </div>
+
+      <!-- Error Categories -->
+      ${catCards ? `<div class="admin-section-title">Error Categories (7 days)</div><div style="margin-bottom:20px;">${catCards}</div>` : ''}
+
+      <!-- Maintenance Actions -->
+      <div class="admin-section-title">Maintenance</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
+        <button class="btn btn-sm" onclick="adminResetStuckPosts()">
+          Reset Stuck Posts (${data.summary.stuck_now})
+        </button>
+        <button class="btn btn-sm" onclick="adminExpireStaleDMs()">
+          Expire Stale DMs (${data.summary.stale_dms})
+        </button>
+        <button class="btn btn-sm" onclick="loadAdminDiagnostics(); document.getElementById('admin-tab-diagnostics').dataset.loaded='';">
+          Refresh
+        </button>
+      </div>
+
+      <!-- Stuck Posts -->
+      ${stuckRows ? `
+        <div class="admin-section-title">Currently Stuck in Publishing</div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Post</th><th>Platform</th><th>Stuck For</th><th>Action</th></tr></thead>
+            <tbody>${stuckRows}</tbody>
+          </table>
+        </div>
+      ` : ''}
+
+      <!-- Failed Posts -->
+      <div class="admin-section-title" style="margin-top:20px;">Recent Failures (7 days)</div>
+      ${failedRows ? `
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead><tr><th>Post</th><th>User</th><th>Platform</th><th>Category</th><th>Error</th><th>When</th><th>Action</th></tr></thead>
+            <tbody>${failedRows}</tbody>
+          </table>
+        </div>
+      ` : '<p class="admin-muted">No failed posts in the last 7 days.</p>'}
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div class="admin-error">Failed to load diagnostics: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// Maintenance action: reset stuck posts
+async function adminResetStuckPosts() {
+  try {
+    const result = await apiFetch('/admin/maintenance/reset-stuck', { method: 'POST' });
+    alert(result.message);
+    // Reload the tab
+    const panel = document.getElementById('admin-tab-diagnostics');
+    if (panel) { panel.dataset.loaded = ''; loadAdminDiagnostics(); }
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// Maintenance action: expire stale DM conversations
+async function adminExpireStaleDMs() {
+  try {
+    const result = await apiFetch('/admin/maintenance/expire-stale-dms', { method: 'POST' });
+    alert(result.message);
+    const panel = document.getElementById('admin-tab-diagnostics');
+    if (panel) { panel.dataset.loaded = ''; loadAdminDiagnostics(); }
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// Maintenance action: retry a specific failed post
+async function adminRetryPost(postId) {
+  try {
+    const result = await apiFetch(`/admin/maintenance/retry-failed/${postId}`, { method: 'POST' });
+    alert(result.message);
+    const panel = document.getElementById('admin-tab-diagnostics');
+    if (panel) { panel.dataset.loaded = ''; loadAdminDiagnostics(); }
+  } catch (err) {
+    alert('Failed: ' + err.message);
   }
 }

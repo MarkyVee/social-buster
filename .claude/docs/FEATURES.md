@@ -250,13 +250,12 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 - **ID:** FEAT-020
 - **Date:** 2026-03-28
-- **Status:** planned
+- **Status:** done (2026-03-29)
 - **Priority:** HIGH
-- **Description:** Admin Publishing Error Diagnostics — surface platform-specific error details (Instagram container status, Facebook error codes, etc.) in the admin dashboard per user and per post. When a post fails publishing, store the full platform error response so admins can diagnose without reading server logs.
-- **Reason:** Currently, when a user's video or image fails Instagram processing, the only way to see WHY is to search Coolify/server logs. An admin-facing error log panel would show: which post failed, which platform, the exact error code/message from the API, and timestamp. Purely internal — no user data sent externally, no Meta API calls, no additional permissions needed.
-- **Implementation:** (1) Add `error_detail` column to `posts` table (or separate `publishing_logs` table), (2) Store full platform error response when publishing fails, (3) Admin dashboard panel showing recent failures with filterable error details, (4) Optional: alert admin via in-app notification when failures spike.
-- **Files:** `backend/agents/publishingAgent.js`, `backend/services/platformAPIs.js`, `frontend/public/js/admin.js`
-- **Meta App Review impact:** None — this is server-side error logging of our own API call results. No new permissions, scopes, or data collection required.
+- **Description:** Admin Diagnostics & Maintenance Panel — publishing error diagnostics with categorized errors, one-click maintenance actions (reset stuck posts, expire stale DMs, retry failed posts).
+- **Resolution:** New "Diagnostics" tab in admin dashboard with: KPI cards (failed 7d / stuck now / stale DMs), error category badges (Timeout, Video Processing, Token Expired, etc.), stuck posts table with reset button, failed posts table with retry button, maintenance actions (reset stuck, expire stale DMs). Backend: 4 new endpoints (GET /admin/diagnostics, POST reset-stuck, POST expire-stale-dms, POST retry-failed/:id). Error categorization via pattern matching on error_message — no new DB columns needed.
+- **Files:** `backend/routes/admin.js`, `frontend/public/js/admin.js`
+- **Meta App Review impact:** None — purely internal admin tooling.
 
 ---
 

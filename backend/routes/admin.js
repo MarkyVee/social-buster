@@ -18,6 +18,10 @@
  *   POST /admin/watchdog/pause — Manually pause all job queues
  *   POST /admin/watchdog/resume — Resume all paused queues
  *   POST /admin/watchdog/resolve/:id — Mark an anomaly as resolved
+ *   GET  /admin/diagnostics       — Publishing failures, error categories, maintenance counts
+ *   POST /admin/maintenance/reset-stuck    — Reset stuck 'publishing' posts to 'failed'
+ *   POST /admin/maintenance/expire-stale-dms — Expire active DM convos older than 24h
+ *   POST /admin/maintenance/retry-failed/:id — Retry a specific failed post
  */
 
 const express = require('express');
@@ -1892,6 +1896,203 @@ router.post('/watchdog/resolve/:id', async (req, res) => {
     return res.status(500).json({ error: 'Failed to resolve event' });
   }
 });
+
+// ================================================================
+// DIAGNOSTICS — Publishing failures + maintenance actions (FEAT-020)
+// ================================================================
+
+// GET /admin/diagnostics
+// Returns: recent failed posts (last 7 days), stuck posts, stale DM conversations,
+// and counts for each maintenance action so the admin can see what needs attention.
+router.get('/diagnostics', async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Recent failed posts with user info
+    const { data: failedPosts } = await supabaseAdmin
+      .from('posts')
+      .select('id, user_id, platform, status, error_message, updated_at, scheduled_at, media_id')
+      .eq('status', 'failed')
+      .gte('updated_at', sevenDaysAgo)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+
+    // Posts currently stuck in 'publishing'
+    const { data: stuckPosts } = await supabaseAdmin
+      .from('posts')
+      .select('id, user_id, platform, updated_at')
+      .eq('status', 'publishing');
+
+    // Stale DM conversations (active for > 24 hours — messaging window expired)
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: staleDMs, count: staleDMCount } = await supabaseAdmin
+      .from('dm_conversations')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .lte('created_at', twentyFourHoursAgo);
+
+    // Categorize errors for the summary
+    const categories = {};
+    (failedPosts || []).forEach(p => {
+      const cat = categorizeError(p.error_message);
+      categories[cat] = (categories[cat] || 0) + 1;
+    });
+
+    // Look up user emails for failed posts (batch)
+    const userIds = [...new Set((failedPosts || []).map(p => p.user_id))];
+    let userMap = {};
+    if (userIds.length > 0) {
+      const { data: users } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id, brand_name')
+        .in('id', userIds);
+      (users || []).forEach(u => { userMap[u.id] = u.brand_name || u.id.slice(0, 8); });
+    }
+
+    // Attach user names to posts
+    const enrichedPosts = (failedPosts || []).map(p => ({
+      ...p,
+      user_name: userMap[p.user_id] || p.user_id.slice(0, 8),
+      error_category: categorizeError(p.error_message)
+    }));
+
+    return res.json({
+      failed_posts: enrichedPosts,
+      stuck_posts: stuckPosts || [],
+      stale_dm_count: staleDMCount || 0,
+      error_categories: categories,
+      summary: {
+        failed_7d: (failedPosts || []).length,
+        stuck_now: (stuckPosts || []).length,
+        stale_dms: staleDMCount || 0
+      }
+    });
+
+  } catch (err) {
+    console.error('[Admin] Diagnostics error:', err.message);
+    return res.status(500).json({ error: 'Failed to load diagnostics' });
+  }
+});
+
+// POST /admin/maintenance/reset-stuck
+// Resets posts stuck in 'publishing' for more than 15 minutes to 'failed'.
+router.post('/maintenance/reset-stuck', async (req, res) => {
+  try {
+    const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const { data: stale } = await supabaseAdmin
+      .from('posts')
+      .select('id')
+      .eq('status', 'publishing')
+      .lte('updated_at', fifteenMinAgo);
+
+    if (!stale || stale.length === 0) {
+      return res.json({ message: 'No stuck posts found', count: 0 });
+    }
+
+    const ids = stale.map(p => p.id);
+    await supabaseAdmin
+      .from('posts')
+      .update({ status: 'failed', error_message: 'Manually reset by admin — was stuck in publishing.' })
+      .in('id', ids);
+
+    console.log(`[Admin] Reset ${ids.length} stuck post(s) to failed`);
+    return res.json({ message: `Reset ${ids.length} stuck post(s)`, count: ids.length });
+
+  } catch (err) {
+    console.error('[Admin] Reset stuck error:', err.message);
+    return res.status(500).json({ error: 'Failed to reset stuck posts' });
+  }
+});
+
+// POST /admin/maintenance/expire-stale-dms
+// Marks active DM conversations older than 24 hours as expired.
+router.post('/maintenance/expire-stale-dms', async (req, res) => {
+  try {
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: stale } = await supabaseAdmin
+      .from('dm_conversations')
+      .select('id')
+      .eq('status', 'active')
+      .lte('created_at', twentyFourHoursAgo);
+
+    if (!stale || stale.length === 0) {
+      return res.json({ message: 'No stale DM conversations found', count: 0 });
+    }
+
+    const ids = stale.map(c => c.id);
+    await supabaseAdmin
+      .from('dm_conversations')
+      .update({ status: 'expired' })
+      .in('id', ids);
+
+    console.log(`[Admin] Expired ${ids.length} stale DM conversation(s)`);
+    return res.json({ message: `Expired ${ids.length} stale DM conversation(s)`, count: ids.length });
+
+  } catch (err) {
+    console.error('[Admin] Expire DMs error:', err.message);
+    return res.status(500).json({ error: 'Failed to expire stale DMs' });
+  }
+});
+
+// POST /admin/maintenance/retry-failed
+// Resets a specific failed post back to 'scheduled' so it retries on the next cycle.
+router.post('/maintenance/retry-failed/:id', async (req, res) => {
+  try {
+    const { data: post } = await supabaseAdmin
+      .from('posts')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .single();
+
+    if (!post || post.status !== 'failed') {
+      return res.status(400).json({ error: 'Post not found or not in failed state' });
+    }
+
+    await supabaseAdmin
+      .from('posts')
+      .update({
+        status: 'scheduled',
+        error_message: null,
+        scheduled_at: new Date().toISOString()
+      })
+      .eq('id', req.params.id);
+
+    // Trigger immediate publish scan
+    try {
+      const { publishQueue } = require('../queues');
+      await publishQueue.add('scan-and-publish', {}, { priority: 1, delay: 2000 });
+    } catch (_) {}
+
+    console.log(`[Admin] Retrying failed post ${req.params.id}`);
+    return res.json({ message: 'Post queued for retry' });
+
+  } catch (err) {
+    console.error('[Admin] Retry failed error:', err.message);
+    return res.status(500).json({ error: 'Failed to retry post' });
+  }
+});
+
+// ----------------------------------------------------------------
+// categorizeError — maps error_message text to a human-readable category
+// for the diagnostics dashboard. Pattern matching, no AI needed.
+// ----------------------------------------------------------------
+function categorizeError(msg) {
+  if (!msg) return 'Unknown';
+  const m = msg.toLowerCase();
+  if (m.includes('timed out'))                    return 'Timeout';
+  if (m.includes('ffmpeg'))                       return 'Video Processing';
+  if (m.includes('aspect ratio') || m.includes('36003')) return 'Image Format';
+  if (m.includes('9007') || m.includes('not ready'))     return 'Container Polling';
+  if (m.includes('token') || m.includes('190'))          return 'Token Expired';
+  if (m.includes('permission') || m.includes('100'))     return 'Permission Error';
+  if (m.includes('no') && m.includes('connection'))      return 'No Connection';
+  if (m.includes('media') && m.includes('not found'))    return 'Missing Media';
+  if (m.includes('not ready') || m.includes('process'))  return 'Media Not Ready';
+  if (m.includes('duplicate') || m.includes('506'))      return 'Duplicate Content';
+  if (m.includes('rate') || m.includes('limit'))         return 'Rate Limited';
+  if (m.includes('351'))                                 return 'Video Upload Error';
+  return 'Other';
+}
 
 module.exports = router;
 
