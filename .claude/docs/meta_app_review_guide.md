@@ -90,7 +90,7 @@ This is the user flow that the reviewer needs to understand:
 **Important details for the reviewer:**
 - We only DM people who comment a specific keyword — we never send unsolicited messages
 - Each person only gets ONE DM per automation (dedup guard prevents spam)
-- We enforce a daily DM limit per account (50 for Instagram, 200 for Facebook) to comply with Meta's spam policies
+- We enforce daily DM limits per account (50/day for Instagram, 200/day for Facebook) to comply with Meta's spam policies
 - The DM is always a response to a user-initiated action (their comment)
 - We use the modern `POST /{page_id}/messages` endpoint with `recipient.comment_id` (not the deprecated `/{comment_id}/private_replies`)
 
@@ -105,7 +105,8 @@ This is the user flow that the reviewer needs to understand:
 | `/{page_id}/videos` | POST | Publish video posts to Facebook Page (multipart upload) |
 | `/{ig_user_id}/media` | POST | Create Instagram media container (step 1 of 2) |
 | `/{ig_user_id}/media_publish` | POST | Publish Instagram media (step 2 of 2) |
-| `/{page_id}/messages` | POST | Send DM to commenter via Messenger (Private Reply) |
+| `/{page_id}/messages` | POST | Send DM to commenter via Messenger — Facebook (Private Reply) |
+| `/me/messages` | POST | Send DM to commenter via Instagram Messaging (Private Reply) |
 | `/{page_id}/subscribed_apps` | POST | Subscribe Page to webhooks for real-time comment/message events |
 | `/me/accounts` | GET | List user's Facebook Pages during OAuth |
 | `/{page_id}` | GET | Get Page details (name, ID, linked Instagram) |
@@ -136,12 +137,13 @@ This is the user flow that the reviewer needs to understand:
 
 | Feature | Facebook | Instagram |
 |---------|----------|-----------|
-| OAuth / Connect | Working | Working |
+| OAuth / Connect | Working | Working (via FB OAuth) |
 | Publishing (text) | Working | N/A |
 | Publishing (image) | Working | Working |
-| Publishing (video) | Working | Not yet tested |
-| Comment webhooks | Working | Untested (needs App Review?) |
-| DM automation | Working | Untested (needs App Review?) |
+| Publishing (video) | Working | Working (Reels) |
+| Comment webhooks | Working | Working |
+| DM automation (single-step) | Working | Working |
+| DM automation (multi-step) | Working | Working (confirmed 2026-03-28) |
 
 ---
 
@@ -168,9 +170,9 @@ The reviewer will likely want a screencast showing how the app uses each permiss
 
 ## Known Blockers Before App Review
 
-1. **Instagram DM testing** — Need to verify Instagram comment webhooks arrive (ISSUE-024). May need to fix Sharon's tester role or complete "Instagram Business Login" setup in the portal first.
-2. **Threads OAuth** — Broken due to Meta bug (ISSUE-021). Not needed for initial App Review.
-3. **Screencast recording** — Need to record the demo showing all features working end-to-end.
+1. ~~**Instagram DM testing**~~ — **RESOLVED (2026-03-28).** Full 3-step multi-step DM flow confirmed working on Instagram.
+2. **Threads OAuth** — Broken due to Meta bug (ISSUE-021). Not needed for initial App Review — exclude Threads from submission.
+3. **Screencast recording** — Need to record the demo showing all features working end-to-end. See "Screencast / Demo Script" section above.
 
 ---
 
