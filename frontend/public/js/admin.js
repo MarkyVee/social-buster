@@ -3916,15 +3916,25 @@ async function loadAdminDiagnostics() {
 
       <!-- Maintenance Actions -->
       <div class="admin-section-title">Maintenance</div>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;font-size:13px;line-height:1.8;">
+        <strong>Order of execution when things look wrong:</strong>
+        <ol style="margin:8px 0 0 0;padding-left:20px;">
+          <li><strong>Reset Stuck Posts</strong> — clears posts frozen in "publishing" state (stuck &gt; 15 min). This unblocks the queue so new posts can process.</li>
+          <li><strong>Review failed posts below</strong> — check the Error Category column. Token Expired = user needs to reconnect. Video Processing / Timeout = retry may work. Permission Error = check OAuth scopes.</li>
+          <li><strong>Retry</strong> individual failed posts worth retrying (one-off errors, timeouts). Don't retry Token Expired until user reconnects.</li>
+          <li><strong>Expire Stale DMs</strong> — cleans up DM conversations that have been active &gt; 24 hours (Meta's messaging window has closed, these can never complete).</li>
+          <li><strong>Refresh</strong> — reload this panel to verify everything is clean.</li>
+        </ol>
+      </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:24px;">
         <button class="btn btn-sm" onclick="adminResetStuckPosts()">
-          Reset Stuck Posts (${data.summary.stuck_now})
+          1. Reset Stuck Posts (${data.summary.stuck_now})
         </button>
         <button class="btn btn-sm" onclick="adminExpireStaleDMs()">
-          Expire Stale DMs (${data.summary.stale_dms})
+          4. Expire Stale DMs (${data.summary.stale_dms})
         </button>
         <button class="btn btn-sm" onclick="loadAdminDiagnostics(); document.getElementById('admin-tab-diagnostics').dataset.loaded='';">
-          Refresh
+          5. Refresh
         </button>
       </div>
 
