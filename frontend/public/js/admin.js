@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 44;
+const ADMIN_JS_VERSION = 45;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -831,6 +831,8 @@ async function loadAdminUserDetail(userId) {
   try {
     const data = await apiFetch(`/admin/users/${userId}`);
     detailEl.innerHTML = buildUserDetailHtml(data);
+    // Load activity summary into the placeholder rendered by buildUserDetailHtml
+    loadAdminUserActivitySummary(userId);
   } catch (err) {
     detailEl.innerHTML = `<div class="admin-error">Failed to load user: ${escapeAdminHtml(err.message)}</div>`;
   }
@@ -882,9 +884,11 @@ function buildUserDetailHtml(data) {
         </table>
       </div>
 
-      <!-- Activity log shortcut -->
-      <div style="margin-top:16px;">
-        <button class="btn btn-sm" onclick="adminViewUserActivity('${p.user_id}')">📋 View Activity Log</button>
+      <!-- Activity summary + shortcut -->
+      <div class="admin-section-title" style="margin-top:20px;">Recent Activity</div>
+      <div id="admin-activity-summary-${p.user_id}" style="margin-top:8px;color:var(--text-secondary);font-size:13px;">Loading…</div>
+      <div style="margin-top:8px;">
+        <button class="btn btn-sm" onclick="adminViewUserActivity('${p.user_id}')">📋 View Full Activity Log</button>
       </div>
 
       <!-- Quick override form -->
@@ -904,6 +908,64 @@ function buildUserDetailHtml(data) {
         <span id="admin-save-status-${p.user_id}" class="admin-muted"></span>
       </div>
     </div>`;
+}
+
+// ----------------------------------------------------------------
+// loadAdminUserActivitySummary
+// Fetches the 10 most recent activity events for a user and renders
+// a compact inline summary inside the user detail card.
+// Non-fatal — if it fails the rest of the card is unaffected.
+// ----------------------------------------------------------------
+async function loadAdminUserActivitySummary(userId) {
+  const el = document.getElementById(`admin-activity-summary-${userId}`);
+  if (!el) return;
+
+  try {
+    const res = await apiFetch(`/admin/activity/${userId}`);
+    const events = (res.rows || []).slice(0, 10);
+
+    if (events.length === 0) {
+      el.innerHTML = '<span style="color:var(--text-secondary);">No activity recorded yet.</span>';
+      return;
+    }
+
+    // Build a quick count by event type
+    const counts = {};
+    events.forEach(e => { counts[e.event_type] = (counts[e.event_type] || 0) + 1; });
+
+    // Last login timestamp
+    const lastLogin = events.find(e => e.event_type === 'login');
+    const lastSeen  = lastLogin
+      ? new Date(lastLogin.created_at).toLocaleString()
+      : new Date(events[0].created_at).toLocaleString();
+
+    // Summary badges — one per event type with count
+    const badgesHtml = Object.entries(counts)
+      .map(([type, n]) => `<span class="admin-badge" style="margin-right:4px;">${escapeAdminHtml(type)}: ${n}</span>`)
+      .join('');
+
+    // Last 5 events as a compact list
+    const listHtml = events.slice(0, 5).map(e => {
+      const meta = e.metadata && Object.keys(e.metadata).length > 0
+        ? ' — ' + Object.entries(e.metadata).map(([k, v]) => `${k}: ${escapeAdminHtml(String(v))}`).join(', ')
+        : '';
+      return `<div style="padding:3px 0;border-bottom:1px solid #f1f5f9;font-size:12px;">
+        <span style="color:var(--text-secondary);">${new Date(e.created_at).toLocaleString()}</span>
+        &nbsp;<strong>${escapeAdminHtml(e.event_type)}</strong>${escapeAdminHtml(meta)}
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="margin-bottom:8px;">
+        <strong>Last seen:</strong> ${escapeAdminHtml(lastSeen)}<br/>
+        <div style="margin-top:4px;">${badgesHtml}</div>
+      </div>
+      <div style="border:1px solid #e2e8f0;border-radius:6px;padding:8px;background:#f8fafc;">
+        ${listHtml}
+      </div>`;
+  } catch (err) {
+    if (el) el.innerHTML = '<span style="color:#ef4444;font-size:12px;">Could not load activity.</span>';
+  }
 }
 
 async function saveAdminUserOverride(userId) {
@@ -4752,7 +4814,7 @@ function renderLegacyMembersTable(data) {
       <td style="padding:8px 6px;text-align:center;">${m.cohort_year || '—'}</td>
       <td style="padding:8px 6px;text-align:right;">${fmt(m.price_monthly)}/mo</td>
       <td style="padding:8px 6px;font-family:monospace;font-size:11px;">${escapeAdminHtml(m.stripe_price_id || '—')}</td>
-      <td style="padding:8px 6px;text-align:center;">${statusBadge(m.subscription_status)}</td>
+      <td style="padding:8px 6px;text-align:center;">${statusBadge(m.stripe_status)}</td>
       <td style="padding:8px 6px;font-size:11px;color:var(--text-secondary);">${m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</td>
       <td style="padding:8px 6px;font-size:11px;">
         ${m.referral_slug

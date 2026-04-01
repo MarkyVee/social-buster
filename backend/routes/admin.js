@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 44;
+const ADMIN_JS_VERSION = 45;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2404,13 +2404,16 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
     const from  = (page - 1) * limit;
     const q     = req.query.q || '';
 
+    // user_profiles holds the tier (including admin overrides).
+    // subscriptions holds the live Stripe status + subscription ID.
+    // We query both and merge so the admin sees the full picture.
     let query = supabaseAdmin
       .from('user_profiles')
       .select(`
         user_id, full_name, email, cohort_year,
-        subscription_status, subscription_tier,
-        stripe_subscription_id, created_at,
-        affiliate_suspended, affiliate_suspended_reason
+        subscription_tier, created_at,
+        affiliate_suspended, affiliate_suspended_reason,
+        subscriptions ( plan, status, stripe_subscription_id, current_period_end )
       `, { count: 'exact' })
       .eq('subscription_tier', 'legacy')
       .order('created_at', { ascending: false })
@@ -2425,6 +2428,9 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
 
     // For each member, get their cohort price details + referral slug
     const enriched = await Promise.all((members || []).map(async (m) => {
+      // Flatten the joined subscriptions row (Supabase returns it as an array)
+      const sub = Array.isArray(m.subscriptions) ? m.subscriptions[0] : m.subscriptions;
+
       // Get cohort price details for their signup year
       let cohortDetails = null;
       if (m.cohort_year) {
@@ -2444,10 +2450,23 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
         .single();
 
       return {
-        ...m,
-        price_monthly:   cohortDetails?.price_monthly  || null,
-        stripe_price_id: cohortDetails?.stripe_price_id || null,
-        referral_slug:   slugRow?.slug || null,
+        user_id:                  m.user_id,
+        full_name:                m.full_name,
+        email:                    m.email,
+        cohort_year:              m.cohort_year,
+        subscription_tier:        m.subscription_tier,
+        created_at:               m.created_at,
+        affiliate_suspended:      m.affiliate_suspended,
+        affiliate_suspended_reason: m.affiliate_suspended_reason,
+        // Flattened from joined subscriptions table (live Stripe data)
+        stripe_status:            sub?.status               || null,
+        stripe_subscription_id:   sub?.stripe_subscription_id || null,
+        current_period_end:       sub?.current_period_end   || null,
+        // From legacy_cohorts (their signup-year pricing)
+        price_monthly:            cohortDetails?.price_monthly  || null,
+        stripe_price_id:          cohortDetails?.stripe_price_id || null,
+        // Affiliate referral slug
+        referral_slug:            slugRow?.slug || null,
       };
     }));
 
