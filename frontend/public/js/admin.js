@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 35;
+const ADMIN_JS_VERSION = 36;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -75,6 +75,12 @@ function renderAdminDashboard(el) {
         Diagnostics
         <span id="admin-diag-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
       </button>
+      <button class="admin-tab"        data-tab="legacy"      onclick="switchAdminTab('legacy')">Legacy</button>
+      <button class="admin-tab"        data-tab="affiliates"  onclick="switchAdminTab('affiliates')">
+        Affiliates
+        <span id="admin-fraud-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
+      </button>
+      <button class="admin-tab"        data-tab="payouts"     onclick="switchAdminTab('payouts')">Payouts</button>
     </div>
 
     <!-- Tab panels -->
@@ -90,6 +96,9 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-watchdog"   class="admin-panel hidden"></div>
     <div id="admin-tab-issues"    class="admin-panel hidden"></div>
     <div id="admin-tab-diagnostics" class="admin-panel hidden"></div>
+    <div id="admin-tab-legacy"      class="admin-panel hidden"></div>
+    <div id="admin-tab-affiliates"  class="admin-panel hidden"></div>
+    <div id="admin-tab-payouts"     class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -194,6 +203,9 @@ function switchAdminTab(tab) {
   if (tab === 'watchdog')     loadAdminWatchdog();
   if (tab === 'issues')       loadAdminIssues();
   if (tab === 'diagnostics')  loadAdminDiagnostics();
+  if (tab === 'legacy')       loadAdminLegacy();
+  if (tab === 'affiliates')   loadAdminAffiliates();
+  if (tab === 'payouts')      loadAdminPayouts();
 }
 
 // ================================================================
@@ -4500,5 +4512,724 @@ async function saveEvalSettings() {
     showToast('Evaluation settings saved.', 'success');
   } catch (err) {
     alert('Failed: ' + err.message);
+  }
+}
+
+// ================================================================
+// LEGACY TAB
+// Slot cap editor + cohort manager.
+// ================================================================
+
+async function loadAdminLegacy() {
+  const panel = document.getElementById('admin-tab-legacy');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const [slots, cohorts] = await Promise.all([
+      apiFetch('/admin/legacy/slots'),
+      apiFetch('/admin/legacy/cohorts'),
+    ]);
+
+    const usedPct = slots.slotCap > 0 ? Math.round((slots.slotsUsed / slots.slotCap) * 100) : 0;
+
+    panel.innerHTML = `
+      <h2 style="margin:0 0 20px;">Legacy Membership</h2>
+
+      <!-- ---- Slot Status ---- -->
+      <div class="admin-card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 12px;">Slot Cap</h3>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin-bottom:16px;">
+          <div style="text-align:center;">
+            <div style="font-size:32px;font-weight:700;color:#6366f1;">${slots.slotsUsed}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">Slots Used</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:32px;font-weight:700;color:#10b981;">${slots.slotsRemaining}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">Slots Remaining</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:32px;font-weight:700;">${slots.slotCap}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">Total Cap</div>
+          </div>
+        </div>
+
+        <!-- Progress bar -->
+        <div style="background:var(--bg-secondary);border-radius:8px;height:10px;margin-bottom:16px;">
+          <div style="background:${usedPct >= 90 ? '#ef4444' : '#6366f1'};width:${usedPct}%;height:10px;border-radius:8px;transition:width 0.3s;"></div>
+        </div>
+
+        <!-- Cap editor -->
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label style="font-size:13px;font-weight:600;">Change cap:</label>
+          <input id="legacy-new-cap" type="number" min="1" value="${slots.slotCap}"
+            style="width:100px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+          <button onclick="adminUpdateSlotCap()" style="padding:6px 16px;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
+            Update Cap
+          </button>
+        </div>
+      </div>
+
+      <!-- ---- Cohort Manager ---- -->
+      <div class="admin-card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 12px;">Cohort Years</h3>
+        <p style="font-size:13px;color:var(--text-secondary);margin:0 0 16px;">
+          Each cohort year locks in a Stripe Price ID. Legacy members never move to a new cohort price —
+          they keep the price from their signup year forever.
+        </p>
+
+        <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:8px 4px;">Year</th>
+              <th style="text-align:left;padding:8px 4px;">Monthly Price</th>
+              <th style="text-align:left;padding:8px 4px;">Stripe Price ID</th>
+              <th style="text-align:left;padding:8px 4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(cohorts.cohorts || []).map(c => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;font-weight:600;">${c.cohort_year}</td>
+                <td style="padding:8px 4px;">$${(c.price_monthly / 100).toFixed(2)}/mo</td>
+                <td style="padding:8px 4px;font-family:monospace;font-size:12px;">${c.stripe_price_id}</td>
+                <td style="padding:8px 4px;">
+                  ${c.is_current
+                    ? '<span style="padding:2px 10px;background:#d1fae5;color:#065f46;border-radius:99px;font-size:11px;font-weight:600;">Current</span>'
+                    : '<span style="padding:2px 10px;background:#f3f4f6;color:#6b7280;border-radius:99px;font-size:11px;">Past</span>'}
+                </td>
+              </tr>
+            `).join('') || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-secondary);">No cohorts yet.</td></tr>'}
+          </tbody>
+        </table>
+
+        <!-- Add new cohort -->
+        <details>
+          <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#6366f1;padding:4px 0;">+ Add New Cohort Year</summary>
+          <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;align-items:end;flex-wrap:wrap;">
+            <div>
+              <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px;">Year</label>
+              <input id="cohort-year" type="number" placeholder="2027" min="2025"
+                style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px;">Monthly (cents)</label>
+              <input id="cohort-price" type="number" placeholder="5900"
+                style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px;">Stripe Price ID</label>
+              <input id="cohort-price-id" type="text" placeholder="price_xxxxx"
+                style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+            </div>
+            <button onclick="adminAddCohort()" style="padding:6px 16px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap;">
+              Add &amp; Set Current
+            </button>
+          </div>
+          <p style="font-size:11px;color:#f59e0b;margin:8px 0 0;">⚠️ Adding a cohort sets it as current and locks new Legacy signups to this year's price. Existing members are unaffected.</p>
+        </details>
+      </div>
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#ef4444;padding:20px;">Failed to load Legacy data: ${err.message}</div>`;
+  }
+}
+
+async function adminUpdateSlotCap() {
+  const val = parseInt(document.getElementById('legacy-new-cap')?.value, 10);
+  if (!val || val < 1) return showToast('Enter a valid number.', 'error');
+  try {
+    await apiFetch('/admin/legacy/slots', { method: 'PUT', body: JSON.stringify({ slot_cap: val }) });
+    showToast('Slot cap updated.', 'success');
+    // Reload the tab
+    const panel = document.getElementById('admin-tab-legacy');
+    if (panel) { delete panel.dataset.loaded; loadAdminLegacy(); }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function adminAddCohort() {
+  const year    = parseInt(document.getElementById('cohort-year')?.value, 10);
+  const price   = parseInt(document.getElementById('cohort-price')?.value, 10);
+  const priceId = document.getElementById('cohort-price-id')?.value?.trim();
+
+  if (!year || !price || !priceId) return showToast('All three fields are required.', 'error');
+
+  try {
+    await apiFetch('/admin/legacy/cohorts', {
+      method: 'POST',
+      body: JSON.stringify({ cohort_year: year, price_monthly: price, stripe_price_id: priceId }),
+    });
+    showToast('Cohort added and set as current.', 'success');
+    const panel = document.getElementById('admin-tab-legacy');
+    if (panel) { delete panel.dataset.loaded; loadAdminLegacy(); }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// ================================================================
+// AFFILIATES TAB
+// List of all Legacy members with earnings summary.
+// Click a row to open the full detail view.
+// ================================================================
+
+async function loadAdminAffiliates(page = 1) {
+  const panel = document.getElementById('admin-tab-affiliates');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const [data, fraudData] = await Promise.all([
+      apiFetch(`/admin/affiliates?page=${page}&limit=25`),
+      apiFetch('/admin/fraud-flags'),
+    ]);
+
+    // Update fraud badge
+    const fraudBadge = document.getElementById('admin-fraud-badge');
+    if (fraudBadge) {
+      if (fraudData.fraudFlags?.length > 0) {
+        fraudBadge.textContent = fraudData.fraudFlags.length;
+        fraudBadge.style.display = 'inline';
+      } else {
+        fraudBadge.style.display = 'none';
+      }
+    }
+
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+    const totalPages = Math.ceil((data.total || 0) / 25);
+
+    panel.innerHTML = `
+      <h2 style="margin:0 0 20px;">Affiliates <span style="font-size:14px;color:var(--text-secondary);font-weight:400;">(${data.total || 0} Legacy members)</span></h2>
+
+      <!-- Fraud flags alert -->
+      ${fraudData.fraudFlags?.length > 0 ? `
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#991b1b;font-weight:600;">⚠️ ${fraudData.fraudFlags.length} fraud flag${fraudData.fraudFlags.length > 1 ? 's' : ''} need review</span>
+          <button onclick="adminShowFraudFlags()" style="padding:4px 12px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">
+            Review Flags
+          </button>
+        </div>
+      ` : ''}
+
+      <!-- Search -->
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <input id="aff-search" type="text" placeholder="Search by email or name..."
+          style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;"
+          onkeydown="if(event.key==='Enter') adminSearchAffiliates()">
+        <button onclick="adminSearchAffiliates()" style="padding:8px 16px;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Search</button>
+        <button onclick="loadAdminAffiliates(1)" style="padding:8px 16px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;">Reset</button>
+      </div>
+
+      <!-- Table -->
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);color:var(--text-secondary);">
+            <th style="text-align:left;padding:8px 6px;">Member</th>
+            <th style="text-align:center;padding:8px 6px;">Cohort</th>
+            <th style="text-align:center;padding:8px 6px;">Active Refs</th>
+            <th style="text-align:right;padding:8px 6px;">Pending</th>
+            <th style="text-align:right;padding:8px 6px;">Eligible</th>
+            <th style="text-align:right;padding:8px 6px;">Lifetime</th>
+            <th style="text-align:center;padding:8px 6px;">Connect</th>
+            <th style="text-align:center;padding:8px 6px;">Status</th>
+            <th style="padding:8px 6px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(data.affiliates || []).map(aff => `
+            <tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="adminViewAffiliate('${aff.user_id}')">
+              <td style="padding:8px 6px;">
+                <div style="font-weight:600;">${aff.display_name || '—'}</div>
+                <div style="font-size:11px;color:var(--text-secondary);">${aff.email || ''}</div>
+              </td>
+              <td style="padding:8px 6px;text-align:center;">${aff.cohort_year || '—'}</td>
+              <td style="padding:8px 6px;text-align:center;font-weight:600;">${aff.activeReferrals}</td>
+              <td style="padding:8px 6px;text-align:right;">${fmt(aff.pendingEarnings)}</td>
+              <td style="padding:8px 6px;text-align:right;color:#10b981;font-weight:600;">${fmt(aff.eligibleEarnings)}</td>
+              <td style="padding:8px 6px;text-align:right;">${fmt(aff.lifetimeEarnings)}</td>
+              <td style="padding:8px 6px;text-align:center;">
+                ${aff.stripe_connect_onboarded_at
+                  ? '<span style="color:#10b981;font-size:16px;" title="Connected">✓</span>'
+                  : '<span style="color:#9ca3af;font-size:16px;" title="Not connected">–</span>'}
+              </td>
+              <td style="padding:8px 6px;text-align:center;">
+                ${aff.affiliate_suspended
+                  ? '<span style="padding:2px 8px;background:#fee2e2;color:#991b1b;border-radius:99px;font-size:11px;font-weight:600;">Suspended</span>'
+                  : '<span style="padding:2px 8px;background:#d1fae5;color:#065f46;border-radius:99px;font-size:11px;font-weight:600;">Active</span>'}
+              </td>
+              <td style="padding:8px 6px;">
+                <button onclick="event.stopPropagation();adminViewAffiliate('${aff.user_id}')"
+                  style="padding:3px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:12px;">
+                  View
+                </button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--text-secondary);">No Legacy members yet.</td></tr>'}
+        </tbody>
+      </table>
+
+      <!-- Pagination -->
+      ${totalPages > 1 ? `
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:16px;">
+          ${page > 1 ? `<button onclick="loadAdminAffiliates(${page - 1})" class="btn btn-sm">← Prev</button>` : ''}
+          <span style="padding:6px 12px;font-size:13px;color:var(--text-secondary);">Page ${page} of ${totalPages}</span>
+          ${page < totalPages ? `<button onclick="loadAdminAffiliates(${page + 1})" class="btn btn-sm">Next →</button>` : ''}
+        </div>
+      ` : ''}
+
+      <!-- Fraud flags panel (hidden until Review Flags clicked) -->
+      <div id="admin-fraud-panel" style="display:none;margin-top:24px;">
+        <h3 style="margin:0 0 12px;color:#dc2626;">🚩 Fraud Flags</h3>
+        ${(fraudData.fraudFlags || []).map(f => `
+          <div style="border:1px solid #fecaca;border-radius:8px;padding:14px;margin-bottom:10px;background:#fef2f2;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+              <div style="font-size:13px;">
+                <div style="font-weight:600;margin-bottom:4px;">Referral ID: <code>${f.id.slice(0, 8)}…</code></div>
+                <div>Reason: <strong>${f.fraud_flag_reason || '—'}</strong></div>
+                <div style="color:var(--text-secondary);font-size:12px;margin-top:4px;">
+                  IP at signup: ${f.ip_at_signup || '—'} · Cookie IP: ${f.cookie_ip || '—'} · Flagged: ${new Date(f.fraud_flagged_at).toLocaleDateString()}
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;flex-shrink:0;">
+                <button onclick="adminResolveFraud('${f.id}','clear')" style="padding:5px 12px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">
+                  Clear (False Positive)
+                </button>
+                <button onclick="adminResolveFraud('${f.id}','confirm')" style="padding:5px 12px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">
+                  Confirm Fraud
+                </button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#ef4444;padding:20px;">Failed to load affiliates: ${err.message}</div>`;
+  }
+}
+
+function adminShowFraudFlags() {
+  const p = document.getElementById('admin-fraud-panel');
+  if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+
+async function adminSearchAffiliates() {
+  const q = document.getElementById('aff-search')?.value?.trim();
+  const panel = document.getElementById('admin-tab-affiliates');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Searching…</div>`;
+  try {
+    const data = await apiFetch(`/admin/affiliates?q=${encodeURIComponent(q)}&limit=25`);
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+    panel.innerHTML = `
+      <h2 style="margin:0 0 16px;">Search results for "${q}" <span style="font-size:14px;font-weight:400;color:var(--text-secondary);">(${data.total} found)</span></h2>
+      <button onclick="loadAdminAffiliates(1)" style="margin-bottom:16px;padding:6px 14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;">← Back to all affiliates</button>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tbody>
+          ${(data.affiliates || []).map(aff => `
+            <tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="adminViewAffiliate('${aff.user_id}')">
+              <td style="padding:8px 6px;">
+                <div style="font-weight:600;">${aff.display_name || '—'}</div>
+                <div style="font-size:11px;color:var(--text-secondary);">${aff.email}</div>
+              </td>
+              <td style="padding:8px 6px;text-align:right;">${aff.activeReferrals} active refs · ${fmt(aff.eligibleEarnings)} eligible</td>
+            </tr>
+          `).join('') || '<tr><td colspan="2" style="padding:16px;text-align:center;color:var(--text-secondary);">No results.</td></tr>'}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#ef4444;">Search failed: ${err.message}</div>`;
+  }
+}
+
+async function adminViewAffiliate(affiliateId) {
+  const panel = document.getElementById('admin-tab-affiliates');
+  if (!panel) return;
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading affiliate…</div>`;
+
+  try {
+    const d = await apiFetch(`/admin/affiliates/${affiliateId}`);
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+    const baseUrl = window.location.origin;
+
+    panel.innerHTML = `
+      <button onclick="const p=document.getElementById('admin-tab-affiliates');if(p){delete p.dataset.loaded;loadAdminAffiliates();}"
+        style="margin-bottom:16px;padding:6px 14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;">
+        ← Back to Affiliates
+      </button>
+
+      <!-- Profile header -->
+      <div class="admin-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+        <div>
+          <h2 style="margin:0 0 4px;">${d.profile.display_name || '(no name)'}</h2>
+          <div style="color:var(--text-secondary);font-size:13px;">${d.profile.email}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">
+            Cohort: ${d.profile.cohort_year || '—'} ·
+            Connect: ${d.profile.stripe_connect_onboarded_at ? '✓ Onboarded' : 'Not connected'} ·
+            Slug: ${d.slug?.slug ? `<code>${baseUrl}/ref/${d.slug.slug}</code>` : '—'}
+            ${d.slug?.is_custom ? ' (custom)' : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          ${d.profile.affiliate_suspended
+            ? `<button onclick="adminReinstate('${affiliateId}')" style="padding:7px 16px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Reinstate</button>
+               <div style="padding:6px 12px;background:#fee2e2;color:#991b1b;border-radius:6px;font-size:12px;font-weight:600;">Suspended: ${d.profile.affiliate_suspended_reason || ''}</div>`
+            : `<button onclick="adminSuspend('${affiliateId}')" style="padding:7px 16px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Suspend</button>`
+          }
+        </div>
+      </div>
+
+      <!-- Stats row -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px;">
+        ${[
+          ['Active Refs', d.referrals.filter(r => r.status === 'active').length, '#6366f1'],
+          ['Total Refs', d.referrals.length, ''],
+          ['Pending', fmt(d.earnings.filter(e=>e.status==='pending').reduce((s,e)=>s+e.commission_amount,0)), '#f59e0b'],
+          ['Eligible', fmt(d.earnings.filter(e=>e.status==='eligible').reduce((s,e)=>s+e.commission_amount,0)), '#10b981'],
+          ['Lifetime Earned', fmt(d.earnings.reduce((s,e)=>s+e.commission_amount,0)), ''],
+          ['Clawbacks', d.clawbacks.length, d.clawbacks.length > 0 ? '#ef4444' : ''],
+        ].map(([label, val, color]) => `
+          <div class="admin-card" style="text-align:center;padding:12px;">
+            <div style="font-size:22px;font-weight:700;${color ? `color:${color};` : ''}">${val}</div>
+            <div style="font-size:11px;color:var(--text-secondary);">${label}</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <!-- Referrals -->
+      <div class="admin-card" style="margin-bottom:16px;">
+        <h3 style="margin:0 0 12px;">Referrals (${d.referrals.length})</h3>
+        ${d.referrals.length === 0 ? '<p style="color:var(--text-secondary);font-size:13px;">None yet.</p>' : `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:6px 4px;">Signed Up</th>
+              <th style="text-align:left;padding:6px 4px;">Plan</th>
+              <th style="text-align:left;padding:6px 4px;">Status</th>
+              <th style="text-align:left;padding:6px 4px;">IP at Signup</th>
+              <th style="text-align:left;padding:6px 4px;">Cookie IP</th>
+            </tr></thead>
+            <tbody>
+              ${d.referrals.map(r => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;">${new Date(r.created_at).toLocaleDateString()}</td>
+                  <td style="padding:6px 4px;text-transform:capitalize;">${r.current_plan}</td>
+                  <td style="padding:6px 4px;">
+                    <span style="padding:1px 6px;border-radius:99px;font-size:11px;
+                      background:${r.status==='active'?'#d1fae5':r.status==='fraud_flagged'?'#fef3c7':'#fee2e2'};
+                      color:${r.status==='active'?'#065f46':r.status==='fraud_flagged'?'#92400e':'#991b1b'};">
+                      ${r.status}
+                    </span>
+                  </td>
+                  <td style="padding:6px 4px;font-size:11px;color:var(--text-secondary);">${r.ip_at_signup || '—'}</td>
+                  <td style="padding:6px 4px;font-size:11px;color:var(--text-secondary);">${r.cookie_ip || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <!-- Recent Earnings -->
+      <div class="admin-card" style="margin-bottom:16px;">
+        <h3 style="margin:0 0 12px;">Recent Earnings (last 50)</h3>
+        ${d.earnings.length === 0 ? '<p style="color:var(--text-secondary);font-size:13px;">None yet.</p>' : `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:6px 4px;">Month</th>
+              <th style="text-align:right;padding:6px 4px;">Invoice</th>
+              <th style="text-align:right;padding:6px 4px;">Commission</th>
+              <th style="text-align:left;padding:6px 4px;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${d.earnings.slice(0, 20).map(e => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;">${e.period_month}</td>
+                  <td style="padding:6px 4px;text-align:right;">${fmt(e.invoice_amount)}</td>
+                  <td style="padding:6px 4px;text-align:right;font-weight:600;color:#10b981;">${fmt(e.commission_amount)}</td>
+                  <td style="padding:6px 4px;font-size:11px;">${e.status}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <!-- Payouts -->
+      <div class="admin-card" style="margin-bottom:16px;">
+        <h3 style="margin:0 0 12px;">Payouts (${d.payouts.length})</h3>
+        ${d.payouts.length === 0 ? '<p style="color:var(--text-secondary);font-size:13px;">None yet.</p>' : `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:6px 4px;">Period</th>
+              <th style="text-align:right;padding:6px 4px;">Gross</th>
+              <th style="text-align:right;padding:6px 4px;">Net</th>
+              <th style="text-align:left;padding:6px 4px;">Status</th>
+              <th style="text-align:left;padding:6px 4px;">Hold Reason</th>
+            </tr></thead>
+            <tbody>
+              ${d.payouts.map(p => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;">${p.period_month}</td>
+                  <td style="padding:6px 4px;text-align:right;">${fmt(p.gross_amount)}</td>
+                  <td style="padding:6px 4px;text-align:right;font-weight:600;">${fmt(p.net_amount)}</td>
+                  <td style="padding:6px 4px;font-size:11px;">${p.status}</td>
+                  <td style="padding:6px 4px;font-size:11px;color:var(--text-secondary);">${p.hold_reason || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <!-- Clawbacks -->
+      ${d.clawbacks.length > 0 ? `
+        <div class="admin-card" style="margin-bottom:16px;border-left:3px solid #ef4444;">
+          <h3 style="margin:0 0 12px;color:#dc2626;">Clawbacks (${d.clawbacks.length})</h3>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <tbody>
+              ${d.clawbacks.map(c => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;">${new Date(c.created_at).toLocaleDateString()}</td>
+                  <td style="padding:6px 4px;">${c.reason}</td>
+                  <td style="padding:6px 4px;text-align:right;color:#ef4444;font-weight:600;">-${fmt(c.amount_reversed)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+
+      <!-- Status audit log -->
+      <div class="admin-card">
+        <h3 style="margin:0 0 12px;">Audit Log</h3>
+        ${d.statusLog.length === 0 ? '<p style="color:var(--text-secondary);font-size:13px;">No events yet.</p>' : `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <tbody>
+              ${d.statusLog.map(l => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;color:var(--text-secondary);">${new Date(l.created_at).toLocaleString()}</td>
+                  <td style="padding:6px 4px;font-weight:600;">${l.event_type}</td>
+                  <td style="padding:6px 4px;color:var(--text-secondary);">${l.reason || '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#ef4444;padding:20px;">Failed to load affiliate: ${err.message}</div>`;
+  }
+}
+
+async function adminSuspend(affiliateId) {
+  const reason = prompt('Suspension reason (required — will appear in audit log):');
+  if (!reason || reason.trim().length < 5) return;
+  try {
+    await apiFetch(`/admin/affiliates/${affiliateId}/suspend`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason: reason.trim() }),
+    });
+    showToast('Affiliate suspended.', 'success');
+    adminViewAffiliate(affiliateId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function adminReinstate(affiliateId) {
+  const reason = prompt('Reinstatement reason (required — will appear in audit log):');
+  if (!reason || reason.trim().length < 5) return;
+  try {
+    await apiFetch(`/admin/affiliates/${affiliateId}/reinstate`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason: reason.trim() }),
+    });
+    showToast('Affiliate reinstated.', 'success');
+    adminViewAffiliate(affiliateId);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function adminResolveFraud(referralId, action) {
+  const reason = prompt(`Reason for ${action === 'clear' ? 'clearing' : 'confirming'} this fraud flag:`);
+  if (!reason || reason.trim().length < 5) return;
+  try {
+    await apiFetch(`/admin/fraud-flags/${referralId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, reason: reason.trim() }),
+    });
+    showToast(action === 'clear' ? 'Flag cleared.' : 'Fraud confirmed — referral cancelled.', 'success');
+    const panel = document.getElementById('admin-tab-affiliates');
+    if (panel) { delete panel.dataset.loaded; loadAdminAffiliates(); }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// ================================================================
+// PAYOUTS TAB
+// Payout queue preview + manual trigger + clawbacks list.
+// ================================================================
+
+async function loadAdminPayouts() {
+  const panel = document.getElementById('admin-tab-payouts');
+  if (!panel) return;
+  panel.dataset.loaded = 'true';
+  panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
+
+  try {
+    const [queue, clawbacks] = await Promise.all([
+      apiFetch('/admin/payouts/queue'),
+      apiFetch('/admin/clawbacks?limit=25'),
+    ]);
+
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+    const MIN_PAYOUT = 5000; // $50 in cents
+    const totalEligible = queue.queue.reduce((s, a) => s + a.totalEligible, 0);
+
+    panel.innerHTML = `
+      <h2 style="margin:0 0 20px;">Payouts</h2>
+
+      <!-- ---- Next Run Preview ---- -->
+      <div class="admin-card" style="margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
+          <div>
+            <h3 style="margin:0 0 4px;">Next Payout Run</h3>
+            <p style="margin:0;font-size:13px;color:var(--text-secondary);">Runs automatically on the 5th of each month at 02:00 UTC. You can also trigger it manually.</p>
+          </div>
+          <button onclick="adminRunPayouts()" id="payout-run-btn"
+            style="padding:8px 20px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;">
+            ▶ Run Payouts Now
+          </button>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px;margin-bottom:16px;">
+          <div style="text-align:center;">
+            <div style="font-size:28px;font-weight:700;color:#6366f1;">${queue.count}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">Affiliates Ready</div>
+            <div style="font-size:11px;color:var(--text-secondary);">(≥$50 eligible)</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:28px;font-weight:700;color:#10b981;">${fmt(totalEligible)}</div>
+            <div style="font-size:12px;color:var(--text-secondary);">Total Eligible</div>
+          </div>
+        </div>
+
+        ${queue.count > 0 ? `
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+                <th style="text-align:left;padding:6px 4px;">Affiliate ID</th>
+                <th style="text-align:right;padding:6px 4px;">Eligible Amount</th>
+                <th style="text-align:right;padding:6px 4px;">Est. Net (after 10% reserve)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${queue.queue.map(a => `
+                <tr style="border-bottom:1px solid var(--border);">
+                  <td style="padding:6px 4px;font-family:monospace;font-size:11px;">${a.affiliateId}</td>
+                  <td style="padding:6px 4px;text-align:right;font-weight:600;">${fmt(a.totalEligible)}</td>
+                  <td style="padding:6px 4px;text-align:right;color:#10b981;">${fmt(Math.floor(a.totalEligible * 0.9))}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        ` : `<p style="color:var(--text-secondary);font-size:13px;margin:0;">No affiliates have reached the $50 minimum yet.</p>`}
+      </div>
+
+      <!-- ---- Clawbacks ---- -->
+      <div class="admin-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <h3 style="margin:0;">Recent Clawbacks</h3>
+          <span style="font-size:13px;color:var(--text-secondary);">${clawbacks.total || 0} total</span>
+        </div>
+        ${(clawbacks.clawbacks || []).length === 0
+          ? '<p style="color:var(--text-secondary);font-size:13px;margin:0;">No clawbacks yet.</p>'
+          : `
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+                  <th style="text-align:left;padding:6px 4px;">Date</th>
+                  <th style="text-align:left;padding:6px 4px;">Reason</th>
+                  <th style="text-align:left;padding:6px 4px;">Stripe Event</th>
+                  <th style="text-align:right;padding:6px 4px;">Amount</th>
+                  <th style="text-align:left;padding:6px 4px;">Applied to Payout</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${clawbacks.clawbacks.map(c => `
+                  <tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:6px 4px;">${new Date(c.created_at).toLocaleDateString()}</td>
+                    <td style="padding:6px 4px;text-transform:capitalize;">${c.reason}</td>
+                    <td style="padding:6px 4px;font-family:monospace;font-size:11px;color:var(--text-secondary);">${c.stripe_event_id?.slice(0,20)}…</td>
+                    <td style="padding:6px 4px;text-align:right;color:#ef4444;font-weight:600;">-${fmt(c.amount_reversed)}</td>
+                    <td style="padding:6px 4px;font-size:11px;color:var(--text-secondary);">
+                      ${c.deducted_from_payout_id ? 'Applied' : 'Pending deduction'}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `
+        }
+      </div>
+
+      <!-- Run result (shown after manual trigger) -->
+      <div id="payout-run-result" style="display:none;margin-top:16px;"></div>
+    `;
+
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#ef4444;padding:20px;">Failed to load payout data: ${err.message}</div>`;
+  }
+}
+
+async function adminRunPayouts() {
+  const btn = document.getElementById('payout-run-btn');
+  const result = document.getElementById('payout-run-result');
+  if (!btn) return;
+
+  if (!confirm('Run monthly payouts now? This will send real Stripe transfers to all eligible affiliates with ≥$50.')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Processing…';
+
+  try {
+    const data = await apiFetch('/admin/payouts/process', { method: 'POST' });
+
+    if (result) {
+      result.style.display = 'block';
+      result.innerHTML = `
+        <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:16px;">
+          <strong style="color:#065f46;">✓ Payout run complete</strong>
+          <ul style="margin:8px 0 0;padding-left:20px;font-size:13px;color:#065f46;">
+            <li>${data.processed} affiliates paid</li>
+            <li>${data.skipped} skipped (no Connect account or below minimum)</li>
+            ${data.errors > 0 ? `<li style="color:#dc2626;">${data.errors} errors — check server logs</li>` : ''}
+          </ul>
+        </div>
+      `;
+    }
+
+    // Reload to show updated queue
+    const panel = document.getElementById('admin-tab-payouts');
+    if (panel) { delete panel.dataset.loaded; loadAdminPayouts(); }
+
+  } catch (err) {
+    if (result) {
+      result.style.display = 'block';
+      result.innerHTML = `<div style="background:#fee2e2;border-radius:8px;padding:16px;color:#991b1b;font-size:13px;"><strong>Payout run failed:</strong> ${err.message}</div>`;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Payouts Now'; }
   }
 }

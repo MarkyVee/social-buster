@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 35;
+const ADMIN_JS_VERSION = 36;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
