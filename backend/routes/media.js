@@ -612,7 +612,7 @@ router.get('/providers', standardLimiter, async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('cloud_connections')
-      .select('id, provider, provider_email, provider_user_id, last_scanned_at, connected_at')
+      .select('id, provider, provider_email, provider_user_id, last_scanned_at, connected_at, token_expires_at')
       .eq('user_id', req.userId);
 
     if (error) throw new Error(error.message);

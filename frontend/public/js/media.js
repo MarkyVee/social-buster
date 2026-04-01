@@ -200,6 +200,11 @@ async function loadProviders() {
       ? new Date(conn.last_scanned_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
       : null;
 
+    // Check if the token is expired or expiring within 24 hours
+    const tokenExpiry   = conn?.token_expires_at ? new Date(conn.token_expires_at) : null;
+    const tokenExpired  = tokenExpiry && tokenExpiry < new Date();
+    const tokenExpiring = tokenExpiry && !tokenExpired && tokenExpiry < new Date(Date.now() + 24 * 60 * 60 * 1000);
+
     if (!def.supported) {
       return `
         <div class="provider-card" style="opacity:0.55;">
@@ -232,7 +237,7 @@ async function loadProviders() {
           <div class="provider-icon">${def.icon}</div>
           <div class="provider-info" style="flex:1;">
             <div class="provider-name">${def.label}</div>
-            <div class="provider-status">✅ ${escapeHtml(conn.provider_email || 'Connected')}</div>
+            <div class="provider-status">${tokenExpired ? '🔴' : '✅'} ${escapeHtml(conn.provider_email || 'Connected')}</div>
             ${hasFolder
               ? `<div class="text-muted text-xs" style="margin-top:2px;">📂 Folder linked${lastScanned ? ' · Scanned ' + lastScanned : ''}</div>`
               : `<div class="text-muted text-xs" style="margin-top:2px;">⚠️ No folder selected yet</div>`
@@ -240,6 +245,22 @@ async function loadProviders() {
           </div>
           <button class="btn btn-danger btn-xs" onclick="disconnectProvider('${def.id}', '${def.label}')">Disconnect</button>
         </div>
+
+        ${tokenExpired ? `
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:10px 12px;margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-weight:600;color:#dc2626;font-size:13px;">🔴 Google Drive disconnected</div>
+            <div style="color:#b91c1c;font-size:12px;margin-top:2px;">Your connection expired. Media scanning and video probing won't work until you reconnect.</div>
+          </div>
+          <button class="btn btn-sm" style="background:#dc2626;color:#fff;border:none;white-space:nowrap;" onclick="connectProvider('${def.id}')">Reconnect</button>
+        </div>` : tokenExpiring ? `
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <div>
+            <div style="font-weight:600;color:#d97706;font-size:13px;">⚠️ Google Drive expiring soon</div>
+            <div style="color:#b45309;font-size:12px;margin-top:2px;">Your connection expires in less than 24 hours. Reconnect now to avoid interruptions.</div>
+          </div>
+          <button class="btn btn-sm" style="background:#d97706;color:#fff;border:none;white-space:nowrap;" onclick="connectProvider('${def.id}')">Reconnect</button>
+        </div>` : ''}
 
         ${hasFolder
           ? `<div style="display:flex;gap:6px;margin-top:10px;">

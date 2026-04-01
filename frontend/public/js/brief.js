@@ -1412,17 +1412,29 @@ async function openMediaPicker(postId) {
   // to the standard list (sorted by catalogued_at).
   let mediaItems = [];
   let isRanked   = false;
+  let driveExpired = false;
   try {
-    if (briefContext && (briefContext.post_type || briefContext.platform)) {
-      const data = await apiFetch('/media/ranked', {
-        method: 'POST',
-        body:   JSON.stringify(briefContext)
-      });
-      mediaItems = data.media || [];
-      isRanked   = true;
+    const [mediaResult, providersResult] = await Promise.allSettled([
+      briefContext && (briefContext.post_type || briefContext.platform)
+        ? apiFetch('/media/ranked', { method: 'POST', body: JSON.stringify(briefContext) })
+        : apiFetch('/media'),
+      apiFetch('/media/providers')
+    ]);
+
+    if (mediaResult.status === 'fulfilled') {
+      mediaItems = mediaResult.value.media || [];
+      isRanked   = !!(briefContext && (briefContext.post_type || briefContext.platform));
     } else {
-      const data = await apiFetch('/media');
-      mediaItems = data.media || [];
+      showAlert('posts-alerts', `Could not load media library: ${mediaResult.reason?.message}`, 'error');
+      return;
+    }
+
+    // Check if Google Drive token is expired
+    if (providersResult.status === 'fulfilled') {
+      const drive = (providersResult.value.providers || []).find(p => p.provider === 'google_drive');
+      if (drive?.token_expires_at && new Date(drive.token_expires_at) < new Date()) {
+        driveExpired = true;
+      }
     }
   } catch (err) {
     showAlert('posts-alerts', `Could not load media library: ${err.message}`, 'error');
@@ -1454,6 +1466,14 @@ async function openMediaPicker(postId) {
     <div class="publish-modal media-picker-modal" role="dialog" aria-modal="true" aria-label="Select media">
       <div class="publish-modal-title">📎 Attach Media</div>
       <div class="publish-modal-sub">${subText}</div>
+      ${driveExpired ? `
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin:8px 0;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <div>
+          <div style="font-weight:600;color:#dc2626;font-size:13px;">🔴 Google Drive disconnected</div>
+          <div style="color:#b91c1c;font-size:12px;margin-top:2px;">Your Drive connection expired. Existing media is shown but new scans won't work. Reconnect in the Media Library.</div>
+        </div>
+        <a href="#media" onclick="document.getElementById('media-picker-overlay')?.remove()" style="white-space:nowrap;font-size:13px;color:#dc2626;font-weight:600;text-decoration:underline;">Go to Media Library →</a>
+      </div>` : ''}
 
       <div class="media-picker-controls">
         <input
