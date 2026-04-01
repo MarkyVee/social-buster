@@ -655,6 +655,43 @@ async function buildSignalWeightsSection(userId) {
       }
     }
 
+    // --- Platform algorithm alerts (platformAlgorithmAgent) ---
+    // These are the highest-priority signals — cohort-wide algorithm shifts that
+    // affect what content the platform will distribute. Placed before fatigue
+    // warnings so the LLM sees platform context before individual user patterns.
+    if (Array.isArray(sw.algorithm_alerts) && sw.algorithm_alerts.length > 0) {
+      const activeAlerts = sw.algorithm_alerts.filter(a =>
+        a.reach_suppression?.detected || Object.keys(a.format_signals || {}).length > 0
+      );
+
+      if (activeAlerts.length > 0) {
+        if (lines.length > 0) lines.push('');
+        lines.push('⚡ PLATFORM ALGORITHM ALERTS (detected across your industry cohort):');
+
+        activeAlerts.forEach(alert => {
+          const p = alert.platform;
+
+          if (alert.reach_suppression?.detected) {
+            const rs      = alert.reach_suppression;
+            const pct     = Math.round(rs.pct_cohort_affected * 100);
+            const drop    = Math.round(Math.abs(rs.avg_reach_change) * 100);
+            const sev     = rs.severity === 'high' ? '🔴' : rs.severity === 'medium' ? '🟡' : '🟢';
+            lines.push(`${sev} ${p}: reach down ${drop}% across ${pct}% of your cohort — this is an algorithm change, not your content`);
+          }
+
+          const boosts   = Object.entries(alert.format_signals || {}).filter(([, v]) => v.type === 'boost');
+          const penalties = Object.entries(alert.format_signals || {}).filter(([, v]) => v.type === 'penalty');
+
+          boosts.forEach(([type, { ratio }]) => {
+            lines.push(`→ ${p}: ${type} posts getting ${ratio}x normal engagement right now — algorithm is boosting this format`);
+          });
+          penalties.forEach(([type, { ratio }]) => {
+            lines.push(`→ ${p}: ${type} posts getting ${ratio}x normal engagement — algorithm is suppressing this format`);
+          });
+        });
+      }
+    }
+
     // --- Content fatigue warnings (contentFatigueAgent) ---
     // These go last — they're active warnings the LLM must factor into generation.
     // A fatigued pattern should be avoided in THIS brief regardless of other signals.

@@ -696,8 +696,8 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 | Agent | Status | Writes |
 |-------|--------|--------|
 | contentFatigueAgent | ✅ Built (2026-04-01) | signal_weights.content_fatigue |
+| platformAlgorithmAgent | ✅ Built (2026-04-01) | signal_weights.algorithm_alerts (cohort-wide, Redis cached) |
 | hashtagPerformanceAgent | Deferred | signal_weights.top_hashtags |
-| platformAlgorithmAgent | Deferred | signal_weights.algorithm_alerts (cohort-wide) |
 
 **Layer 4 — Predictive / Synthesis**
 | Agent | Status | Uses |
