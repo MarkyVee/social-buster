@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 45;
+const ADMIN_JS_VERSION = 46;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2404,17 +2404,13 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
     const from  = (page - 1) * limit;
     const q     = req.query.q || '';
 
-    // user_profiles holds the tier (including admin overrides).
-    // subscriptions holds the live Stripe status + subscription ID.
-    // We query both and merge so the admin sees the full picture.
+    // user_profiles is the source of truth for tier (admin overrides land here).
+    // subscriptions holds live Stripe data. We query them separately because
+    // user_profiles and subscriptions both FK to auth.users — not to each other —
+    // so PostgREST embedded resource joins don't work between them.
     let query = supabaseAdmin
       .from('user_profiles')
-      .select(`
-        user_id, full_name, email, cohort_year,
-        subscription_tier, created_at,
-        affiliate_suspended, affiliate_suspended_reason,
-        subscriptions ( plan, status, stripe_subscription_id, current_period_end )
-      `, { count: 'exact' })
+      .select('user_id, full_name, email, cohort_year, subscription_tier, created_at, affiliate_suspended, affiliate_suspended_reason', { count: 'exact' })
       .eq('subscription_tier', 'legacy')
       .order('created_at', { ascending: false })
       .range(from, from + limit - 1);
@@ -2428,8 +2424,13 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
 
     // For each member, get their cohort price details + referral slug
     const enriched = await Promise.all((members || []).map(async (m) => {
-      // Flatten the joined subscriptions row (Supabase returns it as an array)
-      const sub = Array.isArray(m.subscriptions) ? m.subscriptions[0] : m.subscriptions;
+      // Fetch Stripe subscription data separately (no FK join available)
+      const { data: subRow } = await supabaseAdmin
+        .from('subscriptions')
+        .select('plan, status, stripe_subscription_id, current_period_end')
+        .eq('user_id', m.user_id)
+        .maybeSingle();
+      const sub = subRow || {};
 
       // Get cohort price details for their signup year
       let cohortDetails = null;
