@@ -14,6 +14,7 @@
  *
  *   Layer 2 (comment signal):
  *     commentSentimentAgent   → signal_weights.comment_signals
+ *     ctaEffectivenessAgent   → signal_weights.cta_effectiveness
  *
  * All agents run sequentially — not parallel — so their read-modify-write
  * operations on signal_weights JSONB don't overwrite each other's keys.
@@ -32,6 +33,7 @@ const { runHookPerformanceAnalysis }      = require('../agents/hookPerformanceAg
 const { runToneObjectiveFitAnalysis }     = require('../agents/toneObjectiveFitAgent');
 const { runPostTypeCalendarAnalysis }     = require('../agents/postTypeCalendarAgent');
 const { runCommentSentimentAnalysis }     = require('../agents/commentSentimentAgent');
+const { runCtaEffectivenessAnalysis }     = require('../agents/ctaEffectivenessAgent');
 
 const signalWeightsWorker = new Worker(
   'signal-weights',
@@ -55,6 +57,7 @@ const signalWeightsWorker = new Worker(
 
     // Layer 2 — comment signals (what the audience actually says)
     await runCommentSentimentAnalysis(userId);
+    await runCtaEffectivenessAnalysis(userId);
   },
 
   {

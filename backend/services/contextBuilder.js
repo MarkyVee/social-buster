@@ -612,6 +612,32 @@ async function buildSignalWeightsSection(userId) {
       }
     }
 
+    // --- CTA effectiveness (ctaEffectivenessAgent) ---
+    if (sw.cta_effectiveness && typeof sw.cta_effectiveness === 'object') {
+      if (lines.length > 0) lines.push('');
+      const cta = sw.cta_effectiveness;
+      lines.push('CTA EFFECTIVENESS (learned from your DM conversion data):');
+
+      if (cta.by_format && Object.keys(cta.by_format).length > 0) {
+        // Sort by trigger_rate descending
+        const sorted = Object.entries(cta.by_format)
+          .sort((a, b) => (b[1].trigger_rate || 0) - (a[1].trigger_rate || 0));
+
+        sorted.forEach(([format, stats]) => {
+          const isBest = format === cta.best_cta_format;
+          const parts  = [`${stats.trigger_rate} DM triggers/1K reach`];
+          if (stats.completion_rate > 0) parts.push(`${Math.round(stats.completion_rate * 100)}% complete`);
+          if (stats.lead_rate > 0)       parts.push(`${Math.round(stats.lead_rate * 100)}% capture leads`);
+          const label  = isBest ? '  ← best format for your audience' : '';
+          lines.push(`• ${format.replace(/_/g, ' ')} CTAs: ${parts.join(' | ')}${label}`);
+        });
+      }
+
+      if (Array.isArray(cta.top_trigger_phrases) && cta.top_trigger_phrases.length > 0) {
+        lines.push(`• Top-performing CTA phrases: "${cta.top_trigger_phrases.join('", "')}"`);
+      }
+    }
+
     // --- Admin directives (stored by agents when set, surfaced here to LLM) ---
     // Directives are free-text guidance written by admin in the dashboard,
     // e.g. "Have you considered that this audience is B2B?"

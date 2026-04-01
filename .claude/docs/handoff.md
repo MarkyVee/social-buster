@@ -689,8 +689,8 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 | Agent | Status | Writes |
 |-------|--------|--------|
 | commentSentimentAgent | ✅ Built (2026-04-01) | signal_weights.comment_signals |
+| ctaEffectivenessAgent | ✅ Built (2026-04-01) | signal_weights.cta_effectiveness |
 | hookTrendAgent | Deferred | signal_weights.hook_trends |
-| ctaEffectivenessAgent | Deferred | signal_weights.cta_formats |
 
 **Layer 3 — External Signal (platform + trend signals)**
 | Agent | Status | Writes |
