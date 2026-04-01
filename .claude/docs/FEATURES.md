@@ -417,7 +417,7 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 - **ID:** FEAT-026
 - **Date:** 2026-04-01
-- **Status:** planned
+- **Status:** done (2026-04-01)
 - **Priority:** HIGH
 - **Description:** Feature visibility admin control — `is_globally_visible` on tier_limits. Admin can hide any feature from all users regardless of tier (data still collected), then flip to visible to announce a new feature instantly without a code deploy. Separate "Feature Visibility" section in admin Limits tab. Dark data features default to is_globally_visible = false.
 - **Files:** `migration_feature_visibility.sql` (run in Supabase), `backend/routes/admin.js` (PUT accepts is_globally_visible), `frontend/public/js/admin.js` v47 (visibility section with Live/Dark badges + toggle).
@@ -428,7 +428,7 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 - **ID:** FEAT-025
 - **Date:** 2026-04-01
-- **Status:** planned
+- **Status:** done (2026-04-01)
 - **Priority:** MEDIUM
 - **Description:** Admin-injectable agent directives — per-agent, per-user prompt guidance editable from the admin dashboard.
 - **What it is:** Admin writes free-text guidance (e.g. "Have you considered seasonal patterns?" / "What would it look like if video posts were weighted 1.5x?") stored in an `admin_agent_directives` table. Agents fetch their directive at run time and either inject it into the LLM prompt (LLM agents) or store it in signal_weights for contextBuilder to surface (math agents).
@@ -447,7 +447,7 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 - **ID:** FEAT-024
 - **Date:** 2026-04-01
-- **Status:** planned
+- **Status:** done
 - **Priority:** HIGH
 - **Description:** AI agent data collection runs for ALL users regardless of subscription tier. Agent intelligence (signal_weights, hook performance, tone/objective fit, cohort benchmarks, pain points, voice profile) is always collected in the background. Subscription tier only gates the DISPLAY of this data — not its collection. This ensures rich data exists the moment a user upgrades, with no cold-start delay.
 - **Reason:** If we only run agents for paid tiers, free users who upgrade get a blank intelligence dashboard for the first week while agents backfill. That's a terrible upgrade experience. Always collect, selectively reveal.
@@ -463,4 +463,10 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ## Done
 
-_(none yet)_
+- **FEAT-013** (2026-03-28) — DM Automation Dashboard Data for Users
+- **FEAT-014** (2026-03-28) — Privacy Policy Content Update
+- **FEAT-015** (2026-03-25) — System Watchdog (health monitoring, auto-pause, alerts)
+- **FEAT-020** (2026-03-29) — Admin Diagnostics & Maintenance Panel
+- **FEAT-024** (2026-04-01) — Agent data collection for all tiers (already the default — agents run for all users, display gated by tier)
+- **FEAT-025** (2026-04-01) — Admin-injectable agent directives (admin_agent_directives table + full CRUD UI in admin Avatars tab, v51)
+- **FEAT-026** (2026-04-01) — Feature visibility admin control (`is_globally_visible` on tier_limits, Live/Dark badges + toggle in admin Limits tab, v47)

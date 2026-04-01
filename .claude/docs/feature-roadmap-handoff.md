@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Handoff
 
-> **Last updated:** 2026-04-01 (session 2)
+> **Last updated:** 2026-04-01 (session 3)
 > **Purpose:** Quick-reference for any AI or developer picking up the project. For detailed history, see [[CHANGELOG]], [[ISSUES]], and [[platform_publishing_guide]].
 
 ---
@@ -42,6 +42,13 @@
 | Platform "Coming Soon" in My Profile | Done (app.js v6) — only Instagram + Facebook selectable. Remove from exclusion list when OAuth ships. |
 | AI agent data collection (all tiers) | All agents run for every user. Intelligence display gated by tier, not collection. |
 | Signal weights learning engine (Layer 1) | Built (2026-04-01) — hookPerformanceAgent + toneObjectiveFitAgent + contextBuilder injection |
+| Admin agent directives (FEAT-025) | Built (v51) — `admin_agent_directives` table + CRUD UI in Avatars tab. Run `migration_agent_directives.sql` in Supabase |
+| Avatar eval stats + Add Avatar button | Built (v51) — Evaluations count column in avatar roster, create-avatar route + modal |
+| Context Inspector (admin user detail) | Built (v51) — shows `agent_context`, `research`, `intelligence` Redis cache state per user |
+| Async intelligence refresh | Built (app.js v54) — queues BullMQ job, frontend polls status every 2s. No more 10-20s blocked HTTP |
+| Intelligence Agent Controls (admin user detail) | Built (v51) — manual run-agents + reset signal_weights buttons per user |
+| Affiliate slug (admin user detail) | Built (v51) — assign-once, read-only after set, 409 block on any re-assign attempt |
+| Demo seed script | Built — `scripts/seed-demo-data.js`. Seeds: evaluations (12/avatar), post_metrics (instagram+facebook), signal_weights, comments (19 with sentiment split), pending prompt suggestion. `--clean` flag removes seeded data only, leaves real data intact |
 | Cloudflare CDN cache purge (admin Diagnostics tab) | Built — needs `CLOUDFLARE_CACHE_TOKEN` env var in Coolify |
 | Tier limits (DB-driven, admin-configurable, frontend upgrade prompts) | Done |
 | Stripe billing (subscribe, upgrade, downgrade, cancel, webhook, admin override) | Done |
@@ -78,7 +85,7 @@
 5. **Platform OAuth** — TikTok, LinkedIn, X, YouTube (deferred by user)
 6. **Horizontal block scaling** — deferred, full architecture designed (see Section 10). Implement at ~8-9K users.
 7. **Platform availability + tier gating** — TikTok/LinkedIn/X/Threads/WhatsApp/Telegram show "Coming Soon" in profile (done v6). Add tier-based platform caps to Limits dashboard. See [[FEATURES]] FEAT-022/023.
-8. **Agent data collection for all tiers** — agents always run regardless of tier. Gate only the display. See [[FEATURES]] FEAT-024.
+8. ~~**Agent data collection for all tiers**~~ — Done. Agents always run regardless of tier. Gate only the display. See [[FEATURES]] FEAT-024.
 
 ---
 
@@ -113,12 +120,12 @@
 
 ### Additional Ideas (backlog)
 
-| ID | Feature | Priority |
-|----|---------|----------|
-| FEAT-016 | Cloudflare cache purge + CSP diagnostics from admin | Low |
-| FEAT-018 | ADA/WCAG accessibility compliance | Medium |
-| FEAT-019 | Admin OAuth Token Diagnostics Panel | Low |
-| FEAT-020 | Admin Publishing Error Diagnostics | Medium |
+| ID | Feature | Priority | Status |
+|----|---------|----------|--------|
+| FEAT-016 | Cloudflare cache purge from admin Diagnostics tab | Low | Done — needs `CLOUDFLARE_CACHE_TOKEN` env var |
+| FEAT-018 | ADA/WCAG accessibility compliance | Medium | Planned |
+| FEAT-019 | Admin OAuth Token Diagnostics Panel | Low | Planned |
+| FEAT-020 | Admin Publishing Error Diagnostics + Maintenance Panel | Medium | Done (2026-03-29) |
 
 ---
 
@@ -135,9 +142,18 @@
 | `mediaAgent.js` | Cloud storage scan + video analysis queue | Every 30min |
 | `mediaProcessAgent.js` | Copy media → Supabase at attach time | Event-driven |
 | `watchdogAgent.js` | Health monitoring + auto-pause | Every 5min |
+| `hookPerformanceAgent.js` | Scores hook formats by engagement outcome | On signal-weights job |
+| `toneObjectiveFitAgent.js` | Detects poor tone/objective combos | On signal-weights job |
+| `postTypeCalendarAgent.js` | Best post types by day/time | On signal-weights job |
+| `contentFatigueAgent.js` | Detects declining engagement on repeated formats | On signal-weights job |
+| `platformAlgorithmAgent.js` | Cohort-wide algorithm shift detection | On signal-weights job |
+| `briefOptimizationAgent.js` | Brief field patterns that predict top posts | On signal-weights job |
+| `contentGapAgent.js` | Topics/formats the user hasn't tried yet | On signal-weights job |
+| `evaluationMetaAgent.js` | Analyzes avatar evaluation outcomes, suggests prompt improvements | On-demand (admin trigger) |
+| `signalWeightsWorker.js` | Orchestrates all signal agents sequentially, writes to `signal_weights` | On signal-weights-user BullMQ job |
 
-### 8 BullMQ Queues
-`publish`, `comment`, `media-scan`, `media-analysis`, `media-process`, `dm`, `performance`, `research`
+### 10 BullMQ Queues
+`publish`, `comment`, `media-scan`, `media-analysis`, `media-process`, `dm`, `performance`, `research`, `signal-weights`, `watchdog`
 
 ### Shared Context Pipeline
 `contextBuilder.js` pulls 9 sections (profile, research, performance, cohort, comments, content_patterns, video_tags, pain_points, voice_profile) → injected into LLM prompts via `{{context_shared}}`. 1-hour Redis cache.
@@ -160,6 +176,7 @@
 - **Seed `legacy_cohorts`** with real Stripe Price ID once created in Stripe dashboard
 - **`CLOUDFLARE_CACHE_TOKEN`** — created in Cloudflare (Zone → Cache Purge), needs adding to Coolify env vars
 - **`ALTER TABLE plans ADD COLUMN IF NOT EXISTS logo_url TEXT`** — run in Supabase if not done
+- **Run `migration_agent_directives.sql`** in Supabase — creates `admin_agent_directives` table required for agent directive UI (admin Avatars tab)
 - Legacy public signup page with slot countdown (not yet built)
 - Affiliate terms + ToS update
 - Stripe Connect platform account verification (Stripe sent email — not a code issue)
