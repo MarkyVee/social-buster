@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 40;
+const ADMIN_JS_VERSION = 41;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -4539,10 +4539,11 @@ async function loadAdminLegacy() {
   panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
 
   try {
-    const [slots, cohorts, membersData] = await Promise.all([
+    // Load slots and cohorts first — members load separately so a failure there
+    // doesn't crash the whole tab.
+    const [slots, cohorts] = await Promise.all([
       apiFetch('/admin/legacy/slots'),
       apiFetch('/admin/legacy/cohorts'),
-      apiFetch('/admin/legacy/members?limit=25&page=1'),
     ]);
 
     const usedPct = slots.slotCap > 0 ? Math.round((slots.slotsUsed / slots.slotCap) * 100) : 0;
@@ -4647,7 +4648,7 @@ async function loadAdminLegacy() {
       <!-- ---- Legacy Members ---- -->
       <div class="admin-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-          <h3 style="margin:0;">Legacy Members <span style="font-size:13px;color:var(--text-secondary);font-weight:400;">(${membersData.total || 0} total)</span></h3>
+          <h3 style="margin:0;">Legacy Members</h3>
           <div style="display:flex;gap:8px;">
             <input id="legacy-member-search" type="text" placeholder="Search by email or name…"
               style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:220px;"
@@ -4657,10 +4658,13 @@ async function loadAdminLegacy() {
         </div>
 
         <div id="legacy-members-table">
-          ${renderLegacyMembersTable(membersData)}
+          <div class="admin-loading"><div class="spinner spinner-sm"></div> Loading members…</div>
         </div>
       </div>
     `;
+
+    // Load members independently so a failure doesn't hide slots/cohorts
+    loadAdminLegacyMembers(1);
 
   } catch (err) {
     panel.innerHTML = `<div style="color:#ef4444;padding:20px;">Failed to load Legacy data: ${err.message}</div>`;
