@@ -113,6 +113,14 @@
 ---
 
 - Date: 2026-04-01
+- Decision: Admin-injectable directives per agent — stored in signal_weights, surfaced to LLM at generation time
+- Reason: Admin needs a way to inject soft guidance into agent runs without touching code. Examples: "Have you considered this audience is B2B?" or "What would it look like if video posts were weighted 1.5x?" For Layer 1 math agents (no LLM), the directive doesn't change the calculation — it's stored alongside signal_weights and surfaced by contextBuilder as an "ADMIN NOTES" block in the LLM prompt. For LLM-calling agents (Layer 2+), the directive is injected directly into the system prompt.
+- Impact: `agentDirectiveService.js` created with `getAgentDirective(agentName, userId)` — currently a stub (always returns null). All three Layer 1 agents wired with the hook. contextBuilder reads `agent_directive_*` keys from signal_weights and appends to the "WHAT WORKS FOR YOUR AUDIENCE" prompt block. Full admin UI (table + editor + re-run + reset) deferred to FEAT-025, after all agents are built.
+- Directive resolution order: user+agent (most targeted) → user+global → all users+agent → global all. Multiple matches combined.
+
+---
+
+- Date: 2026-04-01
 - Decision: Agent performance data will anchor subscription tier packaging
 - Reason: signal_weights + preflight panel data (tone/objective fit scores, hook format rankings, platform algorithm alerts) represents high-value differentiation. Showing users what's working vs. not is a premium insight — not a free feature. The Brief Preflight Panel (existing) + signal_weights warnings ("⚠️ humorous + conversions underperforms for your audience") maps cleanly to Starter+ gate.
 - Impact: Tier gating plan: Free Trial gets post generation only. Starter gets basic preflight. Professional gets full signal_weights panel + hook rankings + combo warnings. Enterprise gets all agents including platformAlgorithmAgent (cohort-level intelligence). Exact tier mapping deferred until first two agents are validated in production.

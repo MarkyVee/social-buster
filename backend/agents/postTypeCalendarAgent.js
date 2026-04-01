@@ -58,7 +58,8 @@
  * and toneObjectiveFitAgent have run for this user)
  */
 
-const { supabaseAdmin } = require('../services/supabaseService');
+const { supabaseAdmin }       = require('../services/supabaseService');
+const { getAgentDirective }   = require('../services/agentDirectiveService');
 
 const MIN_POSTS_OVERALL   = 10;
 const MIN_POSTS_PER_TYPE  = 5;
@@ -92,6 +93,8 @@ function topNKeys(obj, n) {
 // ----------------------------------------------------------------
 async function runPostTypeCalendarAnalysis(userId) {
   console.log(`[PostTypeCalendarAgent] Analysing posting calendar for user ${userId}...`);
+
+  const directive = await getAgentDirective('postTypeCalendarAgent', userId);
 
   const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -247,7 +250,8 @@ async function runPostTypeCalendarAnalysis(userId) {
       by_post_type:  bestHoursByPostType
     },
     best_hours_updated_at: new Date().toISOString(),
-    best_hours_post_count: postsScored
+    best_hours_post_count: postsScored,
+    ...(directive ? { agent_directive_calendar: directive } : {})
   };
 
   const { error: updateErr } = await supabaseAdmin

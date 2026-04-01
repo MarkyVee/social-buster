@@ -43,7 +43,8 @@
  * Triggered by: signalWeightsWorker.js (weekly)
  */
 
-const { supabaseAdmin } = require('../services/supabaseService');
+const { supabaseAdmin }       = require('../services/supabaseService');
+const { getAgentDirective }   = require('../services/agentDirectiveService');
 
 const MIN_POSTS_FOR_ANALYSIS = 5;
 const MIN_POSTS_PER_COMBO    = 2;
@@ -63,6 +64,8 @@ function calcEngagementScore(likes, comments, shares, reach) {
 // ----------------------------------------------------------------
 async function runToneObjectiveFitAnalysis(userId) {
   console.log(`[ToneObjectiveFitAgent] Analysing tone/objective fit for user ${userId}...`);
+
+  const directive = await getAgentDirective('toneObjectiveFitAgent', userId);
 
   const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -191,7 +194,8 @@ async function runToneObjectiveFitAnalysis(userId) {
   const updated = {
     ...current,
     tone_objective_fit:           toneObjectiveWeights,
-    tone_objective_updated_at:    new Date().toISOString()
+    tone_objective_updated_at:    new Date().toISOString(),
+    ...(directive ? { agent_directive_tone: directive } : {})
   };
 
   const { error: updateErr } = await supabaseAdmin

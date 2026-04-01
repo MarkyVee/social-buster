@@ -40,7 +40,8 @@
  * Triggered by: signalWeightsWorker.js (weekly, same cadence as researchAgent)
  */
 
-const { supabaseAdmin } = require('../services/supabaseService');
+const { supabaseAdmin }       = require('../services/supabaseService');
+const { getAgentDirective }   = require('../services/agentDirectiveService');
 
 // Minimum posts with metrics before we run analysis (avoids noisy weights)
 const MIN_POSTS_FOR_ANALYSIS = 5;
@@ -102,6 +103,11 @@ function calcEngagementScore(likes, comments, shares, reach) {
 // ----------------------------------------------------------------
 async function runHookPerformanceAnalysis(userId) {
   console.log(`[HookPerformanceAgent] Analysing hooks for user ${userId}...`);
+
+  // Fetch any admin directive for this agent. Currently always null (stub).
+  // Once admin_agent_directives table is built, this will return injected guidance
+  // that contextBuilder surfaces to the LLM alongside the signal_weights output.
+  const directive = await getAgentDirective('hookPerformanceAgent', userId);
 
   // Look back 60 days — long enough for enough data, short enough to
   // reflect current audience behaviour (not 6-month-old trends)
@@ -217,7 +223,10 @@ async function runHookPerformanceAnalysis(userId) {
     ...current,
     hook_formats:             hookWeights,
     hook_formats_updated_at:  new Date().toISOString(),
-    hook_post_count:          postsScored
+    hook_post_count:          postsScored,
+    // Store active admin directive so contextBuilder can surface it to the LLM.
+    // Null means no directive — contextBuilder skips it cleanly.
+    ...(directive ? { agent_directive_hook: directive } : {})
   };
 
   const { error: updateErr } = await supabaseAdmin

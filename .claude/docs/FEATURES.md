@@ -295,6 +295,25 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-025
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Admin-injectable agent directives — per-agent, per-user prompt guidance editable from the admin dashboard.
+- **What it is:** Admin writes free-text guidance (e.g. "Have you considered seasonal patterns?" / "What would it look like if video posts were weighted 1.5x?") stored in an `admin_agent_directives` table. Agents fetch their directive at run time and either inject it into the LLM prompt (LLM agents) or store it in signal_weights for contextBuilder to surface (math agents).
+- **Scope:** Global directive (all agents, all users), per-agent directive (all users), per-user directive (one agent), per-user+per-agent (most targeted).
+- **What needs building:**
+  1. `admin_agent_directives` table migration (agent_name, user_id nullable, directive text, is_active, updated_at, updated_by)
+  2. Uncomment real implementation in `agentDirectiveService.js`
+  3. Admin UI: directive editor card per agent in admin dashboard (new "Agents" section, not a new tab — fits in existing Users or Watchdog tab)
+  4. Admin: re-run agent for specific user button (triggers new signal-weights-user BullMQ job)
+  5. Admin: reset signal_weights for specific user (clears JSONB, with confirm dialog)
+- **Prerequisite:** Build all agents first. Admin UI should show all agents at once.
+- **Files:** `backend/services/agentDirectiveService.js` (stub already wired into all agents), all agent files (hook already present), `backend/services/contextBuilder.js` (already reads agent_directive_* keys from signal_weights)
+- **Related:** [[DECISIONS]] 2026-04-01 (admin directives), FEAT-024 (always collect agent data)
+
+---
+
 - **ID:** FEAT-024
 - **Date:** 2026-04-01
 - **Status:** planned

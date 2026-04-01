@@ -569,6 +569,21 @@ async function buildSignalWeightsSection(userId) {
       }
     }
 
+    // --- Admin directives (stored by agents when set, surfaced here to LLM) ---
+    // Directives are free-text guidance written by admin in the dashboard,
+    // e.g. "Have you considered that this audience is B2B?"
+    // They don't change the math — they give the LLM extra framing.
+    const directiveKeys = ['agent_directive_hook', 'agent_directive_tone', 'agent_directive_calendar'];
+    const activeDirectives = directiveKeys
+      .map(k => sw[k])
+      .filter(Boolean);
+
+    if (activeDirectives.length > 0) {
+      if (lines.length > 0) lines.push('');
+      lines.push('ADMIN NOTES (apply these when generating content):');
+      activeDirectives.forEach(d => lines.push(`• ${d}`));
+    }
+
     return lines.length > 0 ? lines.join('\n') : null;
   } catch (_) { return null; }
 }
