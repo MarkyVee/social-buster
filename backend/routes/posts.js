@@ -156,7 +156,7 @@ router.get('/:id', standardLimiter, async (req, res) => {
 // brief_id, or status through this route.
 // ----------------------------------------------------------------
 router.put('/:id', standardLimiter, async (req, res) => {
-  const { hook, caption, hashtags, cta, media_id, trim_start_seconds } = req.body;
+  const { hook, caption, hashtags, cta, media_id, trim_start_seconds, trim_end_seconds } = req.body;
 
   // Build update object from only the fields that were sent
   const updates = {};
@@ -182,6 +182,18 @@ router.put('/:id', standardLimiter, async (req, res) => {
       return res.status(400).json({ error: 'trim_start_seconds must be a non-negative integer' });
     }
     updates.trim_start_seconds = trimStart;
+  }
+  // trim_end_seconds — where the clip ends (set by clip picker). NULL = trim to platform limit.
+  if (trim_end_seconds !== undefined) {
+    if (trim_end_seconds === null) {
+      updates.trim_end_seconds = null;
+    } else {
+      const trimEnd = parseInt(trim_end_seconds, 10);
+      if (isNaN(trimEnd) || trimEnd <= 0) {
+        return res.status(400).json({ error: 'trim_end_seconds must be a positive integer' });
+      }
+      updates.trim_end_seconds = trimEnd;
+    }
   }
 
   if (Object.keys(updates).length === 0) {

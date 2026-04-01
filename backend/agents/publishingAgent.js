@@ -99,7 +99,7 @@ async function processQueue() {
     // Fetch all posts that are scheduled and overdue
     const { data: posts, error } = await supabaseAdmin
       .from('posts')
-      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, scheduled_at')
+      .select('id, user_id, platform, hook, caption, hashtags, cta, media_id, trim_start_seconds, trim_end_seconds, scheduled_at')
       .eq('status', 'scheduled')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
@@ -322,6 +322,7 @@ async function publishPost(post) {
       try {
         const extension  = (mediaItem.filename?.split('.').pop() || 'mp4').toLowerCase();
         const startTime  = post.trim_start_seconds || 0;
+        const endTime    = post.trim_end_seconds   || null; // null = trim to platform limit
 
         // Google Drive videos are never copied to Supabase (file size can exceed
         // Supabase's 50 MB free tier limit). Download via the Drive API instead.
@@ -344,7 +345,7 @@ async function publishPost(post) {
         // Source videos from phones are often H.265/HEVC — Facebook and other
         // platforms reject those even in an MP4 container (error 351).
         // trimVideo handles both trimming AND codec conversion in one pass.
-        const reEncodedPath = await trimVideo(downloadedPath, post.platform, startTime, true);
+        const reEncodedPath = await trimVideo(downloadedPath, post.platform, startTime, true, endTime);
         if (reEncodedPath !== downloadedPath) tempFilePaths.push(reEncodedPath);
         post.media_local_path = reEncodedPath;
         console.log(`[PublishingAgent]    Video ready → ${reEncodedPath}`);

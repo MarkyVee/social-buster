@@ -1631,7 +1631,7 @@ function renderClipPickerModal(postId, platform, segments, rankedIds) {
         </div>
         <button
           class="clip-card-select-btn"
-          onclick="selectClip('${postId}', ${seg.start_seconds})"
+          onclick="selectClip('${postId}', ${seg.start_seconds}, ${seg.end_seconds})"
         >✓ Use this clip</button>
       </div>`;
   }).join('');
@@ -1803,9 +1803,18 @@ function clearClipPreview() {
 // selectClip — called when the user clicks a segment card.
 // Sets the trim start point and closes the modal.
 // ----------------------------------------------------------------
-function selectClip(postId, startSeconds) {
+function selectClip(postId, startSeconds, endSeconds) {
   // Apply the chosen start point exactly as if the user dragged the slider
   onTrimStartChange(postId, startSeconds);
+
+  // Store the clip end time so the publisher knows where to stop trimming.
+  // Without this, trimVideo encodes all the way to the platform limit (e.g. 180s
+  // for Facebook) instead of stopping at the actual clip boundary.
+  const card = document.querySelector(`.wysiwyg-card[data-post-id="${postId}"]`);
+  if (card && endSeconds != null) {
+    card.dataset.trimEndSeconds = endSeconds;
+    card.dataset.dirty = 'true';
+  }
 
   // Also update the slider input position if it's currently visible
   const slider = document.getElementById(`trim-start-${postId}`);

@@ -177,7 +177,13 @@ async function probeVideo(inputPath) {
 // source codec. Pass true when publishing to social media platforms, since they
 // require H.264 video + AAC audio. Source videos from phones are often H.265/HEVC
 // which all major platforms reject with a codec error even if the container is MP4.
-async function trimVideo(inputPath, platform, startTime = 0, forceReencode = false) {
+//
+// endTime (optional) — the absolute end point in seconds from the start of the video.
+// When set (e.g. from the clip picker), the output is capped at (endTime - startTime)
+// rather than the platform limit. This is how the clip picker's exact selection is
+// respected — without it, trimVideo would encode up to 180s (Facebook limit) even
+// if the user only picked a 30-second clip.
+async function trimVideo(inputPath, platform, startTime = 0, forceReencode = false, endTime = null) {
   const maxDuration = PLATFORM_LIMITS[platform];
   if (!maxDuration) {
     throw new Error(`Unknown platform "${platform}". Check PLATFORM_LIMITS in ffmpegService.js`);
@@ -189,8 +195,10 @@ async function trimVideo(inputPath, platform, startTime = 0, forceReencode = fal
   // Effective duration = total video length minus the start offset
   const effectiveDuration = duration - startTime;
 
-  // Cap the output duration at the platform limit
-  const outputDuration = Math.min(effectiveDuration, maxDuration);
+  // If the clip picker gave us an end point, use that as the cap.
+  // Otherwise fall back to the platform's maximum duration limit.
+  const clipDuration = endTime != null ? (endTime - startTime) : null;
+  const outputDuration = Math.min(effectiveDuration, clipDuration ?? maxDuration);
 
   ensureTempDir();
   const outputFilename = `trimmed_${uuidv4()}.mp4`;

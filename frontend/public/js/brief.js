@@ -706,6 +706,11 @@ async function savePostEdits(postId) {
   if (card.dataset.trimStartSeconds !== undefined && card.dataset.trimStartSeconds !== '') {
     fields.trim_start_seconds = parseInt(card.dataset.trimStartSeconds, 10) || 0;
   }
+  // Include trim_end_seconds if set (from the clip picker — where the clip ends).
+  // Sending null explicitly clears a previously saved end point (e.g. user switches to manual slider).
+  if (card.dataset.trimEndSeconds !== undefined && card.dataset.trimEndSeconds !== '') {
+    fields.trim_end_seconds = parseInt(card.dataset.trimEndSeconds, 10) || null;
+  }
 
   const saveBtn = card.querySelector('.save-post-btn');
   saveBtn.disabled = true;
