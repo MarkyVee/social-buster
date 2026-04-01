@@ -17,6 +17,9 @@
  *     commentSentimentAgent   → signal_weights.comment_signals
  *     ctaEffectivenessAgent   → signal_weights.cta_effectiveness
  *
+ *   Layer 3 (fatigue + algorithm intelligence):
+ *     contentFatigueAgent     → signal_weights.content_fatigue
+ *
  * All agents run sequentially — not parallel — so their read-modify-write
  * operations on signal_weights JSONB don't overwrite each other's keys.
  *
@@ -36,6 +39,7 @@ const { runToneObjectiveFitAnalysis }     = require('../agents/toneObjectiveFitA
 const { runPostTypeCalendarAnalysis }     = require('../agents/postTypeCalendarAgent');
 const { runCommentSentimentAnalysis }     = require('../agents/commentSentimentAgent');
 const { runCtaEffectivenessAnalysis }     = require('../agents/ctaEffectivenessAgent');
+const { runContentFatigueAnalysis }       = require('../agents/contentFatigueAgent');
 
 const signalWeightsWorker = new Worker(
   'signal-weights',
@@ -61,6 +65,9 @@ const signalWeightsWorker = new Worker(
     // Layer 2 — comment signals (what the audience actually says)
     await runCommentSentimentAnalysis(userId);
     await runCtaEffectivenessAnalysis(userId);
+
+    // Layer 3 — fatigue + algorithm intelligence
+    await runContentFatigueAnalysis(userId);
   },
 
   {

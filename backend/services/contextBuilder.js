@@ -655,6 +655,38 @@ async function buildSignalWeightsSection(userId) {
       }
     }
 
+    // --- Content fatigue warnings (contentFatigueAgent) ---
+    // These go last — they're active warnings the LLM must factor into generation.
+    // A fatigued pattern should be avoided in THIS brief regardless of other signals.
+    if (sw.content_fatigue && typeof sw.content_fatigue === 'object') {
+      const cf = sw.content_fatigue;
+
+      // Collect all fatigued dimensions with stats for the LLM
+      const warnings = [];
+
+      const check = (buckets, labelFn) => {
+        if (!buckets || typeof buckets !== 'object') return;
+        Object.entries(buckets).forEach(([key, data]) => {
+          if (data.fatigued) {
+            const freqPct    = Math.round(data.frequency * 100);
+            const dropPct    = Math.round((1 - data.engagement_decline) * 100);
+            warnings.push(`${labelFn(key)}: used in ${freqPct}% of recent posts, engagement down ${dropPct}%`);
+          }
+        });
+      };
+
+      check(cf.by_hook_format, k => `${k} hooks`);
+      check(cf.by_post_type,   k => `${k} posts`);
+      check(cf.by_tone,        k => `${k} tone`);
+
+      if (warnings.length > 0) {
+        if (lines.length > 0) lines.push('');
+        lines.push('⚠️ CONTENT FATIGUE WARNINGS — avoid these patterns in this brief:');
+        warnings.forEach(w => lines.push(`• ${w} — audience is fatiguing on this`));
+        lines.push('→ Diversify: choose a different hook format, post type, or tone than the above.');
+      }
+    }
+
     // --- Admin directives (stored by agents when set, surfaced here to LLM) ---
     // Directives are free-text guidance written by admin in the dashboard,
     // e.g. "Have you considered that this audience is B2B?"

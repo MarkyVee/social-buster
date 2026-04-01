@@ -692,11 +692,12 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 | commentSentimentAgent | ✅ Built (2026-04-01) | signal_weights.comment_signals |
 | ctaEffectivenessAgent | ✅ Built (2026-04-01) | signal_weights.cta_effectiveness |
 
-**Layer 3 — External Signal (platform + trend signals)**
+**Layer 3 — Fatigue + External Signal**
 | Agent | Status | Writes |
 |-------|--------|--------|
+| contentFatigueAgent | ✅ Built (2026-04-01) | signal_weights.content_fatigue |
 | hashtagPerformanceAgent | Deferred | signal_weights.top_hashtags |
-| platformAlgorithmAgent | Deferred | research cache (cohort-wide) |
+| platformAlgorithmAgent | Deferred | signal_weights.algorithm_alerts (cohort-wide) |
 
 **Layer 4 — Predictive / Synthesis**
 | Agent | Status | Uses |
