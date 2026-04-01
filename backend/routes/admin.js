@@ -27,6 +27,14 @@
 const express = require('express');
 const router  = express.Router();
 
+// ----------------------------------------------------------------
+// ADMIN_JS_VERSION — must match the ?v= number on admin.js in index.html.
+// When you bump ?v= in index.html, bump this number too.
+// The frontend fetches GET /admin/version on every dashboard load and
+// shows a "stale JS" warning banner if the numbers don't match.
+// ----------------------------------------------------------------
+const ADMIN_JS_VERSION = 32;
+
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
 const { supabaseAdmin }  = require('../services/supabaseService');
@@ -151,6 +159,18 @@ try {
 
 // Apply auth + admin check to all remaining routes in this file
 router.use(requireAuth, requireAdmin);
+
+// ----------------------------------------------------------------
+// GET /admin/version
+//
+// Returns the expected admin.js frontend version so the browser can
+// detect if it is running stale JS. The frontend compares this number
+// against its own embedded ADMIN_JS_VERSION constant and shows a
+// warning banner if they don't match.
+// ----------------------------------------------------------------
+router.get('/version', (req, res) => {
+  res.json({ version: ADMIN_JS_VERSION });
+});
 
 // ----------------------------------------------------------------
 // GET /admin/health

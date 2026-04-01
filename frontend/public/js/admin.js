@@ -14,6 +14,13 @@
  */
 
 // ----------------------------------------------------------------
+// ADMIN_JS_VERSION — must match ADMIN_JS_VERSION in backend/routes/admin.js
+// AND the ?v= number on admin.js in index.html.
+// When you bump ?v=, bump this number too.
+// ----------------------------------------------------------------
+const ADMIN_JS_VERSION = 32;
+
+// ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
 // ----------------------------------------------------------------
 // Open BullMQ Board in a new tab with proper auth cookie
@@ -87,8 +94,73 @@ function renderAdminDashboard(el) {
 
   injectAdminStyles();
 
+  // Check if the browser is running stale admin JS.
+  // Shows a warning banner if the loaded version doesn't match the server.
+  checkAdminJsVersion();
+
   // Load the default tab
   loadAdminOverview();
+}
+
+// ----------------------------------------------------------------
+// checkAdminJsVersion — fetches the server's expected admin.js version
+// and shows a sticky yellow banner if this file is stale.
+// The banner has a one-click "Purge Cache & Reload" button that calls
+// the Cloudflare purge endpoint then reloads the page.
+// ----------------------------------------------------------------
+async function checkAdminJsVersion() {
+  try {
+    const res = await apiFetch('/admin/version');
+    if (res.version === ADMIN_JS_VERSION) return; // All good — versions match
+
+    // Versions don't match — browser is running stale admin JS.
+    // Insert a sticky warning banner at the top of the admin container.
+    const existing = document.getElementById('admin-stale-banner');
+    if (existing) return; // Already showing
+
+    const banner = document.createElement('div');
+    banner.id = 'admin-stale-banner';
+    banner.style.cssText = `
+      position: sticky; top: 0; z-index: 999;
+      background: #fef3c7; border: 1px solid #f59e0b;
+      border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 12px;
+      font-size: 13px; color: #92400e;
+    `;
+    banner.innerHTML = `
+      <span>⚠️ <strong>Stale admin JS detected</strong> — your browser is running v${ADMIN_JS_VERSION} but the server expects v${res.version}. Controls may be missing or broken.</span>
+      <button class="btn btn-sm" style="background:#f59e0b;color:#fff;border:none;flex-shrink:0;" onclick="adminPurgeAndReload()">
+        🌐 Purge Cache &amp; Reload
+      </button>
+    `;
+
+    // Insert before the first child of the admin container
+    const container = document.querySelector('.page-header')?.parentElement;
+    if (container) container.insertBefore(banner, container.firstChild);
+
+  } catch (err) {
+    // Version check is non-critical — fail silently so it never breaks the dashboard
+    console.warn('[Admin] Version check failed (non-critical):', err.message);
+  }
+}
+
+// ----------------------------------------------------------------
+// adminPurgeAndReload — purges the Cloudflare CDN cache then reloads
+// the page so the browser fetches fresh JS/CSS.
+// ----------------------------------------------------------------
+async function adminPurgeAndReload() {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = '⏳ Purging…';
+  try {
+    await apiFetch('/admin/maintenance/purge-cache', { method: 'POST' });
+    btn.textContent = '✅ Done — reloading…';
+    setTimeout(() => location.reload(true), 1500);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '🌐 Purge Cache & Reload';
+    alert('Cache purge failed: ' + err.message + '\n\nTry a hard refresh (Ctrl+Shift+R) instead.');
+  }
 }
 
 // ----------------------------------------------------------------
