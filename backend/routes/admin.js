@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 33;
+const ADMIN_JS_VERSION = 34;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -1392,6 +1392,41 @@ router.post('/plans', async (req, res) => {
       .single();
 
     if (error) throw new Error(error.message);
+
+    // Seed default tier_limits rows for the new tier so it appears
+    // immediately in the Limits tab. All features default to 0 / disabled
+    // so the admin can configure them before enabling the plan.
+    const features = [
+      { feature: 'briefs_per_month',       label: 'Briefs per month',        limit_value: 0 },
+      { feature: 'ai_images_per_month',    label: 'AI images per month',     limit_value: 0 },
+      { feature: 'platforms_connected',    label: 'Platforms connected',     limit_value: 0 },
+      { feature: 'scheduled_queue_size',   label: 'Scheduled queue size',    limit_value: 0 },
+      { feature: 'comment_monitoring',     label: 'Comment monitoring',      limit_value: 0 },
+      { feature: 'dm_lead_capture',        label: 'DM lead capture',         limit_value: 0 },
+      { feature: 'intelligence_dashboard', label: 'Intelligence dashboard',  limit_value: 0 },
+      { feature: 'performance_predictor',  label: 'Performance predictor',   limit_value: 0 },
+      { feature: 'pain_point_miner',       label: 'Pain-point miner',        limit_value: 0 },
+      { feature: 'brand_voice_tracker',    label: 'Brand voice tracker',     limit_value: 0 },
+    ];
+
+    const limitRows = features.map(f => ({
+      tier: safeTier,
+      feature: f.feature,
+      limit_value: f.limit_value,
+      enabled: false,
+      label: f.label
+    }));
+
+    const { error: limitsErr } = await supabaseAdmin
+      .from('tier_limits')
+      .upsert(limitRows, { onConflict: 'tier,feature' });
+
+    if (limitsErr) {
+      // Non-fatal — plan was created, limits can be seeded manually
+      console.warn(`[Admin] Tier limits seed failed for '${safeTier}':`, limitsErr.message);
+    } else {
+      console.log(`[Admin] Seeded ${limitRows.length} tier_limits rows for '${safeTier}'`);
+    }
 
     console.log(`[Admin] New plan '${safeTier}' created by ${req.user.email}`);
     return res.status(201).json({ plan: data });

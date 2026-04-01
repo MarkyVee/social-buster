@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 33;
+const ADMIN_JS_VERSION = 34;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -3052,16 +3052,28 @@ async function loadAdminLimits() {
   panel.dataset.loaded = '1';
 
   // --- Build lookup: feature → tier → row ---
-  const TIERS    = ['free_trial', 'starter', 'professional', 'enterprise'];
+  // Derive tiers dynamically from the data so new plans appear automatically.
+  // Preferred order: known tiers first, then any custom tiers alphabetically.
+  const KNOWN_TIER_ORDER = ['free_trial', 'starter', 'professional', 'enterprise'];
+  const allTiers = [...new Set(limits.map(l => l.tier))];
+  const TIERS = [
+    ...KNOWN_TIER_ORDER.filter(t => allTiers.includes(t)),
+    ...allTiers.filter(t => !KNOWN_TIER_ORDER.includes(t)).sort()
+  ];
+
   const FEATURES = [...new Set(limits.map(l => l.feature))].sort();
 
-  // Human-readable labels
-  const TIER_LABELS = {
+  // Human-readable labels — falls back to title-casing the tier key for custom tiers
+  const KNOWN_TIER_LABELS = {
     free_trial: 'Free Trial',
     starter: 'Starter',
     professional: 'Professional',
     enterprise: 'Enterprise'
   };
+  const TIER_LABELS = {};
+  for (const t of TIERS) {
+    TIER_LABELS[t] = KNOWN_TIER_LABELS[t] || t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
 
   const FEATURE_LABELS = {
     briefs_per_month:       'Briefs / month',
