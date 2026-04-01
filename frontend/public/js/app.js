@@ -9,6 +9,13 @@
  */
 
 // ============================================================
+// APP_VERSION — bump this number every time ANY frontend JS or CSS
+// file changes. Must match APP_VERSION in backend/server.js.
+// When stale, all authenticated users see a "new version" banner.
+// ============================================================
+const APP_VERSION = 1;
+
+// ============================================================
 // Global state — the single source of truth for the frontend
 // ============================================================
 const App = {
@@ -2894,6 +2901,8 @@ async function boot() {
   try {
     await loadCurrentUser();
     renderAppShell();
+    // Check if this browser is running stale JS — non-blocking, runs in background
+    checkAppVersion();
   } catch {
     // Token is invalid or expired — clear it and show login
     clearToken();
@@ -3696,6 +3705,50 @@ function filterHelpTopics(query) {
 
   const noResults = document.getElementById('help-no-results');
   if (noResults) noResults.style.display = anyVisible ? 'none' : 'block';
+}
+
+// ============================================================
+// checkAppVersion — platform-wide stale JS detection.
+// Runs after every successful login / page load for all users.
+// Fetches GET /app-version (public, no auth) and compares the
+// server's expected version to this file's APP_VERSION constant.
+// If they don't match, shows a non-blocking yellow banner at the
+// top of the main content area prompting the user to refresh.
+// ============================================================
+async function checkAppVersion() {
+  try {
+    const res = await fetch('/app-version');
+    if (!res.ok) return; // Non-critical — fail silently
+    const { version } = await res.json();
+
+    if (version === APP_VERSION) return; // All good
+
+    // Already showing a banner? Don't stack duplicates.
+    if (document.getElementById('app-version-banner')) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'app-version-banner';
+    banner.style.cssText = `
+      background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px;
+      padding: 10px 16px; margin: 0 0 16px 0;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; font-size: 13px; color: #92400e;
+    `;
+    banner.innerHTML = `
+      <span>🔄 <strong>A new version of Social Buster is available.</strong> Refresh to get the latest features and fixes.</span>
+      <button onclick="location.reload(true)" style="
+        background:#f59e0b; color:#fff; border:none; border-radius:6px;
+        padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; flex-shrink:0;
+      ">Refresh Now</button>
+    `;
+
+    // Prepend to the main content area so it appears above whatever view is loaded
+    const content = document.getElementById('main-content-area');
+    if (content) content.insertBefore(banner, content.firstChild);
+
+  } catch (_) {
+    // Version check is non-critical — never crash the app over this
+  }
 }
 
 // Start the app when the DOM is ready

@@ -200,6 +200,18 @@ app.get('/health', (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// App version endpoint — public, no auth required.
+// Returns the current expected frontend JS version so the browser
+// can detect stale cached JS and prompt all users to refresh.
+// When bumping any frontend JS or CSS file, increment APP_VERSION
+// here AND in frontend/public/js/app.js.
+// ----------------------------------------------------------------
+const APP_VERSION = 1;
+app.get('/app-version', (req, res) => {
+  res.json({ version: APP_VERSION });
+});
+
+// ----------------------------------------------------------------
 // SPA fallback: serve index.html for any unmatched routes
 // so client-side routing (#dashboard, #brief, etc.) works
 // ----------------------------------------------------------------

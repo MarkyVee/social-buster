@@ -82,7 +82,7 @@ We maintain a strict adapter pattern so external providers can be swapped by cha
 
 ## Pre-Commit Checklist (Non-Negotiable)
 
-1. Changed `admin.js`? → Bump ALL THREE together: `?v=` in `index.html`, `ADMIN_JS_VERSION` in `frontend/public/js/admin.js`, and `ADMIN_JS_VERSION` in `backend/routes/admin.js`. Changed any other frontend JS or CSS? → Bump its `?v=` in `index.html`.
+1. Changed ANY frontend JS or CSS? → Bump `APP_VERSION` in BOTH `frontend/public/js/app.js` AND `backend/server.js` — this triggers the platform-wide "new version" banner for all users. Also bump the file's own `?v=` in `index.html`. Changed `admin.js` specifically? → Also bump `ADMIN_JS_VERSION` in BOTH `frontend/public/js/admin.js` AND `backend/routes/admin.js`.
 2. Added a new route or `require()` in `server.js`? → Verify the file exists and exports correctly
 3. Added a new DB table or query? → Confirm the table exists or flag the migration
 4. Changed any shared module (queues, middleware, services)? → Check all files that import it

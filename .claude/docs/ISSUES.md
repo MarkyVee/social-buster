@@ -14,6 +14,16 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-026
+- **Date:** 2026-03-31
+- **Status:** resolved (2026-03-31)
+- **Category:** HIGH / Frontend
+- **Description:** ISSUE-025 fix was admin-only. Regular users loading `brief.js`, `preview.js`, `publish.js`, `media.js`, and `app.js` had no stale JS detection at all. A version bump miss would silently break features for the entire user base with no warning.
+- **Found in:** `frontend/public/js/app.js` — no version check for regular users
+- **Resolution:** Built platform-wide version check. `APP_VERSION = 1` constant in both `frontend/public/js/app.js` and `backend/server.js`. Public `GET /app-version` endpoint (no auth). `checkAppVersion()` runs after every successful login for all users. If stale, shows a non-blocking yellow banner: "A new version is available — Refresh Now." Future rule: bump `APP_VERSION` in both places whenever ANY frontend JS or CSS file changes.
+
+---
+
 - **ID:** ISSUE-025
 - **Date:** 2026-03-31
 - **Status:** resolved (2026-03-31)
