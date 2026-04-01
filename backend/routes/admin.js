@@ -730,7 +730,7 @@ router.put('/users/:id', async (req, res) => {
   const userId = req.params.id;
   const { subscription_tier, admin_notes } = req.body;
 
-  const validTiers = ['free_trial', 'starter', 'professional', 'enterprise', 'suspended'];
+  const validTiers = ['free_trial', 'starter', 'professional', 'enterprise', 'legacy', 'suspended'];
 
   if (subscription_tier && !validTiers.includes(subscription_tier)) {
     return res.status(400).json({
