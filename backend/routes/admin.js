@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 46;
+const ADMIN_JS_VERSION = 47;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -1146,12 +1146,13 @@ router.get('/tier-limits', async (req, res) => {
 // ----------------------------------------------------------------
 router.put('/tier-limits/:id', async (req, res) => {
   const { id } = req.params;
-  const { limit_value, enabled } = req.body;
+  const { limit_value, enabled, is_globally_visible } = req.body;
 
   // Build the update object — only include fields that were sent
   const updates = { updated_at: new Date().toISOString() };
-  if (limit_value !== undefined) updates.limit_value = Number(limit_value);
-  if (enabled    !== undefined) updates.enabled      = Boolean(enabled);
+  if (limit_value           !== undefined) updates.limit_value           = Number(limit_value);
+  if (enabled               !== undefined) updates.enabled               = Boolean(enabled);
+  if (is_globally_visible   !== undefined) updates.is_globally_visible   = Boolean(is_globally_visible);
 
   // Make sure there's actually something to update
   if (Object.keys(updates).length === 1) {

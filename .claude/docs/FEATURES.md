@@ -295,6 +295,137 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-036
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Industry trend forecasting (Tier 3 reveal)
+- **Reason:** Google Trends + niche Reddit/RSS signals already in Tier 2 roadmap. Start collecting silently before the display is built. Marketing hook: "See what's trending in your niche this week."
+- **What to collect:** Google Trends API + Reddit API signals per user's industry/niche tag. Store in research cache / new `trend_signals` table.
+- **Visibility flag:** `industry_trend_forecasting` in tier_limits, is_globally_visible = false until ready.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy), FEAT-025
+
+---
+
+- **ID:** FEAT-035
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Competitor benchmarking (Tier 3 reveal)
+- **Reason:** Public competitor account data (post frequency, avg engagement, top content types) collected silently. Marketing hook: "Your competitors post 3x per week. Here's the gap."
+- **What to collect:** Public posts + basic metrics from 2-3 competitor accounts per user (set during onboarding). Uses platform public APIs only — no scraping.
+- **Visibility flag:** `competitor_benchmarks` in tier_limits, is_globally_visible = false until ready.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-034
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** LOW
+- **Description:** Dark data — Geographic audience clusters (Tier 3 reveal)
+- **Reason:** Meta API already returns location data in post insights. Start storing it. Marketing hook: "65% of your audience is in the Southeast — are you speaking to them?"
+- **What to collect:** Add geo fields to post_metrics (city, country, region) when fetching Facebook/Instagram insights. Already available in the API response.
+- **Visibility flag:** `geographic_audience_clusters` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-033
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Comment-to-lead funnel stages (Tier 1 reveal)
+- **Reason:** Full funnel data already exists: post_comments → dm_conversations → dm_collected_data. Just needs a display layer. Marketing hook: "Your audience goes from comment → DM → lead in 4 minutes on average."
+- **Data source:** All tables already populated. Zero new collection needed.
+- **Visibility flag:** `comment_to_lead_funnel` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-032
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** LOW
+- **Description:** Dark data — Seasonal engagement patterns (Tier 1 reveal)
+- **Reason:** postTypeCalendarAgent uses a 60-day window. Extend to 90-180 days and add monthly bucketing. Marketing hook: "Q4 is your strongest quarter — your audience buys in November."
+- **Data source:** posts + post_metrics already collected. Just needs longer window + monthly grouping in postTypeCalendarAgent.
+- **Visibility flag:** `seasonal_patterns` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-031
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** LOW
+- **Description:** Dark data — Audience response speed (Tier 1 reveal)
+- **Reason:** post_comments.ingested_at vs posts.published_at already available. Time-to-first-comment is a strong signal for best posting windows. Marketing hook: "Your audience responds fastest on Tuesday mornings."
+- **Data source:** post_comments.ingested_at (already stored) vs posts.published_at. Zero new collection.
+- **Visibility flag:** `audience_response_speed` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-030
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Hashtag performance (Tier 1 reveal)
+- **Reason:** posts.hashtags[] and post_metrics.reach already stored. hashtagPerformanceAgent (already planned as deferred) just needs building. Marketing hook: "These 3 hashtags are pulling 40% of your reach."
+- **Data source:** posts.hashtags + post_metrics. Zero new collection.
+- **Visibility flag:** `hashtag_performance` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy), feature-roadmap-handoff Section 5
+
+---
+
+- **ID:** FEAT-029
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Viral coefficient trend (Tier 1 reveal)
+- **Reason:** shares/reach ratio over time already derivable from post_metrics. Tracks whether content is gaining or losing shareability momentum. Marketing hook: "Your content is being shared more — momentum is building."
+- **Data source:** post_metrics.shares + post_metrics.reach. Zero new collection.
+- **Visibility flag:** `viral_coefficient` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-028
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — Cross-platform performance split (Tier 1 reveal)
+- **Reason:** post_metrics already scoped per post which has a platform field. Compare Facebook vs Instagram engagement for the same user. Marketing hook: "Your Facebook posts outperform Instagram by 2x — here's why."
+- **Data source:** posts.platform + post_metrics. Zero new collection.
+- **Visibility flag:** `cross_platform_performance` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-027
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Dark data — DM conversion benchmarks vs cohort (Tier 1 reveal)
+- **Reason:** dm_conversations already tracked per user. cohort_performance already aggregates by industry. Comparing a user's DM trigger rate vs cohort is a one-query reveal. Marketing hook: "How does your comment-to-DM rate stack up against others in your industry?"
+- **Data source:** dm_conversations + cohort_performance. Zero new collection.
+- **Visibility flag:** `dm_conversion_benchmarks` in tier_limits, is_globally_visible = false.
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy)
+
+---
+
+- **ID:** FEAT-026
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** HIGH
+- **Description:** Feature visibility admin control — `is_globally_visible` on tier_limits. Admin can hide any feature from all users regardless of tier (data still collected), then flip to visible to announce a new feature instantly without a code deploy. Separate "Feature Visibility" section in admin Limits tab. Dark data features default to is_globally_visible = false.
+- **Files:** `migration_feature_visibility.sql` (run in Supabase), `backend/routes/admin.js` (PUT accepts is_globally_visible), `frontend/public/js/admin.js` v47 (visibility section with Live/Dark badges + toggle).
+- **SQL to run:** `migration_feature_visibility.sql`
+- **Related:** [[DECISIONS]] 2026-04-01 (dark data strategy), FEAT-027 through FEAT-036
+
+---
+
 - **ID:** FEAT-025
 - **Date:** 2026-04-01
 - **Status:** planned

@@ -113,6 +113,13 @@
 ---
 
 - Date: 2026-04-01
+- Decision: Dark data strategy — collect all signals from day one, reveal via admin visibility toggle as "new features"
+- Reason: Users judge a platform's intelligence by what they can see. Showing a sparse dashboard on day one feels lightweight. But building every display before launch is too slow. Solution: agents always run and collect regardless of tier or visibility. Admin has a Feature Visibility section in the Limits tab with a per-feature toggle (is_globally_visible). Flipping it to true = instant feature announcement with no code deploy. This also protects against shipping half-baked displays — data matures silently until it's good enough to show.
+- Impact: `is_globally_visible BOOLEAN DEFAULT FALSE` added to tier_limits. All live features set to TRUE in migration. 11 dark data features logged (FEAT-026 to FEAT-036) covering Tier 1 (data exists today) and Tier 3 (needs collection work). Default for new features is hidden. Marketing plays: announce "new feature" whenever admin flips a toggle.
+
+---
+
+- Date: 2026-04-01
 - Decision: Admin-injectable directives per agent — stored in signal_weights, surfaced to LLM at generation time
 - Reason: Admin needs a way to inject soft guidance into agent runs without touching code. Examples: "Have you considered this audience is B2B?" or "What would it look like if video posts were weighted 1.5x?" For Layer 1 math agents (no LLM), the directive doesn't change the calculation — it's stored alongside signal_weights and surfaced by contextBuilder as an "ADMIN NOTES" block in the LLM prompt. For LLM-calling agents (Layer 2+), the directive is injected directly into the system prompt.
 - Impact: `agentDirectiveService.js` created with `getAgentDirective(agentName, userId)` — currently a stub (always returns null). All three Layer 1 agents wired with the hook. contextBuilder reads `agent_directive_*` keys from signal_weights and appends to the "WHAT WORKS FOR YOUR AUDIENCE" prompt block. Full admin UI (table + editor + re-run + reset) deferred to FEAT-025, after all agents are built.

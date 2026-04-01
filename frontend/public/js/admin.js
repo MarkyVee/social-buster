@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 46;
+const ADMIN_JS_VERSION = 47;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -2019,6 +2019,44 @@ function injectAdminStyles() {
     .limit-toggle input:checked + .limit-toggle-slider { background: #6366f1; }
     .limit-toggle input:checked + .limit-toggle-slider::before { transform: translateX(16px); }
 
+    /* Feature Visibility section */
+    .visibility-section {
+      margin-top: 36px;
+      border-top: 2px solid #e2e8f0;
+      padding-top: 28px;
+    }
+    .visibility-section-header { margin-bottom: 16px; }
+    .visibility-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 0 0 6px;
+    }
+    .visibility-intro {
+      font-size: 13px;
+      color: #475569;
+      margin: 0;
+      line-height: 1.5;
+    }
+    .visibility-row-dark td { background: #fafaf9; }
+    .visibility-row-dark:hover td { background: #f5f5f4 !important; }
+    .visibility-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+    .visibility-badge.live {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+    .visibility-badge.dark {
+      background: #fef9c3;
+      color: #854d0e;
+    }
+
     /* Email tab */
     .email-sub-tabs {
       display: flex;
@@ -3253,6 +3291,77 @@ async function loadAdminLimits() {
     return `<tr><td>${escapeAdminHtml(label)}</td>${cells}</tr>`;
   }).join('');
 
+  // --- Build Feature Visibility section ---
+  // One row per unique feature. is_globally_visible is the same value across
+  // all tier rows for a given feature (it's a feature-level concept, not
+  // per-tier). We use the free_trial row as the canonical source, or whichever
+  // tier row we find first.
+  const FEATURE_DESCRIPTIONS = {
+    briefs_per_month:              'Monthly brief creation limit',
+    ai_images_per_month:           'Monthly AI image generation limit',
+    platforms_connected:           'Number of social platforms user can connect',
+    scheduled_queue_size:          'Max posts in the scheduling queue',
+    comment_monitoring:            'Real-time comment ingestion + DM automation',
+    dm_lead_capture:               'Multi-step DM flows + lead data collection',
+    intelligence_dashboard:        'Intelligence dashboard (trends, performance, benchmarks)',
+    performance_predictor:         'Performance predictor score on brief creation',
+    pain_point_miner:              'Audience pain-point analysis from comment data',
+    brand_voice_tracker:           'Brand voice profile (tone + vocabulary analysis)',
+    hook_format_benchmarks:        '📦 Hook format performance vs industry cohort',
+    dm_conversion_benchmarks:      '📦 DM trigger/completion rate vs cohort average',
+    content_velocity_score:        '📦 Posting frequency score vs cohort',
+    cross_platform_performance:    '📦 Facebook vs Instagram performance split',
+    viral_coefficient:             '📦 Shares/reach trend over time',
+    hashtag_performance:           '📦 Top hashtags by reach contribution',
+    audience_response_speed:       '📦 Time-to-first-comment after publish',
+    seasonal_patterns:             '📦 Monthly/quarterly engagement seasonality',
+    comment_to_lead_funnel:        '📦 Full comment → DM → lead funnel stages',
+    competitor_benchmarks:         '📦 Public competitor account benchmarking',
+    geographic_audience_clusters:  '📦 Audience geographic concentration signals',
+    industry_trend_forecasting:    '📦 Google Trends + niche topic forecasting',
+  };
+
+  // Collect all feature rows (one canonical row per feature for visibility)
+  const featureVisibilityRows = {};
+  for (const row of limits) {
+    if (!featureVisibilityRows[row.feature]) {
+      featureVisibilityRows[row.feature] = row;
+    }
+  }
+
+  const visibilityTableRows = Object.entries(featureVisibilityRows).map(([feature, row]) => {
+    const isVisible = row.is_globally_visible === true || row.is_globally_visible === 1;
+    const label     = FEATURE_LABELS[feature] || feature.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const desc      = FEATURE_DESCRIPTIONS[feature] || '';
+    const isDark    = desc.startsWith('📦');
+
+    return `
+      <tr class="${isDark ? 'visibility-row-dark' : ''}">
+        <td>
+          <div style="font-weight:600;color:#1e293b;">${escapeAdminHtml(label)}</div>
+          <div style="font-size:12px;color:#64748b;margin-top:2px;">${escapeAdminHtml(desc.replace('📦 ', ''))}</div>
+        </td>
+        <td style="text-align:center;">
+          ${isDark
+            ? `<span class="visibility-badge dark">Dark — collecting</span>`
+            : `<span class="visibility-badge live">Live</span>`
+          }
+        </td>
+        <td style="text-align:center;">
+          <label class="limit-toggle" title="${isVisible ? 'Visible to users — click to hide' : 'Hidden — click to make visible'}">
+            <input
+              type="checkbox"
+              data-id="${row.id}"
+              data-feature="${escapeAdminHtml(feature)}"
+              ${isVisible ? 'checked' : ''}
+              onchange="saveFeatureVisibility(this)"
+            />
+            <span class="limit-toggle-slider"></span>
+          </label>
+        </td>
+      </tr>`;
+  }).join('');
+
   panel.innerHTML = `
     <p class="limits-intro">
       Set per-tier usage caps. Enter a number for the limit, or leave blank / enter <strong>-1</strong> for unlimited.
@@ -3268,6 +3377,29 @@ async function loadAdminLimits() {
         </thead>
         <tbody>${bodyRows}</tbody>
       </table>
+    </div>
+
+    <div class="visibility-section">
+      <div class="visibility-section-header">
+        <div>
+          <h3 class="visibility-title">Feature Visibility</h3>
+          <p class="visibility-intro">
+            Control which features are visible to users. <strong>Hidden features are still collected silently</strong> — flip the toggle to announce a new feature instantly. No code deploy needed. <span style="background:#f1f5f9;padding:2px 7px;border-radius:4px;font-size:12px;">📦 = dark data candidate</span>
+          </p>
+        </div>
+      </div>
+      <div class="limits-table-wrap">
+        <table class="limits-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th style="text-align:center;width:120px;">Status</th>
+              <th style="text-align:center;width:100px;">Visible</th>
+            </tr>
+          </thead>
+          <tbody>${visibilityTableRows}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
@@ -3374,6 +3506,58 @@ async function saveLimitFlag(checkbox) {
   } catch (err) {
     checkbox.checked = !checkbox.checked;
     console.error('[Limits] Flag save failed:', err.message);
+  }
+}
+
+/**
+ * saveFeatureVisibility — called onchange on a visibility toggle.
+ * Sends is_globally_visible boolean to PUT /admin/tier-limits/:id.
+ *
+ * NOTE: is_globally_visible is a feature-level concept. The toggle
+ * updates the canonical row's id (whichever tier we stored first),
+ * but the migration sets it consistently across all tier rows for a
+ * feature via a DB-level approach. For now one row drives the UI.
+ */
+async function saveFeatureVisibility(checkbox) {
+  const id      = checkbox.dataset.id;
+  const feature = checkbox.dataset.feature;
+  const visible = checkbox.checked;
+
+  const label = checkbox.closest('.limit-toggle');
+
+  try {
+    await apiFetch(`/admin/tier-limits/${id}`, {
+      method: 'PUT',
+      body:   JSON.stringify({ is_globally_visible: visible })
+    });
+
+    if (label) {
+      label.title = visible
+        ? 'Visible to users — click to hide'
+        : 'Hidden — click to make visible';
+    }
+
+    // Update the status badge in the same row
+    const row    = checkbox.closest('tr');
+    const badge  = row?.querySelector('.visibility-badge');
+    if (badge) {
+      if (visible) {
+        badge.className = 'visibility-badge live';
+        badge.textContent = 'Live';
+      } else {
+        badge.className = 'visibility-badge dark';
+        badge.textContent = 'Dark — collecting';
+      }
+    }
+
+    console.log(`[Visibility] Feature "${feature}" set to ${visible ? 'visible' : 'hidden'}`);
+
+  } catch (err) {
+    // Revert toggle on failure
+    checkbox.checked = !visible;
+    if (label) label.title = visible ? 'Hidden — click to make visible' : 'Visible to users — click to hide';
+    console.error('[Visibility] Save failed:', err.message);
+    showAdminToast(`Failed to update visibility for ${feature}`, 'error');
   }
 }
 
