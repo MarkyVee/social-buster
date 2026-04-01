@@ -9,6 +9,7 @@
  *
  *   Layer 1 (post performance math):
  *     hookPerformanceAgent    → signal_weights.hook_formats
+ *     hookTrendAgent          → signal_weights.hook_trends
  *     toneObjectiveFitAgent   → signal_weights.tone_objective_fit
  *     postTypeCalendarAgent   → signal_weights.best_hours
  *
@@ -30,6 +31,7 @@
 const { Worker }                        = require('bullmq');
 const { connection }                    = require('../queues');
 const { runHookPerformanceAnalysis }      = require('../agents/hookPerformanceAgent');
+const { runHookTrendAnalysis }            = require('../agents/hookTrendAgent');
 const { runToneObjectiveFitAnalysis }     = require('../agents/toneObjectiveFitAgent');
 const { runPostTypeCalendarAnalysis }     = require('../agents/postTypeCalendarAgent');
 const { runCommentSentimentAnalysis }     = require('../agents/commentSentimentAgent');
@@ -52,6 +54,7 @@ const signalWeightsWorker = new Worker(
     // on signal_weights JSONB don't overwrite each other's keys.
     // Layer 1 — post performance patterns
     await runHookPerformanceAnalysis(userId);
+    await runHookTrendAnalysis(userId);        // Runs right after — shares same data window
     await runToneObjectiveFitAnalysis(userId);
     await runPostTypeCalendarAnalysis(userId);
 

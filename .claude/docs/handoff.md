@@ -682,6 +682,7 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 | Agent | Status | Writes |
 |-------|--------|--------|
 | hookPerformanceAgent | ✅ Built (2026-04-01) | signal_weights.hook_formats |
+| hookTrendAgent | ✅ Built (2026-04-01) | signal_weights.hook_trends |
 | toneObjectiveFitAgent | ✅ Built (2026-04-01) | signal_weights.tone_objective_fit |
 | postTypeCalendarAgent | ✅ Built (2026-04-01) | signal_weights.best_hours |
 
@@ -690,7 +691,6 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 |-------|--------|--------|
 | commentSentimentAgent | ✅ Built (2026-04-01) | signal_weights.comment_signals |
 | ctaEffectivenessAgent | ✅ Built (2026-04-01) | signal_weights.cta_effectiveness |
-| hookTrendAgent | Deferred | signal_weights.hook_trends |
 
 **Layer 3 — External Signal (platform + trend signals)**
 | Agent | Status | Writes |

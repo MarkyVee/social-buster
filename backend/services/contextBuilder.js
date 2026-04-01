@@ -517,6 +517,23 @@ async function buildSignalWeightsSection(userId) {
       });
     }
 
+    // --- Hook format trends (hookTrendAgent) ---
+    if (sw.hook_trends && Object.keys(sw.hook_trends).length > 0) {
+      if (lines.length > 0) lines.push('');
+      const movingUp   = Object.entries(sw.hook_trends).filter(([, v]) => v.direction === 'up');
+      const movingDown = Object.entries(sw.hook_trends).filter(([, v]) => v.direction === 'down');
+
+      if (movingUp.length > 0 || movingDown.length > 0) {
+        lines.push('HOOK FORMAT MOMENTUM (trending over last 60 days):');
+        movingUp.forEach(([format, v]) => {
+          lines.push(`↑ ${format} hooks: gaining traction (${v.ratio}x recent vs prior)  ← momentum building`);
+        });
+        movingDown.forEach(([format, v]) => {
+          lines.push(`↓ ${format} hooks: losing traction (${v.ratio}x recent vs prior)  ← avoid for now`);
+        });
+      }
+    }
+
     // --- Tone + objective fit ---
     if (sw.tone_objective_fit && Object.keys(sw.tone_objective_fit).length > 0) {
       if (lines.length > 0) lines.push('');
