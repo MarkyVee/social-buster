@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 39;
+const ADMIN_JS_VERSION = 40;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2371,11 +2371,87 @@ router.post('/legacy/cohorts', requireAuth, requireAdmin, async (req, res) => {
 
     if (error) throw new Error(error.message);
 
+    // 3. Keep the Legacy plan card in sync — update the stripe_price_id on the
+    //    plans row named 'legacy' so the plan card preview shows the real price ID.
+    await supabaseAdmin
+      .from('plans')
+      .update({ stripe_price_id })
+      .eq('name', 'legacy');
+
     return res.status(201).json({ cohort: data });
 
   } catch (err) {
     console.error('[Admin] Create cohort error:', err.message);
     return res.status(500).json({ error: 'Failed to create Legacy cohort.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/legacy/members
+// Paginated list of all Legacy members with full detail:
+// name, user ID, cohort year + price, Stripe subscription status
+// (pulled from user_profiles.subscription_status — synced daily by
+// Stripe webhook), join date, referral slug, affiliate link.
+// ----------------------------------------------------------------
+router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 25);
+    const from  = (page - 1) * limit;
+    const q     = req.query.q || '';
+
+    let query = supabaseAdmin
+      .from('user_profiles')
+      .select(`
+        user_id, display_name, email, cohort_year,
+        subscription_status, subscription_tier,
+        stripe_subscription_id, created_at,
+        affiliate_suspended, affiliate_suspended_reason
+      `, { count: 'exact' })
+      .eq('subscription_tier', 'legacy')
+      .order('created_at', { ascending: false })
+      .range(from, from + limit - 1);
+
+    if (q) {
+      query = query.or(`email.ilike.%${q}%,display_name.ilike.%${q}%`);
+    }
+
+    const { data: members, count, error } = await query;
+    if (error) throw new Error(error.message);
+
+    // For each member, get their cohort price details + referral slug
+    const enriched = await Promise.all((members || []).map(async (m) => {
+      // Get cohort price details for their signup year
+      let cohortDetails = null;
+      if (m.cohort_year) {
+        const { data: cohort } = await supabaseAdmin
+          .from('legacy_cohorts')
+          .select('price_monthly, stripe_price_id')
+          .eq('cohort_year', m.cohort_year)
+          .single();
+        cohortDetails = cohort;
+      }
+
+      // Get their referral slug (if they have one)
+      const { data: slugRow } = await supabaseAdmin
+        .from('referral_slugs')
+        .select('slug')
+        .eq('user_id', m.user_id)
+        .single();
+
+      return {
+        ...m,
+        price_monthly:   cohortDetails?.price_monthly  || null,
+        stripe_price_id: cohortDetails?.stripe_price_id || null,
+        referral_slug:   slugRow?.slug || null,
+      };
+    }));
+
+    return res.json({ members: enriched, total: count || 0, page, limit });
+
+  } catch (err) {
+    console.error('[Admin] Legacy members error:', err.message);
+    return res.status(500).json({ error: 'Failed to load Legacy members.' });
   }
 });
 

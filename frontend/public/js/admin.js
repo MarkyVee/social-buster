@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 39;
+const ADMIN_JS_VERSION = 40;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -4539,9 +4539,10 @@ async function loadAdminLegacy() {
   panel.innerHTML = `<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading…</div>`;
 
   try {
-    const [slots, cohorts] = await Promise.all([
+    const [slots, cohorts, membersData] = await Promise.all([
       apiFetch('/admin/legacy/slots'),
       apiFetch('/admin/legacy/cohorts'),
+      apiFetch('/admin/legacy/members?limit=25&page=1'),
     ]);
 
     const usedPct = slots.slotCap > 0 ? Math.round((slots.slotsUsed / slots.slotCap) * 100) : 0;
@@ -4642,6 +4643,23 @@ async function loadAdminLegacy() {
           <p style="font-size:11px;color:#f59e0b;margin:8px 0 0;">⚠️ Adding a cohort sets it as current and locks new Legacy signups to this year's price. Existing members are unaffected.</p>
         </details>
       </div>
+
+      <!-- ---- Legacy Members ---- -->
+      <div class="admin-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <h3 style="margin:0;">Legacy Members <span style="font-size:13px;color:var(--text-secondary);font-weight:400;">(${membersData.total || 0} total)</span></h3>
+          <div style="display:flex;gap:8px;">
+            <input id="legacy-member-search" type="text" placeholder="Search by email or name…"
+              style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:220px;"
+              onkeydown="if(event.key==='Enter') loadAdminLegacyMembers(1)">
+            <button onclick="loadAdminLegacyMembers(1)" style="padding:6px 14px;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">Search</button>
+          </div>
+        </div>
+
+        <div id="legacy-members-table">
+          ${renderLegacyMembersTable(membersData)}
+        </div>
+      </div>
     `;
 
   } catch (err) {
@@ -4680,6 +4698,102 @@ async function adminAddCohort() {
     if (panel) { delete panel.dataset.loaded; loadAdminLegacy(); }
   } catch (err) {
     showToast(err.message, 'error');
+  }
+}
+
+// Renders the Legacy members table HTML from an API response object.
+// Shared by initial load and paginated search.
+function renderLegacyMembersTable(data) {
+  const members    = data.members || [];
+  const total      = data.total   || 0;
+  const page       = data.page    || 1;
+  const limit      = data.limit   || 25;
+  const totalPages = Math.ceil(total / limit);
+  const fmt        = (cents) => cents != null ? '$' + (cents / 100).toFixed(2) : '—';
+
+  const statusBadge = (s) => {
+    const map = {
+      active:   ['#d1fae5','#065f46','Active'],
+      trialing: ['#dbeafe','#1d4ed8','Trial'],
+      past_due: ['#fef3c7','#92400e','Past Due'],
+      canceled: ['#fee2e2','#991b1b','Canceled'],
+      paused:   ['#f3f4f6','#6b7280','Paused'],
+    };
+    const [bg, color, label] = map[s] || ['#f3f4f6','#6b7280', s || 'Unknown'];
+    return `<span style="padding:2px 8px;background:${bg};color:${color};border-radius:99px;font-size:11px;font-weight:600;">${label}</span>`;
+  };
+
+  if (!members.length) {
+    return '<p style="color:var(--text-secondary);padding:12px 0;">No Legacy members yet.</p>';
+  }
+
+  const baseUrl = window.location.origin;
+
+  const rows = members.map(m => `
+    <tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 6px;">
+        <div style="font-weight:600;">${escapeAdminHtml(m.display_name || '—')}</div>
+        <div style="font-size:11px;color:var(--text-secondary);">${escapeAdminHtml(m.email || '')}</div>
+      </td>
+      <td style="padding:8px 6px;font-family:monospace;font-size:11px;color:var(--text-secondary);">${m.user_id.slice(0, 8)}…</td>
+      <td style="padding:8px 6px;text-align:center;">${m.cohort_year || '—'}</td>
+      <td style="padding:8px 6px;text-align:right;">${fmt(m.price_monthly)}/mo</td>
+      <td style="padding:8px 6px;font-family:monospace;font-size:11px;">${escapeAdminHtml(m.stripe_price_id || '—')}</td>
+      <td style="padding:8px 6px;text-align:center;">${statusBadge(m.subscription_status)}</td>
+      <td style="padding:8px 6px;font-size:11px;color:var(--text-secondary);">${m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</td>
+      <td style="padding:8px 6px;font-size:11px;">
+        ${m.referral_slug
+          ? `<a href="${baseUrl}/ref/${escapeAdminHtml(m.referral_slug)}" target="_blank" style="color:#6366f1;text-decoration:none;" title="Copy affiliate link">/ref/${escapeAdminHtml(m.referral_slug)}</a>`
+          : '<span style="color:var(--text-secondary);">No slug set</span>'}
+      </td>
+      <td style="padding:8px 6px;">
+        ${m.affiliate_suspended
+          ? '<span style="padding:2px 8px;background:#fee2e2;color:#991b1b;border-radius:99px;font-size:11px;font-weight:600;">Suspended</span>'
+          : ''}
+      </td>
+    </tr>
+  `).join('');
+
+  return `
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:900px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);color:var(--text-secondary);">
+            <th style="text-align:left;padding:8px 6px;">Member</th>
+            <th style="text-align:left;padding:8px 6px;">ID</th>
+            <th style="text-align:center;padding:8px 6px;">Cohort</th>
+            <th style="text-align:right;padding:8px 6px;">Monthly Price</th>
+            <th style="text-align:left;padding:8px 6px;">Stripe Price ID</th>
+            <th style="text-align:center;padding:8px 6px;">Status</th>
+            <th style="text-align:left;padding:8px 6px;">Joined</th>
+            <th style="text-align:left;padding:8px 6px;">Affiliate Link</th>
+            <th style="padding:8px 6px;"></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${totalPages > 1 ? `
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;">
+        ${page > 1 ? `<button onclick="loadAdminLegacyMembers(${page - 1})" class="btn btn-sm">← Prev</button>` : ''}
+        <span style="padding:6px 12px;font-size:13px;color:var(--text-secondary);">Page ${page} of ${totalPages}</span>
+        ${page < totalPages ? `<button onclick="loadAdminLegacyMembers(${page + 1})" class="btn btn-sm">Next →</button>` : ''}
+      </div>
+    ` : ''}
+  `;
+}
+
+// Fetch a page of Legacy members and re-render the members table only.
+async function loadAdminLegacyMembers(page = 1) {
+  const q     = document.getElementById('legacy-member-search')?.value?.trim() || '';
+  const wrap  = document.getElementById('legacy-members-table');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="admin-loading"><div class="spinner spinner-sm"></div></div>';
+  try {
+    const data = await apiFetch(`/admin/legacy/members?page=${page}&limit=25${q ? '&q=' + encodeURIComponent(q) : ''}`);
+    wrap.innerHTML = renderLegacyMembersTable(data);
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:#ef4444;">Failed to load members: ${escapeAdminHtml(err.message)}</div>`;
   }
 }
 
