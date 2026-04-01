@@ -6,6 +6,8 @@ What was built, fixed, or shipped — logged per session.
 
 ## 2026-03-31
 
+- **FIXED ISSUE-027:** `tier_limits` RLS policy blocked auto-seed — table stayed empty, Limits tab showed nothing. Fixed policy to allow service role full access, manually seeded all 40 rows (10 features × 4 tiers) via Supabase SQL Editor. No redeploy.
+- **FIXED ISSUE-028:** `system_events` + `system_state` tables missing — watchdog migration never ran. Ran `migration_system_events.sql` in Supabase. Watchdog tab now records health events. No redeploy.
 - **FIXED ISSUE-026:** Platform-wide stale JS detection for all users — `APP_VERSION = 1` constant in `frontend/public/js/app.js` and `backend/server.js`. Public `GET /app-version` endpoint. `checkAppVersion()` fires after every login for every user. If the loaded JS doesn't match the server's version, a yellow "new version available — Refresh Now" banner appears in the main content area. Bumps app.js to v=48.
 - **FIXED ISSUE-025:** Recurring stale admin JS — `?v=` not bumped after admin.js changes caused controls to silently disappear (happened 3x). Built a server-side version handshake: `ADMIN_JS_VERSION = 32` constant in both `backend/routes/admin.js` and `frontend/public/js/admin.js`. New `GET /admin/version` endpoint. `checkAdminJsVersion()` runs on every dashboard load — if stale, shows a sticky yellow banner with one-click "Purge Cache & Reload" (calls Cloudflare purge then hard-reloads). Future deploys: bump all three numbers together.
 - **FEAT:** Admin Cloudflare CDN cache purge button — "🌐 Purge CDN Cache" in Diagnostics tab maintenance section. Calls `POST /admin/maintenance/purge-cache` → Cloudflare zone purge API. Requires `CLOUDFLARE_ZONE_ID` + `CLOUDFLARE_API_TOKEN` in `.env`.

@@ -14,6 +14,26 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-028
+- **Date:** 2026-04-01
+- **Status:** resolved (2026-04-01)
+- **Category:** HIGH / Database
+- **Description:** `system_events` and `system_state` tables missing in Supabase — watchdog migration was never run. Watchdog tab threw `Could not find the table 'public.system_events' in the schema cache` on every health check cycle.
+- **Found in:** Watchdog tab, `watchdogAgent.js`
+- **Resolution:** Ran `migration_system_events.sql` in Supabase SQL Editor. Created both tables, 3 indexes, RLS policies (service role full access), seeded `system_state` pause key. No redeploy needed.
+
+---
+
+- **ID:** ISSUE-027
+- **Date:** 2026-04-01
+- **Status:** resolved (2026-04-01)
+- **Category:** HIGH / Database
+- **Description:** `tier_limits` RLS policy blocked auto-seed. Table was empty so Limits tab showed nothing. Auto-seed in `GET /admin/tier-limits` ran but failed with "new row violates row-level security policy" — even though `supabaseAdmin` uses the service role key. RLS policy was written to only allow SELECT for authenticated users, not INSERT for service role.
+- **Found in:** `backend/routes/admin.js` auto-seed, `tier_limits` RLS policy in Supabase
+- **Resolution:** Fixed RLS policy (`USING (true) WITH CHECK (true)` for service role). Manually seeded all 40 tier_limit rows (10 features × 4 tiers) via SQL. No redeploy needed.
+
+---
+
 - **ID:** ISSUE-026
 - **Date:** 2026-03-31
 - **Status:** resolved (2026-03-31)
