@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -609,6 +609,10 @@ async function handleRegister(e) {
 
     // Same race-condition guard as handleLogin above
     try { await loadCurrentUser(); } catch { /* non-fatal — proceed to app */ }
+
+    // New users always land on Settings & Billing so they can choose a plan
+    // and connect their platforms before doing anything else.
+    window.location.hash = 'settings';
     renderAppShell();
 
   } catch (err) {
@@ -2078,26 +2082,8 @@ async function renderSettings(el) {
     <!-- Alerts for OAuth results and general settings errors -->
     <div id="settings-alerts"></div>
 
-    <!-- ----------------------------------------------------------------
-         Connected Social Platforms
-         Shows all 7 platforms. Meta OAuth covers Facebook + Instagram.
-         Threads has its own OAuth. Others show setup info for now.
-    ---------------------------------------------------------------- -->
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card-header">
-        <div class="card-title">Connected Platforms</div>
-        <div class="text-muted text-sm">Connect your social accounts to publish directly from Social Buster.</div>
-      </div>
-      <!-- Platforms grid — populated by loadConnectedPlatforms() below -->
-      <div id="platforms-container" style="margin-top:12px;">
-        <div class="loading-overlay" style="position:relative;height:60px;background:none;">
-          <div class="spinner spinner-sm"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Subscription -->
-    <div class="card" id="subscription-card">
+    <!-- Subscription — shown first so new users see plan options immediately -->
+    <div class="card" id="subscription-card" style="margin-bottom:24px;">
       <div class="card-header">
         <div class="card-title">Subscription</div>
         <span class="badge badge-${sub.status || 'active'}" style="text-transform:capitalize;">
@@ -2105,6 +2091,24 @@ async function renderSettings(el) {
         </span>
       </div>
       <div id="subscription-content">
+        <div class="loading-overlay" style="position:relative;height:60px;background:none;">
+          <div class="spinner spinner-sm"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ----------------------------------------------------------------
+         Connected Social Platforms
+         Shows all 7 platforms. Meta OAuth covers Facebook + Instagram.
+         Threads has its own OAuth. Others show setup info for now.
+    ---------------------------------------------------------------- -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Connected Platforms</div>
+        <div class="text-muted text-sm">Connect your social accounts to publish directly from Social Buster.</div>
+      </div>
+      <!-- Platforms grid — populated by loadConnectedPlatforms() below -->
+      <div id="platforms-container" style="margin-top:12px;">
         <div class="loading-overlay" style="position:relative;height:60px;background:none;">
           <div class="spinner spinner-sm"></div>
         </div>
