@@ -1652,8 +1652,13 @@ async function autoProbeVideoInBackground(postId, mediaItemId) {
       });
     }
   } catch (_err) {
-    // Probe failed silently — trim warning stays in "duration unknown" state.
-    // The user can still probe manually from the Media Library if needed.
+    // Probe failed — replace the spinner with a soft fallback message so the
+    // user isn't left staring at an infinite spinner.
+    const card = document.querySelector(`.post-card[data-post-id="${postId}"], .wysiwyg-card[data-post-id="${postId}"]`);
+    const trimArea = card?.querySelector('.trim-info');
+    if (trimArea) {
+      trimArea.innerHTML = `<span class="text-muted text-sm">⚠️ Could not read video duration — use the Media Library to probe manually.</span>`;
+    }
   }
 }
 

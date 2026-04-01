@@ -1094,10 +1094,14 @@ router.post('/:id/probe', standardLimiter, requireAuth, enforceTenancy, async (r
       // Shared helper — handles token refresh + saves updated token to DB automatically
       const { drive } = await getGoogleDriveClient(req.user.id, conn);
 
-      const response = await drive.files.get({
-        fileId: item.cloud_file_id,
-        fields: 'videoMediaMetadata'
-      });
+      // 10s timeout — Drive API occasionally hangs on stale tokens
+      const driveTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Google Drive metadata request timed out')), 10000)
+      );
+      const response = await Promise.race([
+        drive.files.get({ fileId: item.cloud_file_id, fields: 'videoMediaMetadata' }),
+        driveTimeout
+      ]);
 
       const meta = response.data?.videoMediaMetadata;
       if (meta?.durationMillis) {
