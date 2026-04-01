@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 38;
+const ADMIN_JS_VERSION = 39;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -1587,9 +1587,13 @@ function injectAdminStyles() {
       padding-bottom: 0;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 transparent;
+      padding-bottom: 4px;
     }
-    .admin-tabs::-webkit-scrollbar { display: none; }
+    .admin-tabs::-webkit-scrollbar { height: 4px; }
+    .admin-tabs::-webkit-scrollbar-track { background: transparent; }
+    .admin-tabs::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
     .admin-tab {
       background: none;
       border: none;
