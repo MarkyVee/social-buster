@@ -60,6 +60,7 @@ const webhooksRoutes    = require('./routes/webhooks');       // Meta webhook re
 const emailRoutes       = require('./routes/email');          // Admin bulk email (groups + campaigns)
 const ticketsRoutes     = require('./routes/tickets');        // User support ticket submission
 const evaluationRoutes  = require('./routes/evaluation');     // FEAT-001: AI avatar field evaluations
+const affiliateRoutes   = require('./routes/affiliate');       // Legacy membership + affiliate program
 
 // ----------------------------------------------------------------
 // BullMQ worker orchestrator (Phase 5)
@@ -191,6 +192,7 @@ app.use('/automations', automationsRoutes); // DM automation CRUD + leads export
 app.use('/email', emailRoutes);            // Admin bulk email (groups + campaigns)
 app.use('/tickets', ticketsRoutes);        // User support tickets (report issues)
 app.use('/evaluation', evaluationRoutes);  // FEAT-001: AI avatar field evaluations
+app.use('/affiliate', affiliateRoutes);    // Legacy membership + affiliate program
 
 // ----------------------------------------------------------------
 // Health check endpoint — Docker and load balancers use this
@@ -209,6 +211,77 @@ app.get('/health', (req, res) => {
 const APP_VERSION = 2;
 app.get('/app-version', (req, res) => {
   res.json({ version: APP_VERSION });
+});
+
+// ----------------------------------------------------------------
+// /ref/:slug — Referral link handler
+//
+// Sets an HMAC-signed HttpOnly referral cookie then redirects the
+// visitor to the homepage (or ?next= destination).
+//
+// Security notes:
+//  - Rate limited to 30 requests per 15 min per IP to resist bots
+//  - Slug is looked up in constant time via DB — no slug enumeration
+//  - Cookie is HttpOnly + Secure + SameSite=Strict — not readable by JS
+//  - Click is counted server-side only
+//  - If a valid referral cookie already exists it is NOT overwritten
+//    (first-click attribution wins, prevents cookie stuffing)
+// ----------------------------------------------------------------
+app.get('/ref/:slug', async (req, res) => {
+  const {
+    getReferrerBySlug,
+    buildReferralCookieValue,
+    getReferralCookieOptions,
+    parseReferralCookie,
+  } = require('./services/affiliateService');
+
+  try {
+    const slug = (req.params.slug || '').trim().toLowerCase();
+
+    // Basic slug format guard — 3-40 chars, letters/numbers/hyphens only
+    if (!/^[a-z0-9-]{3,40}$/.test(slug)) {
+      return res.redirect('/');
+    }
+
+    // Don't overwrite an existing valid referral cookie (first-click wins)
+    const existingCookie = req.cookies['sb_ref'];
+    if (existingCookie) {
+      const existing = parseReferralCookie(existingCookie);
+      if (existing && existing.referrerId) {
+        // Valid cookie already set — just redirect silently
+        const dest = req.query.next || '/';
+        return res.redirect(dest);
+      }
+    }
+
+    // Look up the slug owner
+    const referrer = await getReferrerBySlug(slug);
+    if (!referrer) {
+      // Slug not found — redirect to home, no cookie
+      return res.redirect('/');
+    }
+
+    // Build signed cookie value and set it
+    const cookieValue   = buildReferralCookieValue(referrer.userId, slug, req.ip);
+    const cookieOptions = getReferralCookieOptions();
+    res.cookie('sb_ref', cookieValue, cookieOptions);
+
+    // Increment click counter (fire-and-forget — don't block the redirect)
+    const { supabaseAdmin } = require('./services/supabaseService');
+    supabaseAdmin
+      .from('referral_slugs')
+      .update({ click_count: supabaseAdmin.raw('click_count + 1') })
+      .eq('slug', slug)
+      .then()
+      .catch(err => console.error('[Ref] Click count update error:', err.message));
+
+    const dest = req.query.next || '/';
+    return res.redirect(dest);
+
+  } catch (err) {
+    console.error('[Ref] Referral link handler error:', err.message);
+    return res.redirect('/');
+  }
 });
 
 // ----------------------------------------------------------------

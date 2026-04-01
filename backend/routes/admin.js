@@ -33,12 +33,18 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 34;
+const ADMIN_JS_VERSION = 35;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
 const { supabaseAdmin }  = require('../services/supabaseService');
 const { cacheGet }       = require('../services/redisService');
+
+const {
+  getLegacySlotDisplay,
+  processMonthlyPayouts,
+  logAffiliateStatusEvent,
+} = require('../services/affiliateService');
 
 const {
   publishQueue,
@@ -48,7 +54,8 @@ const {
   researchQueue,
   mediaAnalysisQueue,
   dmQueue,
-  emailQueue
+  emailQueue,
+  payoutQueue
 } = require('../queues');
 
 // ----------------------------------------------------------------
@@ -78,7 +85,8 @@ try {
       new BullMQAdapter(researchQueue,      { readOnlyMode: false }),
       new BullMQAdapter(mediaAnalysisQueue, { readOnlyMode: false }),
       new BullMQAdapter(dmQueue,            { readOnlyMode: false }),
-      new BullMQAdapter(emailQueue,         { readOnlyMode: false })
+      new BullMQAdapter(emailQueue,         { readOnlyMode: false }),
+      new BullMQAdapter(payoutQueue,        { readOnlyMode: false })
     ],
     serverAdapter
   });
@@ -225,7 +233,8 @@ router.get('/health', async (req, res) => {
     research:         researchQueue,
     'media-analysis': mediaAnalysisQueue,
     dm:               dmQueue,
-    email:            emailQueue
+    email:            emailQueue,
+    payout:           payoutQueue
   };
 
   for (const [name, q] of Object.entries(queues)) {
@@ -509,7 +518,7 @@ router.get('/stats', async (req, res) => {
 
     // Total failed jobs across all queues
     let totalFailed = 0;
-    for (const q of [publishQueue, commentQueue, mediaScanQueue, performanceQueue, researchQueue, mediaAnalysisQueue, dmQueue, emailQueue]) {
+    for (const q of [publishQueue, commentQueue, mediaScanQueue, performanceQueue, researchQueue, mediaAnalysisQueue, dmQueue, emailQueue, payoutQueue]) {
       try { totalFailed += await q.getFailedCount(); } catch (_) {}
     }
 
@@ -2241,6 +2250,538 @@ function categorizeError(msg) {
   if (m.includes('351'))                                 return 'Video Upload Error';
   return 'Other';
 }
+
+// ================================================================
+// AFFILIATE + LEGACY ADMIN ROUTES
+// ================================================================
+
+// ----------------------------------------------------------------
+// GET /admin/legacy/slots
+// Returns live slot cap and usage for the admin dashboard.
+// Admin sees the REAL numbers, not the display-adjusted ones.
+// ----------------------------------------------------------------
+router.get('/legacy/slots', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('legacy_slots')
+      .select('slot_cap, slots_used')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    return res.json({
+      slotCap: data.slot_cap,
+      slotsUsed: data.slots_used,
+      slotsRemaining: data.slot_cap - data.slots_used,
+    });
+
+  } catch (err) {
+    console.error('[Admin] Legacy slots error:', err.message);
+    return res.status(500).json({ error: 'Failed to load Legacy slot data.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/legacy/slots
+// Update the Legacy slot cap (admin sets the total limit).
+// Body: { slot_cap: 150 }
+// ----------------------------------------------------------------
+router.put('/legacy/slots', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { slot_cap } = req.body;
+
+    if (!slot_cap || typeof slot_cap !== 'number' || slot_cap < 1) {
+      return res.status(400).json({ error: 'slot_cap must be a positive number.' });
+    }
+
+    // Check current usage — can't set cap below current usage
+    const { data: current } = await supabaseAdmin
+      .from('legacy_slots')
+      .select('slots_used')
+      .single();
+
+    if (slot_cap < current.slots_used) {
+      return res.status(400).json({
+        error: `Cannot set cap to ${slot_cap} — ${current.slots_used} slots are already used.`,
+      });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('legacy_slots')
+      .update({ slot_cap, updated_at: new Date().toISOString() })
+      .not('id', 'is', null); // update the single row
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ ok: true, slot_cap });
+
+  } catch (err) {
+    console.error('[Admin] Legacy slots update error:', err.message);
+    return res.status(500).json({ error: 'Failed to update Legacy slot cap.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/legacy/cohorts
+// Lists all Legacy cohort years and their Stripe Price IDs.
+// ----------------------------------------------------------------
+router.get('/legacy/cohorts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('legacy_cohorts')
+      .select('id, cohort_year, price_monthly, stripe_price_id, is_current, created_at')
+      .order('cohort_year', { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ cohorts: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] Legacy cohorts error:', err.message);
+    return res.status(500).json({ error: 'Failed to load Legacy cohorts.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/legacy/cohorts
+// Create a new Legacy cohort year (e.g., when a new calendar year starts
+// and pricing changes). Sets this cohort as current, unsets all others.
+// Body: { cohort_year: 2026, price_monthly: 5900, stripe_price_id: "price_xxx" }
+// ----------------------------------------------------------------
+router.post('/legacy/cohorts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { cohort_year, price_monthly, stripe_price_id } = req.body;
+
+    if (!cohort_year || !price_monthly || !stripe_price_id) {
+      return res.status(400).json({ error: 'cohort_year, price_monthly, and stripe_price_id are required.' });
+    }
+
+    // 1. Unset current on all existing cohorts
+    await supabaseAdmin
+      .from('legacy_cohorts')
+      .update({ is_current: false })
+      .eq('is_current', true);
+
+    // 2. Insert the new cohort as current
+    const { data, error } = await supabaseAdmin
+      .from('legacy_cohorts')
+      .insert({ cohort_year, price_monthly, stripe_price_id, is_current: true })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    return res.status(201).json({ cohort: data });
+
+  } catch (err) {
+    console.error('[Admin] Create cohort error:', err.message);
+    return res.status(500).json({ error: 'Failed to create Legacy cohort.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/affiliates
+// Paginated list of all Legacy members (potential/active affiliates).
+// Includes referral count, earnings summary, Connect status, and
+// suspension status for each affiliate.
+// ----------------------------------------------------------------
+router.get('/affiliates', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 25);
+    const from  = (page - 1) * limit;
+    const q     = req.query.q || '';
+
+    // Fetch Legacy users from user_profiles
+    let query = supabaseAdmin
+      .from('user_profiles')
+      .select(`
+        user_id, display_name, email, stripe_connect_account_id,
+        stripe_connect_onboarded_at, affiliate_suspended, affiliate_suspended_reason,
+        affiliate_suspended_at, cohort_year, created_at
+      `, { count: 'exact' })
+      .eq('subscription_tier', 'legacy')
+      .order('created_at', { ascending: false })
+      .range(from, from + limit - 1);
+
+    if (q) {
+      query = query.or(`email.ilike.%${q}%,display_name.ilike.%${q}%`);
+    }
+
+    const { data: affiliates, count, error } = await query;
+    if (error) throw new Error(error.message);
+
+    // For each affiliate, get referral count and earnings totals
+    const enriched = await Promise.all((affiliates || []).map(async (aff) => {
+      const { count: referralCount } = await supabaseAdmin
+        .from('referrals')
+        .select('id', { count: 'exact', head: true })
+        .eq('referrer_id', aff.user_id)
+        .eq('status', 'active');
+
+      const { data: earningsSummary } = await supabaseAdmin
+        .from('affiliate_earnings')
+        .select('status, commission_amount')
+        .eq('affiliate_id', aff.user_id);
+
+      let pendingEarnings  = 0;
+      let eligibleEarnings = 0;
+      let lifetimeEarnings = 0;
+      for (const row of earningsSummary || []) {
+        const amt = row.commission_amount || 0;
+        lifetimeEarnings += amt;
+        if (row.status === 'pending')  pendingEarnings  += amt;
+        if (row.status === 'eligible') eligibleEarnings += amt;
+      }
+
+      return {
+        ...aff,
+        activeReferrals: referralCount || 0,
+        pendingEarnings,
+        eligibleEarnings,
+        lifetimeEarnings,
+      };
+    }));
+
+    return res.json({ affiliates: enriched, total: count || 0, page, limit });
+
+  } catch (err) {
+    console.error('[Admin] Affiliates list error:', err.message);
+    return res.status(500).json({ error: 'Failed to load affiliates.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/affiliates/:id
+// Full detail view for a single affiliate: profile, referrals,
+// earnings, payouts, clawbacks, status log.
+// ----------------------------------------------------------------
+router.get('/affiliates/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const affiliateId = req.params.id;
+
+    // 1. Profile
+    const { data: profile, error: profileErr } = await supabaseAdmin
+      .from('user_profiles')
+      .select('user_id, display_name, email, stripe_connect_account_id, stripe_connect_onboarded_at, affiliate_suspended, affiliate_suspended_reason, affiliate_suspended_at, cohort_year, created_at')
+      .eq('user_id', affiliateId)
+      .single();
+
+    if (profileErr) return res.status(404).json({ error: 'Affiliate not found.' });
+
+    // 2. Referral slug
+    const { data: slug } = await supabaseAdmin
+      .from('referral_slugs')
+      .select('slug, is_custom, click_count, created_at, customized_at')
+      .eq('user_id', affiliateId)
+      .single();
+
+    // 3. Referrals
+    const { data: referrals } = await supabaseAdmin
+      .from('referrals')
+      .select('id, current_plan, status, created_at, cancelled_at, fraud_flagged_at, fraud_flag_reason, ip_at_signup, device_fingerprint')
+      .eq('referrer_id', affiliateId)
+      .order('created_at', { ascending: false });
+
+    // 4. Recent earnings (last 50)
+    const { data: earnings } = await supabaseAdmin
+      .from('affiliate_earnings')
+      .select('id, invoice_amount, commission_rate, commission_amount, period_month, status, eligible_at, created_at')
+      .eq('affiliate_id', affiliateId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    // 5. Payouts
+    const { data: payouts } = await supabaseAdmin
+      .from('affiliate_payouts')
+      .select('id, period_month, gross_amount, clawbacks_deducted, reserve_withheld, net_amount, status, hold_reason, processed_at, created_at')
+      .eq('affiliate_id', affiliateId)
+      .order('created_at', { ascending: false });
+
+    // 6. Clawbacks
+    const { data: clawbacks } = await supabaseAdmin
+      .from('affiliate_clawbacks')
+      .select('id, reason, stripe_event_id, amount_reversed, created_at')
+      .eq('affiliate_id', affiliateId)
+      .order('created_at', { ascending: false });
+
+    // 7. Status audit log
+    const { data: statusLog } = await supabaseAdmin
+      .from('affiliate_status_log')
+      .select('id, event_type, old_value, new_value, reason, acted_by, created_at')
+      .eq('affiliate_id', affiliateId)
+      .order('created_at', { ascending: false });
+
+    return res.json({
+      profile,
+      slug: slug || null,
+      referrals: referrals || [],
+      earnings: earnings || [],
+      payouts: payouts || [],
+      clawbacks: clawbacks || [],
+      statusLog: statusLog || [],
+    });
+
+  } catch (err) {
+    console.error('[Admin] Affiliate detail error:', err.message);
+    return res.status(500).json({ error: 'Failed to load affiliate detail.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/affiliates/:id/suspend
+// Suspend an affiliate. Stops all future payouts until reinstated.
+// Body: { reason: "Suspected fraud - case #123" }
+// ----------------------------------------------------------------
+router.put('/affiliates/:id/suspend', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const affiliateId = req.params.id;
+    const { reason }  = req.body;
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+      return res.status(400).json({ error: 'A reason is required (min 5 characters).' });
+    }
+
+    const now = new Date().toISOString();
+
+    const { error } = await supabaseAdmin
+      .from('user_profiles')
+      .update({
+        affiliate_suspended: true,
+        affiliate_suspended_reason: reason.trim(),
+        affiliate_suspended_at: now,
+      })
+      .eq('user_id', affiliateId);
+
+    if (error) throw new Error(error.message);
+
+    // Log the suspension in the immutable audit trail
+    await logAffiliateStatusEvent(affiliateId, 'suspended', null, 'suspended', reason.trim(), req.user.id);
+
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error('[Admin] Affiliate suspend error:', err.message);
+    return res.status(500).json({ error: 'Failed to suspend affiliate.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/affiliates/:id/reinstate
+// Remove suspension from an affiliate, restoring payout eligibility.
+// Body: { reason: "Investigation complete, no fraud found" }
+// ----------------------------------------------------------------
+router.put('/affiliates/:id/reinstate', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const affiliateId = req.params.id;
+    const { reason }  = req.body;
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+      return res.status(400).json({ error: 'A reason is required (min 5 characters).' });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('user_profiles')
+      .update({
+        affiliate_suspended: false,
+        affiliate_suspended_reason: null,
+        affiliate_suspended_at: null,
+      })
+      .eq('user_id', affiliateId);
+
+    if (error) throw new Error(error.message);
+
+    await logAffiliateStatusEvent(affiliateId, 'reinstated', 'suspended', 'active', reason.trim(), req.user.id);
+
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error('[Admin] Affiliate reinstate error:', err.message);
+    return res.status(500).json({ error: 'Failed to reinstate affiliate.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/affiliates/:id/referrals
+// Full referral list for a specific affiliate, including fraud fields.
+// Used in dispute resolution view.
+// ----------------------------------------------------------------
+router.get('/affiliates/:id/referrals', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('referrals')
+      .select('id, referred_user_id, referred_plan_at_signup, current_plan, status, ip_at_signup, device_fingerprint, cookie_ip, referrer_url, created_at, cancelled_at, fraud_flagged_at, fraud_flag_reason')
+      .eq('referrer_id', req.params.id)
+      .order('created_at', { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ referrals: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] Affiliate referrals error:', err.message);
+    return res.status(500).json({ error: 'Failed to load referrals.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/payouts/queue
+// Lists all affiliates with eligible earnings ready for the next
+// payout run. Used by admin to preview before triggering payouts.
+// ----------------------------------------------------------------
+router.get('/payouts/queue', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    // Sum eligible earnings per affiliate
+    const { data, error } = await supabaseAdmin
+      .from('affiliate_earnings')
+      .select('affiliate_id, commission_amount')
+      .eq('status', 'eligible');
+
+    if (error) throw new Error(error.message);
+
+    // Group by affiliate_id and sum
+    const totals = {};
+    for (const row of data || []) {
+      const id = row.affiliate_id;
+      totals[id] = (totals[id] || 0) + (row.commission_amount || 0);
+    }
+
+    // Filter affiliates who meet the $50 (5000 cents) minimum payout
+    const MIN_PAYOUT = 5000;
+    const queue = Object.entries(totals)
+      .filter(([, amount]) => amount >= MIN_PAYOUT)
+      .map(([affiliateId, totalEligible]) => ({ affiliateId, totalEligible }))
+      .sort((a, b) => b.totalEligible - a.totalEligible);
+
+    return res.json({ queue, count: queue.length });
+
+  } catch (err) {
+    console.error('[Admin] Payout queue error:', err.message);
+    return res.status(500).json({ error: 'Failed to load payout queue.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/payouts/process
+// Triggers the monthly payout run. This is normally triggered by
+// the BullMQ payout worker on the 5th of each month, but admins
+// can trigger it manually from the dashboard.
+//
+// This is a long-running operation — it processes each eligible
+// affiliate sequentially. The response includes a summary.
+// ----------------------------------------------------------------
+router.post('/payouts/process', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    console.log(`[Admin] Manual payout run triggered by ${req.user.id}`);
+
+    const result = await processMonthlyPayouts();
+
+    return res.json({
+      ok: true,
+      processed: result.processed,
+      skipped: result.skipped,
+      errors: result.errors,
+    });
+
+  } catch (err) {
+    console.error('[Admin] Manual payout run error:', err.message);
+    return res.status(500).json({ error: 'Payout run failed: ' + err.message });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/clawbacks
+// Lists all clawbacks, newest first. Useful for monthly review.
+// ----------------------------------------------------------------
+router.get('/clawbacks', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, parseInt(req.query.limit) || 25);
+    const from  = (page - 1) * limit;
+
+    const { data, count, error } = await supabaseAdmin
+      .from('affiliate_clawbacks')
+      .select('id, affiliate_id, earning_id, reason, stripe_event_id, amount_reversed, deducted_from_payout_id, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, from + limit - 1);
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ clawbacks: data || [], total: count || 0, page, limit });
+
+  } catch (err) {
+    console.error('[Admin] Clawbacks list error:', err.message);
+    return res.status(500).json({ error: 'Failed to load clawbacks.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/fraud-flags
+// Lists referrals flagged for fraud. Admin reviews and takes action.
+// ----------------------------------------------------------------
+router.get('/fraud-flags', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('referrals')
+      .select('id, referrer_id, referred_user_id, current_plan, fraud_flag_reason, fraud_flagged_at, ip_at_signup, device_fingerprint, cookie_ip, referrer_url, created_at')
+      .eq('status', 'fraud_flagged')
+      .order('fraud_flagged_at', { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ fraudFlags: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] Fraud flags error:', err.message);
+    return res.status(500).json({ error: 'Failed to load fraud flags.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// PUT /admin/fraud-flags/:id
+// Resolve a fraud flag: either clear it (false positive) or confirm
+// it (disqualifies the referral from earning commissions).
+// Body: { action: "clear" | "confirm", reason: "..." }
+// ----------------------------------------------------------------
+router.put('/fraud-flags/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const referralId = req.params.id;
+    const { action, reason } = req.body;
+
+    if (!['clear', 'confirm'].includes(action)) {
+      return res.status(400).json({ error: 'action must be "clear" or "confirm".' });
+    }
+
+    if (!reason || reason.trim().length < 5) {
+      return res.status(400).json({ error: 'reason is required (min 5 chars).' });
+    }
+
+    if (action === 'clear') {
+      // False positive — restore to active
+      const { error } = await supabaseAdmin
+        .from('referrals')
+        .update({ status: 'active', fraud_flagged_at: null, fraud_flag_reason: null })
+        .eq('id', referralId);
+
+      if (error) throw new Error(error.message);
+
+    } else {
+      // Confirmed fraud — mark cancelled, do not restore commissions
+      const { error } = await supabaseAdmin
+        .from('referrals')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('id', referralId);
+
+      if (error) throw new Error(error.message);
+    }
+
+    return res.json({ ok: true });
+
+  } catch (err) {
+    console.error('[Admin] Fraud flag resolve error:', err.message);
+    return res.status(500).json({ error: 'Failed to resolve fraud flag.' });
+  }
+});
 
 module.exports = router;
 

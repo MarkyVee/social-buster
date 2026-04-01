@@ -508,6 +508,164 @@ async function handleWebhookEvent(event) {
           .update({ status: 'active' })
           .eq('user_id', userId);
         console.log(`[Stripe Webhook] Payment succeeded for user ${userId}`);
+
+        // --------------------------------------------------------
+        // Affiliate commission: if this user was referred by a
+        // Legacy affiliate, credit a commission for this invoice.
+        // processInvoiceCommission is idempotent — safe to call on
+        // every payment_succeeded event (uses stripe_invoice_id as
+        // the idempotency key to prevent double-crediting).
+        // --------------------------------------------------------
+        try {
+          const { processInvoiceCommission } = require('./affiliateService');
+          await processInvoiceCommission(userId, invoice.id, invoice.amount_paid || 0);
+        } catch (affErr) {
+          // Log but do not fail the webhook — subscription update already succeeded
+          console.error(`[Stripe Webhook] Commission processing error for invoice ${invoice.id}:`, affErr.message);
+        }
+      }
+      break;
+    }
+
+    // ----------------------------------------------------------------
+    // checkout.session.completed
+    // Handles Legacy membership checkout:
+    //  1. Claims a Legacy slot (atomic — uses DB SELECT FOR UPDATE via RPC)
+    //  2. Records cohort_year + legacy_stripe_price_id on user_profiles
+    //  3. Creates the referral slug for the new Legacy member
+    //  4. Records the referral relationship (if they came via a ref link)
+    //
+    // Also handles normal plan upgrades (no Legacy logic needed there —
+    // those are handled by customer.subscription.updated).
+    // ----------------------------------------------------------------
+    case 'checkout.session.completed': {
+      const session = data.object;
+
+      // Only process Legacy checkout sessions (identified by metadata)
+      if (session.metadata?.checkout_type !== 'legacy') {
+        console.log(`[Stripe Webhook] checkout.session.completed — not Legacy, skipping affiliate processing`);
+        break;
+      }
+
+      const userId          = session.metadata?.user_id;
+      const cohortYear      = parseInt(session.metadata?.cohort_year || '0', 10);
+      const stripePriceId   = session.metadata?.stripe_price_id;
+      const referralCookie  = session.metadata?.referral_cookie; // passed in checkout creation
+
+      if (!userId || !cohortYear || !stripePriceId) {
+        console.error(`[Stripe Webhook] Legacy checkout missing metadata: userId=${userId}, cohortYear=${cohortYear}, stripePriceId=${stripePriceId}`);
+        break;
+      }
+
+      console.log(`[Stripe Webhook] Legacy checkout completed: userId=${userId}, cohort=${cohortYear}`);
+
+      try {
+        const {
+          claimLegacySlot,
+          createReferralSlug,
+          recordReferral,
+          parseReferralCookie,
+        } = require('./affiliateService');
+
+        // 1. Claim a slot (atomic — enforced at DB level)
+        await claimLegacySlot();
+
+        // 2. Record cohort + locked price on user_profiles
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({
+            subscription_tier: 'legacy',
+            cohort_year: cohortYear,
+            legacy_stripe_price_id: stripePriceId,
+          })
+          .eq('user_id', userId);
+
+        // 3. Create the auto-generated referral slug for this new Legacy member
+        await createReferralSlug(userId);
+
+        // 4. If they arrived via a referral link, record the referral relationship
+        if (referralCookie) {
+          const parsedCookie = parseReferralCookie(referralCookie);
+          if (parsedCookie && parsedCookie.referrerId && parsedCookie.referrerId !== userId) {
+            // Determine the plan from metadata (they just signed up as legacy)
+            await recordReferral({
+              referrerId: parsedCookie.referrerId,
+              referredUserId: userId,
+              planAtSignup: 'legacy',
+              ipAtSignup: session.metadata?.ip_at_signup || null,
+              deviceFingerprint: null, // not collected at checkout
+              cookieIp: parsedCookie.ip || null,
+              referrerUrl: parsedCookie.url || null,
+            });
+          }
+        }
+
+        console.log(`[Stripe Webhook] Legacy signup complete: userId=${userId}, cohort=${cohortYear}`);
+
+      } catch (legacyErr) {
+        // If slot claim fails (sold out), log a critical error.
+        // The subscription is already created in Stripe — admin must handle manually.
+        console.error(`[Stripe Webhook] CRITICAL: Legacy slot claim/setup failed for userId=${userId}:`, legacyErr.message);
+      }
+      break;
+    }
+
+    // ----------------------------------------------------------------
+    // charge.dispute.created + charge.refunded
+    // Both trigger a clawback on the affiliate commission for the
+    // original invoice. processClawback is idempotent via stripe_event_id.
+    // ----------------------------------------------------------------
+    case 'charge.dispute.created': {
+      const dispute     = data.object;
+      const chargeId    = dispute.charge;
+      const stripeEventId = event.id;
+
+      try {
+        // Retrieve the invoice linked to this charge
+        const charge = await stripe.charges.retrieve(chargeId);
+        const invoiceId = charge.invoice;
+
+        if (invoiceId) {
+          const { processClawback } = require('./affiliateService');
+          await processClawback(invoiceId, 'chargeback', stripeEventId, charge.amount || 0);
+        }
+      } catch (err) {
+        console.error(`[Stripe Webhook] Clawback (dispute) error for event ${event.id}:`, err.message);
+      }
+      break;
+    }
+
+    case 'charge.refunded': {
+      const charge      = data.object;
+      const invoiceId   = charge.invoice;
+      const stripeEventId = event.id;
+
+      // Only process if this charge was linked to an invoice (subscription payment)
+      if (invoiceId) {
+        try {
+          const { processClawback } = require('./affiliateService');
+          await processClawback(invoiceId, 'refund', stripeEventId, charge.amount_refunded || 0);
+        } catch (err) {
+          console.error(`[Stripe Webhook] Clawback (refund) error for event ${event.id}:`, err.message);
+        }
+      }
+      break;
+    }
+
+    // ----------------------------------------------------------------
+    // account.application.deauthorized
+    // Fired by Stripe Connect when an affiliate disconnects their
+    // Connect account. We freeze their payout eligibility until they
+    // reconnect. Commissions continue to accrue but cannot be paid out.
+    // ----------------------------------------------------------------
+    case 'account.application.deauthorized': {
+      const connectAccountId = data.object.id;
+
+      try {
+        const { handleConnectDeauthorized } = require('./affiliateService');
+        await handleConnectDeauthorized(connectAccountId);
+      } catch (err) {
+        console.error(`[Stripe Webhook] Connect deauth error for account ${connectAccountId}:`, err.message);
       }
       break;
     }

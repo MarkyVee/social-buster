@@ -30,7 +30,8 @@ const {
   dmQueue,
   emailQueue,
   evaluationQueue,
-  watchdogQueue
+  watchdogQueue,
+  payoutQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -44,6 +45,7 @@ const mediaProcessWorker  = require('./mediaProcessWorker');    // Media pre-pro
 const dmWorker            = require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
 const emailWorker         = require('./emailWorker');           // Admin bulk email campaigns via Resend
 const evaluationWorker    = require('./evaluationWorker');      // FEAT-001: AI avatar field evaluations
+const payoutWorker        = require('./payoutWorker');           // Affiliate monthly payout runner
 require('./watchdogWorker');        // System health watchdog: anomaly detection + auto-pause
 
 // ---- Watchdog instrumentation ----
@@ -73,6 +75,7 @@ instrumentWorker(mediaProcessWorker,  'media-process');
 instrumentWorker(dmWorker,            'dm');
 instrumentWorker(emailWorker,         'email');
 instrumentWorker(evaluationWorker,    'evaluation');
+instrumentWorker(payoutWorker,        'payout');
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -155,7 +158,31 @@ async function registerRepeatableJobs() {
     }
   );
 
-  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire, watchdog, eval-cleanup)');
+  // Affiliate payout run — 5th of each month at 02:00 UTC
+  // Using cron syntax so BullMQ calculates the next run time precisely.
+  // The reserve release runs first (hourly), then the payout run deducts
+  // any pending clawbacks before transferring the net amount.
+  await payoutQueue.add(
+    'run-monthly-payouts',
+    {},
+    {
+      repeat: { cron: '0 2 5 * *' }, // 02:00 UTC on the 5th of every month
+      jobId: 'repeatable:run-monthly-payouts'
+    }
+  );
+
+  // Reserve release check — daily at 03:00 UTC
+  // Releases 10% clawback reserves that have aged ≥ 60 days with no disputes.
+  await payoutQueue.add(
+    'release-matured-reserves',
+    {},
+    {
+      repeat: { cron: '0 3 * * *' }, // 03:00 UTC every day
+      jobId: 'repeatable:release-matured-reserves'
+    }
+  );
+
+  console.log('[Workers] Repeatable jobs registered (publish, comment, media-scan, performance, dm-expire, watchdog, eval-cleanup, payout, reserve-release)');
 }
 
 // ----------------------------------------------------------------

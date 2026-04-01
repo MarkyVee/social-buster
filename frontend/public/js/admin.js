@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 34;
+const ADMIN_JS_VERSION = 35;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()

@@ -232,6 +232,18 @@ const watchdogQueue = new Queue('watchdog', {
   }
 });
 
+// Affiliate payout queue — runs monthly (5th of each month).
+// Concurrency 1: only one payout run at a time (financial operations must not overlap).
+// 3 attempts with backoff in case of transient Stripe API errors.
+const payoutQueue = new Queue('payout', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60 * 1000 } // 1 min, 2 min, 4 min
+  }
+});
+
 module.exports = {
   publishQueue,
   commentQueue,
@@ -244,5 +256,6 @@ module.exports = {
   emailQueue,
   evaluationQueue,
   watchdogQueue,
+  payoutQueue,
   connection    // Exported so workers can use the same parsed connection config
 };
