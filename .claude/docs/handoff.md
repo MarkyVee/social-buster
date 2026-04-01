@@ -683,7 +683,7 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 |-------|--------|--------|
 | hookPerformanceAgent | ✅ Built (2026-04-01) | signal_weights.hook_formats |
 | toneObjectiveFitAgent | ✅ Built (2026-04-01) | signal_weights.tone_objective_fit |
-| postTypeCalendarAgent | Deferred | signal_weights.best_hours_by_post_type |
+| postTypeCalendarAgent | ✅ Built (2026-04-01) | signal_weights.best_hours |
 
 **Layer 2 — Comment Signal (what the audience says)**
 | Agent | Status | Writes |

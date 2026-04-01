@@ -4,11 +4,11 @@
  * BullMQ worker for the 'signal-weights' queue.
  *
  * Processes one job type:
- *   'signal-weights-user' — runs hookPerformanceAgent and
- *   toneObjectiveFitAgent for a single user, then writes the
+ *   'signal-weights-user' — runs hookPerformanceAgent, toneObjectiveFitAgent,
+ *   and postTypeCalendarAgent for a single user, then writes the
  *   results to user_profiles.signal_weights.
  *
- * Both agents run sequentially for the same user (not parallel) so
+ * All three agents run sequentially for the same user (not parallel) so
  * they don't race on the signal_weights JSONB column — each reads the
  * current value first and merges its own keys in.
  *
@@ -22,8 +22,9 @@
 
 const { Worker }                        = require('bullmq');
 const { connection }                    = require('../queues');
-const { runHookPerformanceAnalysis }    = require('../agents/hookPerformanceAgent');
-const { runToneObjectiveFitAnalysis }   = require('../agents/toneObjectiveFitAgent');
+const { runHookPerformanceAnalysis }      = require('../agents/hookPerformanceAgent');
+const { runToneObjectiveFitAnalysis }     = require('../agents/toneObjectiveFitAgent');
+const { runPostTypeCalendarAnalysis }     = require('../agents/postTypeCalendarAgent');
 
 const signalWeightsWorker = new Worker(
   'signal-weights',
@@ -37,10 +38,12 @@ const signalWeightsWorker = new Worker(
       return;
     }
 
-    // Run hook analysis first, then tone/objective.
-    // Sequential so both read-modify-write operations on signal_weights don't clash.
+    // Run all three Layer 1 agents sequentially for this user.
+    // Sequential — not parallel — so their read-modify-write operations
+    // on signal_weights JSONB don't overwrite each other's keys.
     await runHookPerformanceAnalysis(userId);
     await runToneObjectiveFitAnalysis(userId);
+    await runPostTypeCalendarAnalysis(userId);
   },
 
   {

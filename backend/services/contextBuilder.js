@@ -469,9 +469,9 @@ async function buildVoiceSection(userId) {
 // ----------------------------------------------------------------
 // Signal Weights — learned performance patterns from the learning engine.
 //
-// Reads user_profiles.signal_weights (written by hookPerformanceAgent
-// and toneObjectiveFitAgent weekly) and formats it as human-readable
-// guidance for the LLM.
+// Reads user_profiles.signal_weights (written by hookPerformanceAgent,
+// toneObjectiveFitAgent, and postTypeCalendarAgent weekly) and formats
+// it as human-readable guidance for the LLM.
 //
 // Example output injected into the brief prompt:
 //
@@ -534,6 +534,39 @@ async function buildSignalWeightsSection(userId) {
         const [tone, obj] = key.split('_');
         lines.push(`⚠️ ${tone} + ${obj} → ${v}x your average (underperforms for your audience)`);
       });
+    }
+
+    // --- Best posting times (postTypeCalendarAgent) ---
+    if (sw.best_hours && typeof sw.best_hours === 'object') {
+      if (lines.length > 0) lines.push('');
+      const bh = sw.best_hours;
+
+      // Helper: convert 0-23 UTC hour to "9am" / "2pm" label
+      const hourLabel = h => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+      const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+      lines.push('BEST TIMES TO POST (UTC, learned from your own audience):');
+
+      if (Array.isArray(bh.overall) && bh.overall.length > 0) {
+        const hoursStr = bh.overall.map(hourLabel).join(', ');
+        const daysStr  = Array.isArray(bh.best_days) && bh.best_days.length > 0
+          ? bh.best_days.map(d => DAY_NAMES[d]).join('/')
+          : 'not enough data';
+        lines.push(`• Overall best hours: ${hoursStr} | Best days: ${daysStr}`);
+      }
+
+      if (bh.by_post_type && Object.keys(bh.by_post_type).length > 0) {
+        Object.entries(bh.by_post_type).forEach(([type, hours]) => {
+          if (!Array.isArray(hours) || hours.length === 0) return;
+          const sorted = [...hours].sort((a, b) => a - b);
+          // Build a compact window label: "9am–11am" if consecutive, or list if not
+          const labels = sorted.map(hourLabel);
+          const windowStr = labels.length >= 2
+            ? `${labels[0]}–${labels[labels.length - 1]} window`
+            : labels[0];
+          lines.push(`• ${type} posts: ${windowStr}`);
+        });
+      }
     }
 
     return lines.length > 0 ? lines.join('\n') : null;
