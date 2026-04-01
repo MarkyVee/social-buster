@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 41;
+const ADMIN_JS_VERSION = 42;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2407,7 +2407,7 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
     let query = supabaseAdmin
       .from('user_profiles')
       .select(`
-        user_id, display_name, email, cohort_year,
+        user_id, full_name, email, cohort_year,
         subscription_status, subscription_tier,
         stripe_subscription_id, created_at,
         affiliate_suspended, affiliate_suspended_reason
@@ -2417,7 +2417,7 @@ router.get('/legacy/members', requireAuth, requireAdmin, async (req, res) => {
       .range(from, from + limit - 1);
 
     if (q) {
-      query = query.or(`email.ilike.%${q}%,display_name.ilike.%${q}%`);
+      query = query.or(`email.ilike.%${q}%,full_name.ilike.%${q}%`);
     }
 
     const { data: members, count, error } = await query;
@@ -2476,7 +2476,7 @@ router.get('/affiliates', requireAuth, requireAdmin, async (req, res) => {
     let query = supabaseAdmin
       .from('user_profiles')
       .select(`
-        user_id, display_name, email, stripe_connect_account_id,
+        user_id, full_name, email, stripe_connect_account_id,
         stripe_connect_onboarded_at, affiliate_suspended, affiliate_suspended_reason,
         affiliate_suspended_at, cohort_year, created_at
       `, { count: 'exact' })
@@ -2485,7 +2485,7 @@ router.get('/affiliates', requireAuth, requireAdmin, async (req, res) => {
       .range(from, from + limit - 1);
 
     if (q) {
-      query = query.or(`email.ilike.%${q}%,display_name.ilike.%${q}%`);
+      query = query.or(`email.ilike.%${q}%,full_name.ilike.%${q}%`);
     }
 
     const { data: affiliates, count, error } = await query;
@@ -2543,7 +2543,7 @@ router.get('/affiliates/:id', requireAuth, requireAdmin, async (req, res) => {
     // 1. Profile
     const { data: profile, error: profileErr } = await supabaseAdmin
       .from('user_profiles')
-      .select('user_id, display_name, email, stripe_connect_account_id, stripe_connect_onboarded_at, affiliate_suspended, affiliate_suspended_reason, affiliate_suspended_at, cohort_year, created_at')
+      .select('user_id, full_name, email, stripe_connect_account_id, stripe_connect_onboarded_at, affiliate_suspended, affiliate_suspended_reason, affiliate_suspended_at, cohort_year, created_at')
       .eq('user_id', affiliateId)
       .single();
 

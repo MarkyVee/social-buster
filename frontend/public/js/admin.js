@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 41;
+const ADMIN_JS_VERSION = 42;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -4736,7 +4736,7 @@ function renderLegacyMembersTable(data) {
   const rows = members.map(m => `
     <tr style="border-bottom:1px solid var(--border);">
       <td style="padding:8px 6px;">
-        <div style="font-weight:600;">${escapeAdminHtml(m.display_name || '—')}</div>
+        <div style="font-weight:600;">${escapeAdminHtml(m.full_name || '—')}</div>
         <div style="font-size:11px;color:var(--text-secondary);">${escapeAdminHtml(m.email || '')}</div>
       </td>
       <td style="padding:8px 6px;font-family:monospace;font-size:11px;color:var(--text-secondary);">${m.user_id.slice(0, 8)}…</td>
@@ -4874,7 +4874,7 @@ async function loadAdminAffiliates(page = 1) {
           ${(data.affiliates || []).map(aff => `
             <tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="adminViewAffiliate('${aff.user_id}')">
               <td style="padding:8px 6px;">
-                <div style="font-weight:600;">${aff.display_name || '—'}</div>
+                <div style="font-weight:600;">${aff.full_name || '—'}</div>
                 <div style="font-size:11px;color:var(--text-secondary);">${aff.email || ''}</div>
               </td>
               <td style="padding:8px 6px;text-align:center;">${aff.cohort_year || '—'}</td>
@@ -4966,7 +4966,7 @@ async function adminSearchAffiliates() {
           ${(data.affiliates || []).map(aff => `
             <tr style="border-bottom:1px solid var(--border);cursor:pointer;" onclick="adminViewAffiliate('${aff.user_id}')">
               <td style="padding:8px 6px;">
-                <div style="font-weight:600;">${aff.display_name || '—'}</div>
+                <div style="font-weight:600;">${aff.full_name || '—'}</div>
                 <div style="font-size:11px;color:var(--text-secondary);">${aff.email}</div>
               </td>
               <td style="padding:8px 6px;text-align:right;">${aff.activeReferrals} active refs · ${fmt(aff.eligibleEarnings)} eligible</td>
@@ -4999,7 +4999,7 @@ async function adminViewAffiliate(affiliateId) {
       <!-- Profile header -->
       <div class="admin-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
         <div>
-          <h2 style="margin:0 0 4px;">${d.profile.display_name || '(no name)'}</h2>
+          <h2 style="margin:0 0 4px;">${d.profile.full_name || '(no name)'}</h2>
           <div style="color:var(--text-secondary);font-size:13px;">${d.profile.email}</div>
           <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">
             Cohort: ${d.profile.cohort_year || '—'} ·
