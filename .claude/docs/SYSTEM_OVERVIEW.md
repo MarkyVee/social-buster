@@ -49,3 +49,19 @@ Hub page for current project state, priorities, and reference material.
 ```bash
 cp backend/.env.example backend/.env
 cd docker && docker compose up --build
+
+---
+
+## Current Focus
+
+Core platform complete. Legacy Membership + Affiliate Program built, pending Stripe setup and end-to-end test.
+
+## Next Actions
+
+1. Run `migration_activity_log.sql` in Supabase (activity_log table not yet created)
+2. Run `ALTER TABLE plans ADD COLUMN IF NOT EXISTS logo_url TEXT;` in Supabase
+3. Add `CLOUDFLARE_CACHE_TOKEN` env var in Coolify (Zone → Cache Purge token)
+4. Create Legacy product in Stripe → seed `legacy_cohorts` with real price ID
+5. Complete Stripe Connect platform account verification (email from Stripe)
+6. Meta App Review — after Instagram DM test passes
+7. Horizontal block scaling — deferred, implement at ~8-9K users. Full design in [[feature-roadmap-handoff]] Section 10.

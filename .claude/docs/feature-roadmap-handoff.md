@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Handoff
 
-> **Last updated:** 2026-03-28
+> **Last updated:** 2026-04-01 (session 2)
 > **Purpose:** Quick-reference for any AI or developer picking up the project. For detailed history, see [[CHANGELOG]], [[ISSUES]], and [[platform_publishing_guide]].
 
 ---
@@ -36,6 +36,10 @@
 | Tier 1 premium: Performance Predictor, Pain-Point Miner, Brand Voice Tracker | Done |
 | Shared context pipeline (`contextBuilder.js`) | Done |
 | Admin dashboard (users, queues, messages, limits, revenue, email, plans) | Done |
+| Admin dashboard — Legacy, Affiliates, Payouts tabs | Built (v41) — tab bar scrollable |
+| Legacy Membership + Affiliate Program (backend + admin) | Built — migration run, needs Stripe price ID seeded |
+| Plan card logo_url field (admin Plans editor) | Built — requires SQL: `ALTER TABLE plans ADD COLUMN IF NOT EXISTS logo_url TEXT` |
+| Cloudflare CDN cache purge (admin Diagnostics tab) | Built — needs `CLOUDFLARE_CACHE_TOKEN` env var in Coolify |
 | Tier limits (DB-driven, admin-configurable, frontend upgrade prompts) | Done |
 | Stripe billing (subscribe, upgrade, downgrade, cancel, webhook, admin override) | Done |
 | Help & Tutorials page | Done |
@@ -69,6 +73,7 @@
 3. **Remove diagnostic logging** — clean verbose DM/publishing logs
 4. **Repost from Intelligence Dashboard** — not yet built
 5. **Platform OAuth** — TikTok, LinkedIn, X, YouTube (deferred by user)
+6. **Horizontal block scaling** — deferred, full architecture designed (see Section 10). Implement at ~8-9K users.
 
 ---
 
@@ -147,10 +152,113 @@
 - WhatsApp as 8th platform
 - LinkedIn, TikTok, X, YouTube OAuth
 - Privacy Policy URL → Meta Developer Portal (2 places)
+- **Seed `legacy_cohorts`** with real Stripe Price ID once created in Stripe dashboard
+- **`CLOUDFLARE_CACHE_TOKEN`** — created in Cloudflare (Zone → Cache Purge), needs adding to Coolify env vars
+- **`ALTER TABLE plans ADD COLUMN IF NOT EXISTS logo_url TEXT`** — run in Supabase if not done
+- Legacy public signup page with slot countdown (not yet built)
+- Affiliate terms + ToS update
+- Stripe Connect platform account verification (Stripe sent email — not a code issue)
+- End-to-end affiliate test: referral signup → commission → payout cycle
+- ~~`legacy_slots` seed row~~ — fixed (deleted duplicate row, table now has exactly 1 row)
+- ~~`display_name` column bug~~ — fixed (user_profiles uses `full_name`, all affiliate/legacy routes updated)
+- ~~Legacy tier missing from admin subscription override~~ — fixed (v43)
 
 ---
 
-## 8. Data Retention Policy
+---
+
+## 8. Legacy Membership & Affiliate Program
+
+### What's built
+| File | Purpose |
+|------|---------|
+| `backend/routes/affiliate.js` | 9 user-facing routes: dashboard, referrals, earnings, payouts, clawbacks, slug, connect status, connect onboard |
+| `backend/routes/admin.js` | Legacy slots, cohorts, members list, affiliates list + detail, payouts queue, fraud flags, clawbacks |
+| `backend/services/affiliateService.js` | Commission logic, payout processing, clawback handling, Stripe Connect, reserve release |
+| `backend/workers/payoutWorker.js` | Monthly payout on 15th (cron: `0 2 15 * *`), daily reserve release |
+| `backend/data/migration_affiliate_program.sql` | 12 blocks — all run in Supabase (2026-04-01) |
+| `frontend/public/js/app.js` | Affiliate Program sidebar link (Legacy members only) + full user dashboard |
+| `frontend/public/js/admin.js` | Legacy tab (slots + cohorts + members table), Affiliates tab, Payouts tab |
+
+### How the pricing works
+- Each calendar year has a `legacy_cohorts` row with its own locked `stripe_price_id`
+- Legacy checkout reads from `legacy_cohorts`, NOT from `plans.stripe_price_id`
+- When admin adds a cohort, the `plans` row for Legacy auto-updates its `stripe_price_id` to match
+- Existing members never move to a new cohort price — locked at signup year forever
+
+### What still needs doing before it's live
+1. **Create the Legacy product in Stripe** — recurring, `interval: day`, `interval_count: 30`
+2. **Seed first cohort** in Supabase once you have the Stripe Price ID:
+   ```sql
+   INSERT INTO legacy_cohorts (cohort_year, price_monthly, stripe_price_id, is_current)
+   VALUES (2026, 5900, 'price_REAL_ID_HERE', true);
+   ```
+3. **Complete Stripe Connect platform verification** — Stripe sent an email, not a code issue
+4. **End-to-end test:** referral signup → commission → payout cycle
+5. **Public-facing Legacy signup page** with slot countdown (not yet built)
+6. **Affiliate terms** — update Terms page with affiliate/Legacy legal copy
+
+### Key landmines
+- Admin tab bar has 14 tabs — Legacy/Affiliates/Payouts are at the far right, scroll horizontally
+- `claim_legacy_slot` RPC uses `SELECT FOR UPDATE` — atomic, race-condition safe
+- All affiliate RLS policies use `USING (true) WITH CHECK (true)` per ISSUE-029 — never use `auth.role() = 'service_role'`
+- `CLOUDFLARE_CACHE_TOKEN` is separate from `CLOUDFLARE_API_TOKEN` (AI image gen) — do not mix them
+- Stripe Connect type is `standard` — user completes onboarding on Stripe's hosted page
+- Payout schedule: 15th of each month covering prior month earnings (cron `0 2 15 * *`)
+- 10% reserve withheld per payout, released after 60 days clean (no chargebacks/refunds)
+
+---
+
+## 10. Horizontal Block Scaling (Spoke-and-Wheel Architecture)
+
+**Status:** Deferred — implement when approaching 8-9K users. Current fixes handle load to ~10K on a single block.
+
+### Concept
+Each "block" = independent Docker Compose stack (Express API + Redis + BullMQ workers) serving its own shard of users. All blocks share one Supabase DB (the hub/wheel). Workers filter by `shard_id` so Block 1 only processes users assigned `shard_id=1`, Block 2 only processes `shard_id=2`, etc. API layer stays fully stateless — load balancer routes any user to any available block.
+
+### Architecture
+```
+                     ┌──────────────────────────┐
+                     │   SUPABASE (shared hub)   │
+                     │   Postgres + Storage      │
+                     └────────────┬─────────────┘
+                                  │
+           ┌──────────────────────┼──────────────────────┐
+           │                      │                      │
+  ┌────────▼────────┐  ┌─────────▼───────┐  ┌──────────▼──────┐
+  │    BLOCK 1      │  │    BLOCK 2      │  │    BLOCK N      │
+  │  shard_id = 1   │  │  shard_id = 2   │  │  shard_id = N   │
+  │  Users 0-10K    │  │  Users 10K-20K  │  │  Users N×10K    │
+  │  Express API    │  │  Express API    │  │  Express API    │
+  │  Redis          │  │  Redis          │  │  Redis          │
+  │  BullMQ Workers │  │  BullMQ Workers │  │  BullMQ Workers │
+  └─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+### What's Required to Implement
+1. `ALTER TABLE user_profiles ADD COLUMN shard_id SMALLINT DEFAULT 1;` + index
+2. Assign `shard_id` at signup: `hash(user_id) % TOTAL_SHARDS + 1` (consistent hash — stable if shards added)
+3. Worker queries filtered by `SHARD_ID` env var (~15 lines across 3 agents: commentAgent, performanceAgent, researchAgent seed)
+4. Global workers pinned to Block 1 only: watchdog, payout, email (check `SHARD_ID === 1` before starting)
+5. `docker-compose.yml` per block: identical image, different `SHARD_ID` + `TOTAL_SHARDS` + `REDIS_URL`
+
+### Deploying a New Block
+No code changes needed after initial implementation. Block 2 = same Docker image + env vars:
+- `SHARD_ID=2`, `TOTAL_SHARDS=2`, `REDIS_URL=redis://redis-block2:6379`
+- Existing users stay on Block 1. New signups hash to shard 1 or 2 automatically.
+
+### Cost at 20K Users (2 Blocks)
+~$90-110/mo: 2× VPS ~$50 + LLM research ~$24 + Supabase Pro $25
+
+### Scale Fixes Already Shipped (2026-04-01)
+These handle load up to ~10K on a single block:
+- `researchAgent`: skips LLM call if cache still fresh; weekly seed only for users active last 60 days
+- `commentAgent` + `performanceAgent`: early return if user has no platform connections
+- `commentAgent` + `performanceAgent`: 5 users processed concurrently per batch (was sequential)
+
+---
+
+## 11. Data Retention Policy
 
 On account deletion or Meta access revocation:
 - **DELETE:** Email, name, username, platform connections, tokens, DM conversations, lead data, automation configs

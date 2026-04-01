@@ -651,6 +651,14 @@ Params: access_token={PAGE_ACCESS_TOKEN}
 
 ---
 
+## Horizontal Scaling — Block Architecture (Deferred)
+
+When user count approaches 8-9K, implement spoke-and-wheel block scaling. Each block = its own VPS + Redis + BullMQ workers, all sharing one Supabase DB. Workers filter queries by `shard_id` from `user_profiles` using a `SHARD_ID` env var. Adding a new block = deploy same Docker image with `SHARD_ID=2` — no code changes after initial setup. Full architecture, SQL, and deployment steps documented in [[feature-roadmap-handoff]] Section 10.
+
+**Scale fixes already shipped (2026-04-01):** researchAgent skips inactive users + fresh cache; commentAgent + performanceAgent early-exit on no connections + process 5 users concurrently per batch. These handle ~10K users on a single block.
+
+---
+
 ## Files You Should Never Modify Without Understanding
 
 | File | Why |
