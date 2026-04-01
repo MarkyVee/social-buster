@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 36;
+const ADMIN_JS_VERSION = 37;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -5106,7 +5106,7 @@ async function loadAdminPayouts() {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
           <div>
             <h3 style="margin:0 0 4px;">Next Payout Run</h3>
-            <p style="margin:0;font-size:13px;color:var(--text-secondary);">Runs automatically on the 5th of each month at 02:00 UTC. You can also trigger it manually.</p>
+            <p style="margin:0;font-size:13px;color:var(--text-secondary);">Runs automatically on the 15th of each month at 02:00 UTC, covering prior month earnings. You can also trigger it manually.</p>
           </div>
           <button onclick="adminRunPayouts()" id="payout-run-btn"
             style="padding:8px 20px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;">

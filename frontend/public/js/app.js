@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 3;
+const APP_VERSION = 4;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -3866,7 +3866,7 @@ async function renderAffiliateView(el) {
             <span style="color:#10b981;font-size:20px;">✓</span>
             <div>
               <div style="font-weight:600;">Connected & ready</div>
-              <div style="font-size:12px;color:var(--text-secondary);">Payouts are sent on the 5th of each month (min $50).</div>
+              <div style="font-size:12px;color:var(--text-secondary);">Payouts are sent on the 15th of each month covering prior month earnings (min $50).</div>
             </div>
           </div>
         ` : `
@@ -3908,7 +3908,7 @@ async function renderAffiliateView(el) {
           <li>Earn <strong>15%</strong> on 1–5 active referrals · <strong>20%</strong> on 6–10 · <strong>25%</strong> on 11+</li>
           <li>An "active referral" is someone who paid an invoice in the last 35 days</li>
           <li>Commissions become eligible to pay out 30 days after the invoice date</li>
-          <li>Payouts run on the 5th of each month · minimum $50</li>
+          <li>Payouts run on the 15th of each month (covering prior month earnings) · minimum $50</li>
           <li>10% is held in reserve for 60 days in case of chargebacks, then released</li>
           <li>No commissions are earned on your own Legacy membership fee</li>
         </ul>

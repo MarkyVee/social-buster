@@ -166,7 +166,7 @@ async function registerRepeatableJobs() {
     'run-monthly-payouts',
     {},
     {
-      repeat: { cron: '0 2 5 * *' }, // 02:00 UTC on the 5th of every month
+      repeat: { cron: '0 2 15 * *' }, // 02:00 UTC on the 15th of every month
       jobId: 'repeatable:run-monthly-payouts'
     }
   );
