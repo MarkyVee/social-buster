@@ -255,6 +255,22 @@ const payoutQueue = new Queue('payout', {
   }
 });
 
+// Signal weights queue — per-user hook + tone/objective performance analysis.
+// Runs weekly per user (seeded at startup, same pattern as research jobs).
+// Jobs are lightweight (DB reads + math — no LLM calls).
+// 2 attempts: if metrics aren't available yet the job just skips gracefully.
+const signalWeightsQueue = new Queue('signal-weights', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 2,
+    backoff: {
+      type:  'exponential',
+      delay: 30000   // Wait 30s before retry — gives metrics time to populate
+    }
+  }
+});
+
 module.exports = {
   publishQueue,
   commentQueue,
@@ -269,5 +285,6 @@ module.exports = {
   watchdogQueue,
   payoutQueue,
   activityCleanupQueue,
+  signalWeightsQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

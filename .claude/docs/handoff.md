@@ -651,6 +651,54 @@ Params: access_token={PAGE_ACCESS_TOKEN}
 
 ---
 
+## AI Agent Learning System
+
+### signal_weights — the learning engine foundation
+`user_profiles.signal_weights` (JSONB) is the connective tissue for all learning agents.
+Every agent writes multipliers here. contextBuilder reads them into every LLM brief prompt as a 10th context section.
+SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
+
+### Agent Layers (locked-in architecture)
+
+**Layer 1 — Performance Signal (what's working in your posts)**
+| Agent | Status | Writes |
+|-------|--------|--------|
+| hookPerformanceAgent | ✅ Built (2026-04-01) | signal_weights.hook_formats |
+| toneObjectiveFitAgent | ✅ Built (2026-04-01) | signal_weights.tone_objective_fit |
+| postTypeCalendarAgent | Deferred | signal_weights.best_hours_by_post_type |
+
+**Layer 2 — Comment Signal (what the audience says)**
+| Agent | Status | Writes |
+|-------|--------|--------|
+| hookTrendAgent | Deferred | research cache |
+| commentTrendAgent | Deferred | signal_weights.comment_patterns |
+| sentimentTrendAgent | Deferred | signal_weights.sentiment_trend |
+| ctaEffectivenessAgent | Deferred | signal_weights.cta_formats |
+
+**Layer 3 — External Signal (platform + trend signals)**
+| Agent | Status | Writes |
+|-------|--------|--------|
+| hashtagPerformanceAgent | Deferred | signal_weights.top_hashtags |
+| platformAlgorithmAgent | Deferred | research cache (cohort-wide) |
+
+**Layer 4 — Predictive / Synthesis**
+| Agent | Status | Uses |
+|-------|--------|------|
+| briefOptimizationAgent | Deferred | all signal_weights to recommend a brief |
+| contentGapAgent | Deferred | comment trends + post history |
+
+### How signal_weights flows into generation
+1. signalWeightsWorker runs weekly per user → calls hookPerformanceAgent + toneObjectiveFitAgent
+2. Both write multipliers to user_profiles.signal_weights
+3. contextBuilder.buildSignalWeightsSection() reads and formats them
+4. Injected as "WHAT WORKS FOR YOUR AUDIENCE" section in every LLM prompt
+5. LLM naturally biases toward proven hook formats and tone+objective combos
+
+### Subscription packaging tie-in
+Signal weights data is a Starter+ feature gate. See [[DECISIONS]] 2026-04-01.
+
+---
+
 ## Horizontal Scaling — Block Architecture (Deferred)
 
 When user count approaches 8-9K, implement spoke-and-wheel block scaling. Each block = its own VPS + Redis + BullMQ workers, all sharing one Supabase DB. Workers filter queries by `shard_id` from `user_profiles` using a `SHARD_ID` env var. Adding a new block = deploy same Docker image with `SHARD_ID=2` — no code changes after initial setup. Full architecture, SQL, and deployment steps documented in [[feature-roadmap-handoff]] Section 10.

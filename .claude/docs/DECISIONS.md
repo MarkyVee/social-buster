@@ -100,6 +100,25 @@
 
 ---
 
+- Date: 2026-04-01
+- Decision: Build an expanding AI agent system organised into 4 layers, anchored by signal_weights JSONB in user_profiles
+- Reason: The 22 brief categories (8 post types, 7 objectives, 7 tones) are currently static writing guides. No agent learns which combinations actually work per user. Performance data is already being collected — we just weren't closing the loop back into generation. signal_weights is the connective tissue: every learning agent writes multipliers there, contextBuilder reads them into every LLM prompt. The loop compounds — each week the brief gets smarter with no user input required.
+- Impact: Four agent layers defined:
+    Layer 1 (Performance Signal): hookPerformanceAgent, toneObjectiveFitAgent, postTypeCalendarAgent
+    Layer 2 (Comment Signal): hookTrendAgent, commentTrendAgent, sentimentTrendAgent, ctaEffectivenessAgent
+    Layer 3 (External Signal): hashtagPerformanceAgent, platformAlgorithmAgent
+    Layer 4 (Predictive/Synthesis): briefOptimizationAgent, contentGapAgent
+  Layer 1 (first two agents) built and shipped 2026-04-01. signal_weights JSONB added to user_profiles. contextBuilder now has a 10th section (signal_weights) injected into every brief prompt. Remaining agents deferred until signal_weights proves out.
+
+---
+
+- Date: 2026-04-01
+- Decision: Agent performance data will anchor subscription tier packaging
+- Reason: signal_weights + preflight panel data (tone/objective fit scores, hook format rankings, platform algorithm alerts) represents high-value differentiation. Showing users what's working vs. not is a premium insight — not a free feature. The Brief Preflight Panel (existing) + signal_weights warnings ("⚠️ humorous + conversions underperforms for your audience") maps cleanly to Starter+ gate.
+- Impact: Tier gating plan: Free Trial gets post generation only. Starter gets basic preflight. Professional gets full signal_weights panel + hook rankings + combo warnings. Enterprise gets all agents including platformAlgorithmAgent (cohort-level intelligence). Exact tier mapping deferred until first two agents are validated in production.
+
+---
+
 - Date: 2026-03-26
 - Decision: Anonymize comments on Meta data deletion instead of deleting them
 - Reason: Comments are authored by third-party users (commenters), not the Page owner requesting deletion. They are public data that feeds our intelligence engine — sentiment analysis, research agents, cohort benchmarks. Deleting them would destroy irreplaceable research data and break agent functionality. The Page owner's personal data is in their OAuth tokens, DM conversations, and platform connections — not in other people's comments. Anonymization (null out author_handle, platform_comment_id, post_id) removes any link back to the Page while preserving the research value (comment text, sentiment, platform).

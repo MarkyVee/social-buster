@@ -32,7 +32,8 @@ const {
   evaluationQueue,
   watchdogQueue,
   payoutQueue,
-  activityCleanupQueue
+  activityCleanupQueue,
+  signalWeightsQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -48,6 +49,7 @@ const emailWorker         = require('./emailWorker');           // Admin bulk em
 const evaluationWorker    = require('./evaluationWorker');      // FEAT-001: AI avatar field evaluations
 const payoutWorker            = require('./payoutWorker');           // Affiliate monthly payout runner
 const activityCleanupWorker   = require('./activityCleanupWorker'); // Nightly activity log cleanup (90-day retention)
+const signalWeightsWorker     = require('./signalWeightsWorker');    // Weekly hook + tone/objective performance learning
 require('./watchdogWorker');        // System health watchdog: anomaly detection + auto-pause
 
 // ---- Watchdog instrumentation ----
@@ -79,6 +81,7 @@ instrumentWorker(emailWorker,         'email');
 instrumentWorker(evaluationWorker,    'evaluation');
 instrumentWorker(payoutWorker,            'payout');
 instrumentWorker(activityCleanupWorker,   'activity-cleanup');
+instrumentWorker(signalWeightsWorker,     'signal-weights');
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -250,6 +253,48 @@ async function seedWeeklyResearchJobs() {
   } catch (err) {
     // Non-fatal — research will still run on-demand when users submit briefs
     console.error('[Workers] Failed to seed weekly research jobs:', err.message);
+  }
+}
+
+// ----------------------------------------------------------------
+// seedSignalWeightsJobs
+//
+// Queues a weekly 'signal-weights-user' job for every user who has
+// published at least one post in the last 60 days.
+//
+// Same pattern as seedWeeklyResearchJobs — jobId deduplication means
+// this is safe to call on every server restart without double-queueing.
+// ----------------------------------------------------------------
+async function seedSignalWeightsJobs() {
+  try {
+    const activeCutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: users, error } = await supabaseAdmin
+      .from('posts')
+      .select('user_id')
+      .eq('status', 'published')
+      .gte('published_at', activeCutoff);
+
+    if (error || !users) return;
+
+    const uniqueUserIds = [...new Set(users.map(u => u.user_id))];
+
+    for (const userId of uniqueUserIds) {
+      await signalWeightsQueue.add(
+        'signal-weights-user',
+        { userId },
+        {
+          jobId: `signal-weights-weekly-${userId}`,
+          // Spread load: random 0-90 min delay so all users don't analyse simultaneously
+          delay: Math.floor(Math.random() * 90 * 60 * 1000)
+        }
+      );
+    }
+
+    if (uniqueUserIds.length > 0) {
+      console.log(`[Workers] Seeded signal weights jobs for ${uniqueUserIds.length} active user(s)`);
+    }
+  } catch (err) {
+    console.error('[Workers] Failed to seed signal weights jobs:', err.message);
   }
 }
 
@@ -471,6 +516,7 @@ async function startAllWorkers() {
 
   await run('registerRepeatableJobs',    registerRepeatableJobs);
   await run('seedWeeklyResearchJobs',    seedWeeklyResearchJobs);
+  await run('seedSignalWeightsJobs',     seedSignalWeightsJobs);
   await run('seedPendingVideoAnalysis',  seedPendingVideoAnalysis);
   await run('seedPendingMediaProcessing', seedPendingMediaProcessing);
   await run('retagUntaggedSegments',     retagUntaggedSegments);

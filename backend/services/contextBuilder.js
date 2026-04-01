@@ -60,7 +60,7 @@ async function buildContext(userId, options = {}) {
   const sections = options.sections || [
     'profile', 'research', 'performance', 'cohort',
     'comments', 'content_patterns', 'video_tags',
-    'pain_points', 'voice_profile'
+    'pain_points', 'voice_profile', 'signal_weights'
   ];
 
   // Check cache first
@@ -95,6 +95,7 @@ async function buildContext(userId, options = {}) {
   if (sections.includes('video_tags'))       builders.push(buildVideoTagsSection(userId).then(d => context.video_tags = d));
   if (sections.includes('pain_points'))      builders.push(buildPainPointsSection(userId).then(d => context.pain_points = d));
   if (sections.includes('voice_profile'))    builders.push(buildVoiceSection(userId).then(d => context.voice_profile = d));
+  if (sections.includes('signal_weights'))   builders.push(buildSignalWeightsSection(userId).then(d => context.signal_weights = d));
 
   await Promise.all(builders);
 
@@ -147,6 +148,10 @@ function formatForPrompt(context, sectionNames) {
 
   if (include.includes('voice_profile') && context.voice_profile) {
     parts.push(`## YOUR BRAND VOICE (learned from your published posts)\n${context.voice_profile}`);
+  }
+
+  if (include.includes('signal_weights') && context.signal_weights) {
+    parts.push(`## WHAT WORKS FOR YOUR AUDIENCE (learned from your post performance)\n${context.signal_weights}`);
   }
 
   return parts.join('\n\n') || '(No intelligence data available yet — use best practices.)';
@@ -458,6 +463,80 @@ async function buildPainPointsSection(userId) {
 async function buildVoiceSection(userId) {
   try {
     return await getVoiceProfileForPrompt(userId);
+  } catch (_) { return null; }
+}
+
+// ----------------------------------------------------------------
+// Signal Weights — learned performance patterns from the learning engine.
+//
+// Reads user_profiles.signal_weights (written by hookPerformanceAgent
+// and toneObjectiveFitAgent weekly) and formats it as human-readable
+// guidance for the LLM.
+//
+// Example output injected into the brief prompt:
+//
+//   HOOK FORMATS (ranked by your audience's engagement):
+//   • question  → 2.1x your average  ← use this
+//   • curiosity → 1.6x your average  ← use this
+//   • list      → 1.2x your average
+//   • statement → 0.9x your average
+//   • story     → 0.7x your average  ← avoid
+//
+//   TONE + OBJECTIVE COMBINATIONS:
+//   • bold + conversions    → 1.8x your average  ← use this
+//   • friendly + engagement → 1.4x your average  ← use this
+//   ⚠️ humorous + conversions → 0.4x your average (underperforms)
+//
+// Returns null if no weights exist yet (new user, or first weekly run
+// hasn't completed). The LLM falls back to general best practices.
+// ----------------------------------------------------------------
+async function buildSignalWeightsSection(userId) {
+  try {
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('signal_weights')
+      .eq('user_id', userId)
+      .single();
+
+    const sw = profile?.signal_weights;
+    if (!sw || typeof sw !== 'object') return null;
+
+    const lines = [];
+
+    // --- Hook format performance ---
+    if (sw.hook_formats && Object.keys(sw.hook_formats).length > 0) {
+      const sorted = Object.entries(sw.hook_formats).sort((a, b) => b[1] - a[1]);
+      lines.push('HOOK FORMATS (ranked by your audience\'s engagement):');
+      sorted.forEach(([format, multiplier]) => {
+        const label = multiplier >= 1.3
+          ? '← use this'
+          : multiplier <= 0.7
+            ? '← avoid'
+            : '';
+        lines.push(`• ${format.padEnd(10)} → ${multiplier}x your average  ${label}`.trimEnd());
+      });
+    }
+
+    // --- Tone + objective fit ---
+    if (sw.tone_objective_fit && Object.keys(sw.tone_objective_fit).length > 0) {
+      if (lines.length > 0) lines.push('');
+      const sorted = Object.entries(sw.tone_objective_fit).sort((a, b) => b[1] - a[1]);
+
+      const strong  = sorted.filter(([, v]) => v >= 1.3);
+      const weak    = sorted.filter(([, v]) => v <= 0.7);
+
+      lines.push('TONE + OBJECTIVE COMBINATIONS:');
+      strong.forEach(([key, v]) => {
+        const [tone, obj] = key.split('_');
+        lines.push(`• ${tone} + ${obj} → ${v}x your average  ← use this`);
+      });
+      weak.forEach(([key, v]) => {
+        const [tone, obj] = key.split('_');
+        lines.push(`⚠️ ${tone} + ${obj} → ${v}x your average (underperforms for your audience)`);
+      });
+    }
+
+    return lines.length > 0 ? lines.join('\n') : null;
   } catch (_) { return null; }
 }
 
