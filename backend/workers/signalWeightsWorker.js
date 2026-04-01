@@ -21,6 +21,10 @@
  *     contentFatigueAgent        → signal_weights.content_fatigue
  *     platformAlgorithmAgent     → signal_weights.algorithm_alerts
  *
+ *   Layer 4 (synthesis — runs last, reads all other keys):
+ *     briefOptimizationAgent     → signal_weights.brief_optimization
+ *     contentGapAgent            → signal_weights.content_gaps
+ *
  * All agents run sequentially — not parallel — so their read-modify-write
  * operations on signal_weights JSONB don't overwrite each other's keys.
  *
@@ -42,6 +46,8 @@ const { runCommentSentimentAnalysis }     = require('../agents/commentSentimentA
 const { runCtaEffectivenessAnalysis }     = require('../agents/ctaEffectivenessAgent');
 const { runContentFatigueAnalysis }       = require('../agents/contentFatigueAgent');
 const { runPlatformAlgorithmAnalysis }    = require('../agents/platformAlgorithmAgent');
+const { runBriefOptimization }            = require('../agents/briefOptimizationAgent');
+const { runContentGapAnalysis }           = require('../agents/contentGapAgent');
 
 const signalWeightsWorker = new Worker(
   'signal-weights',
@@ -71,6 +77,10 @@ const signalWeightsWorker = new Worker(
     // Layer 3 — fatigue + algorithm intelligence
     await runContentFatigueAnalysis(userId);
     await runPlatformAlgorithmAnalysis(userId);
+
+    // Layer 4 — synthesis (runs last — reads all other signal_weights keys)
+    await runBriefOptimization(userId);   // Must run before contentGapAgent
+    await runContentGapAnalysis(userId);
   },
 
   {

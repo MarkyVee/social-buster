@@ -702,8 +702,8 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 **Layer 4 — Predictive / Synthesis**
 | Agent | Status | Uses |
 |-------|--------|------|
-| briefOptimizationAgent | Deferred | all signal_weights to recommend a brief |
-| contentGapAgent | Deferred | comment trends + post history |
+| briefOptimizationAgent | ✅ Built (2026-04-01) | all signal_weights → signal_weights.brief_optimization |
+| contentGapAgent | ✅ Built (2026-04-01) | comment_signals + post history → signal_weights.content_gaps |
 
 ### How signal_weights flows into generation
 1. signalWeightsWorker runs weekly per user → calls hookPerformanceAgent + toneObjectiveFitAgent

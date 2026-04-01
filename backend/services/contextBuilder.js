@@ -503,6 +503,36 @@ async function buildSignalWeightsSection(userId) {
 
     const lines = [];
 
+    // --- Brief optimization synthesis (briefOptimizationAgent) ---
+    // This goes FIRST — it's the synthesised "use this" recommendation from
+    // all Layer 1-3 signals. Gives the LLM a concrete starting point before
+    // it reads the individual signal breakdowns below.
+    if (sw.brief_optimization && typeof sw.brief_optimization === 'object') {
+      const bo = sw.brief_optimization;
+      const hourLabel = h => `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+      const DAY_NAMES_CB = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+      const parts = [];
+      if (bo.recommended_hook_format) parts.push(`${bo.recommended_hook_format} hook`);
+      if (bo.recommended_post_type)   parts.push(`${bo.recommended_post_type} content`);
+      if (bo.recommended_tone)        parts.push(`${bo.recommended_tone} tone`);
+      if (bo.recommended_cta_format)  parts.push(`${bo.recommended_cta_format.replace(/_/g, ' ')} CTA`);
+
+      const timeparts = [];
+      if (bo.recommended_post_day  !== undefined && bo.recommended_post_day  !== null) timeparts.push(DAY_NAMES_CB[bo.recommended_post_day]);
+      if (bo.recommended_post_hour !== undefined && bo.recommended_post_hour !== null) timeparts.push(`${hourLabel(bo.recommended_post_hour)} UTC`);
+
+      if (parts.length > 0) {
+        const confLabel = bo.confidence === 'high' ? '(high confidence)' : bo.confidence === 'medium' ? '(medium confidence)' : '(limited data)';
+        lines.push(`YOUR OPTIMAL NEXT POST ${confLabel}:`);
+        lines.push(`→ Use: ${parts.join(', ')}`);
+        if (timeparts.length > 0) lines.push(`→ Best time: ${timeparts.join(' ')}`);
+        if (Array.isArray(bo.avoid_patterns) && bo.avoid_patterns.length > 0) {
+          lines.push(`→ Avoid: ${bo.avoid_patterns.join(', ')}`);
+        }
+      }
+    }
+
     // --- Hook format performance ---
     if (sw.hook_formats && Object.keys(sw.hook_formats).length > 0) {
       const sorted = Object.entries(sw.hook_formats).sort((a, b) => b[1] - a[1]);
@@ -690,6 +720,16 @@ async function buildSignalWeightsSection(userId) {
           });
         });
       }
+    }
+
+    // --- Content gaps (contentGapAgent) ---
+    if (Array.isArray(sw.content_gaps) && sw.content_gaps.length > 0) {
+      if (lines.length > 0) lines.push('');
+      lines.push('CONTENT GAPS (what your audience wants that you\'re not giving them):');
+      sw.content_gaps.forEach(gap => {
+        lines.push(`• ${gap.evidence}`);
+        lines.push(`  → ${gap.action}`);
+      });
     }
 
     // --- Content fatigue warnings (contentFatigueAgent) ---
