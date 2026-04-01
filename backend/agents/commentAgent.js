@@ -64,13 +64,18 @@ async function runCommentCycle() {
         byUser[post.user_id].push(post);
       });
 
-      // Process each user (errors are isolated per user)
-      for (const [userId, posts] of Object.entries(byUser)) {
-        try {
-          await processUserComments(userId, posts);
-        } catch (err) {
-          console.error(`[CommentAgent] Error for user ${userId}:`, err.message);
-        }
+      // Process up to 5 users concurrently within this batch.
+      // Each user's errors are isolated — one failure doesn't block others.
+      // We cap at 5 to avoid hammering the Meta API and Supabase simultaneously.
+      const userEntries = Object.entries(byUser);
+      const CONCURRENT_USERS = 5;
+      for (let i = 0; i < userEntries.length; i += CONCURRENT_USERS) {
+        const chunk = userEntries.slice(i, i + CONCURRENT_USERS);
+        await Promise.all(chunk.map(([userId, posts]) =>
+          processUserComments(userId, posts).catch(err =>
+            console.error(`[CommentAgent] Error for user ${userId}:`, err.message)
+          )
+        ));
       }
 
       if (batch.length < PAGE_SIZE) break;
@@ -90,6 +95,14 @@ async function runCommentCycle() {
 // processUserComments — fetches and processes comments for one user's posts.
 // ----------------------------------------------------------------
 async function processUserComments(userId, posts) {
+  // Early exit: skip users with no platform connections.
+  // Saves one platform_connections query per post for disconnected users.
+  const { count: connCount } = await supabaseAdmin
+    .from('platform_connections')
+    .select('user_id', { count: 'exact', head: true })
+    .eq('user_id', userId);
+  if (!connCount || connCount === 0) return;
+
   // Load per-post DM automations for this user (active only)
   const { data: automations } = await supabaseAdmin
     .from('dm_automations')

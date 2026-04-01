@@ -77,19 +77,23 @@ async function runPerformanceCycle() {
         byUser[post.user_id].push(post);
       });
 
-      for (const [userId, userPosts] of Object.entries(byUser)) {
-        try {
+      // Process up to 5 users concurrently — caps platform API pressure
+      // while still being 5x faster than sequential at scale.
+      const userEntries = Object.entries(byUser);
+      const CONCURRENT_USERS = 5;
+      for (let i = 0; i < userEntries.length; i += CONCURRENT_USERS) {
+        const chunk = userEntries.slice(i, i + CONCURRENT_USERS);
+        const results = await Promise.allSettled(chunk.map(async ([userId, userPosts]) => {
           const processed = await processUserMetrics(userId, userPosts);
-          totalProcessed += processed;
-
-          // Aggregate cohort data for this user's cohort (once per unique key)
           if (processed > 0) {
             await aggregateCohortPerformance(userId, cohortKeysProcessed);
           }
-
-        } catch (err) {
-          console.error(`[PerformanceAgent] Error for user ${userId}:`, err.message);
-        }
+          return processed;
+        }));
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') totalProcessed += r.value || 0;
+          else console.error(`[PerformanceAgent] Error for user ${chunk[idx][0]}:`, r.reason?.message);
+        });
       }
 
       // If we got fewer than BATCH_SIZE, we've reached the end
@@ -110,6 +114,15 @@ async function runPerformanceCycle() {
 // Returns the number of posts successfully processed.
 // ----------------------------------------------------------------
 async function processUserMetrics(userId, posts) {
+  // Early exit: skip users with no platform connections.
+  // A user who has published posts but disconnected their accounts
+  // doesn't need a metrics poll attempt — saves one query per post.
+  const { count: connCount } = await supabaseAdmin
+    .from('platform_connections')
+    .select('user_id', { count: 'exact', head: true })
+    .eq('user_id', userId);
+  if (!connCount || connCount === 0) return 0;
+
   const connectionCache = {};
   let postsProcessed = 0;
 

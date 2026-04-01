@@ -216,11 +216,15 @@ async function registerRepeatableJobs() {
 // ----------------------------------------------------------------
 async function seedWeeklyResearchJobs() {
   try {
-    // Find all users who have at least one published post (active users only)
+    // Only seed research for users who have published a post in the last 60 days.
+    // Users inactive longer than that don't need weekly LLM calls — saves tokens at scale.
+    // At 10K users, ~20% churn means ~2K inactive users would otherwise get free LLM calls.
+    const activeCutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     const { data: users, error } = await supabaseAdmin
       .from('posts')
       .select('user_id')
-      .eq('status', 'published');
+      .eq('status', 'published')
+      .gte('published_at', activeCutoff);
 
     if (error || !users) return;
 

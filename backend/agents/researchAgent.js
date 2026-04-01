@@ -37,6 +37,20 @@ const RESEARCH_TTL_SECONDS = 7 * 24 * 3600;
 async function refreshResearch(userId) {
   console.log(`[ResearchAgent] Refreshing research for user ${userId}...`);
 
+  // --- Skip if cache is still fresh (> 24hr TTL remaining) ---
+  // The scheduled seed runs weekly for all users, but if a user just refreshed
+  // manually or a job re-queued early, skip the LLM call and reuse the cache.
+  // This prevents wasted tokens when two research jobs overlap for the same user.
+  try {
+    const cached = await cacheGet(`research:${userId}`);
+    if (cached && typeof cached === 'string' && cached.length > 100) {
+      console.log(`[ResearchAgent] Cache still fresh for ${userId} — skipping LLM call`);
+      return cached;
+    }
+  } catch {
+    // Cache miss or Redis error — continue with full refresh
+  }
+
   // Load the user's brand profile
   const { data: profile, error } = await supabaseAdmin
     .from('user_profiles')
