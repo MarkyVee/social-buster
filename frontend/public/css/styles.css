@@ -1366,7 +1366,7 @@ textarea { resize: vertical; min-height: 80px; }
   list-style: none;
   padding: 0;
   margin: 0;
-  max-height: 260px;
+  max-height: 400px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
