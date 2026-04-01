@@ -569,6 +569,49 @@ async function buildSignalWeightsSection(userId) {
       }
     }
 
+    // --- Comment signals (commentSentimentAgent) ---
+    if (sw.comment_signals && typeof sw.comment_signals === 'object') {
+      if (lines.length > 0) lines.push('');
+      const cs = sw.comment_signals;
+      lines.push('COMMENT SIGNALS (what your audience says after reading your posts):');
+
+      // Per-post-type intent ratios — only show the strongest signals
+      if (cs.by_post_type && Object.keys(cs.by_post_type).length > 0) {
+        Object.entries(cs.by_post_type).forEach(([postType, intents]) => {
+          const sorted = Object.entries(intents).sort((a, b) => b[1] - a[1]);
+          sorted.forEach(([intent, ratio]) => {
+            const signal = ratio >= 1.5
+              ? `← strong signal (${ratio}x avg)`
+              : ratio <= 0.5
+                ? `← low for this type (${ratio}x avg)`
+                : `(${ratio}x avg)`;
+            lines.push(`• ${postType} posts → ${ratio}x more ${intent} comments  ${signal}`.trimEnd());
+          });
+        });
+      }
+
+      // Per-tone intent ratios
+      if (cs.by_tone && Object.keys(cs.by_tone).length > 0) {
+        Object.entries(cs.by_tone).forEach(([tone, intents]) => {
+          const sorted = Object.entries(intents).sort((a, b) => b[1] - a[1]);
+          sorted.forEach(([intent, ratio]) => {
+            if (ratio >= 1.5 || ratio <= 0.5) {
+              const dir = ratio >= 1.5 ? 'generates' : 'suppresses';
+              lines.push(`• ${tone} tone ${dir} ${intent} comments (${ratio}x avg)`);
+            }
+          });
+        });
+      }
+
+      // Topic hints
+      if (Array.isArray(cs.top_question_topics) && cs.top_question_topics.length > 0) {
+        lines.push(`• Audience most often asks about: ${cs.top_question_topics.join(', ')}`);
+      }
+      if (Array.isArray(cs.top_request_topics) && cs.top_request_topics.length > 0) {
+        lines.push(`• Audience most often requests: ${cs.top_request_topics.join(', ')}`);
+      }
+    }
+
     // --- Admin directives (stored by agents when set, surfaced here to LLM) ---
     // Directives are free-text guidance written by admin in the dashboard,
     // e.g. "Have you considered that this audience is B2B?"

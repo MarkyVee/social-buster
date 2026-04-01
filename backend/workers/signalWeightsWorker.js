@@ -4,13 +4,19 @@
  * BullMQ worker for the 'signal-weights' queue.
  *
  * Processes one job type:
- *   'signal-weights-user' — runs hookPerformanceAgent, toneObjectiveFitAgent,
- *   and postTypeCalendarAgent for a single user, then writes the
- *   results to user_profiles.signal_weights.
+ *   'signal-weights-user' — runs all Layer 1 + Layer 2 learning agents
+ *   sequentially for a single user, writing results to signal_weights.
  *
- * All three agents run sequentially for the same user (not parallel) so
- * they don't race on the signal_weights JSONB column — each reads the
- * current value first and merges its own keys in.
+ *   Layer 1 (post performance math):
+ *     hookPerformanceAgent    → signal_weights.hook_formats
+ *     toneObjectiveFitAgent   → signal_weights.tone_objective_fit
+ *     postTypeCalendarAgent   → signal_weights.best_hours
+ *
+ *   Layer 2 (comment signal):
+ *     commentSentimentAgent   → signal_weights.comment_signals
+ *
+ * All agents run sequentially — not parallel — so their read-modify-write
+ * operations on signal_weights JSONB don't overwrite each other's keys.
  *
  * Concurrency: 3 — each job is lightweight (2-3 DB queries + math).
  * Three users can be processed simultaneously without overloading Supabase.
@@ -25,6 +31,7 @@ const { connection }                    = require('../queues');
 const { runHookPerformanceAnalysis }      = require('../agents/hookPerformanceAgent');
 const { runToneObjectiveFitAnalysis }     = require('../agents/toneObjectiveFitAgent');
 const { runPostTypeCalendarAnalysis }     = require('../agents/postTypeCalendarAgent');
+const { runCommentSentimentAnalysis }     = require('../agents/commentSentimentAgent');
 
 const signalWeightsWorker = new Worker(
   'signal-weights',
@@ -41,9 +48,13 @@ const signalWeightsWorker = new Worker(
     // Run all three Layer 1 agents sequentially for this user.
     // Sequential — not parallel — so their read-modify-write operations
     // on signal_weights JSONB don't overwrite each other's keys.
+    // Layer 1 — post performance patterns
     await runHookPerformanceAnalysis(userId);
     await runToneObjectiveFitAnalysis(userId);
     await runPostTypeCalendarAnalysis(userId);
+
+    // Layer 2 — comment signals (what the audience actually says)
+    await runCommentSentimentAnalysis(userId);
   },
 
   {

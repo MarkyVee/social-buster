@@ -688,9 +688,8 @@ SQL: `migration_signal_weights.sql` — run in Supabase before deploying.
 **Layer 2 — Comment Signal (what the audience says)**
 | Agent | Status | Writes |
 |-------|--------|--------|
-| hookTrendAgent | Deferred | research cache |
-| commentTrendAgent | Deferred | signal_weights.comment_patterns |
-| sentimentTrendAgent | Deferred | signal_weights.sentiment_trend |
+| commentSentimentAgent | ✅ Built (2026-04-01) | signal_weights.comment_signals |
+| hookTrendAgent | Deferred | signal_weights.hook_trends |
 | ctaEffectivenessAgent | Deferred | signal_weights.cta_formats |
 
 **Layer 3 — External Signal (platform + trend signals)**
