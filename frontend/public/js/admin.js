@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 32;
+const ADMIN_JS_VERSION = 33;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -3483,11 +3483,34 @@ async function loadAdminPlans() {
 
   // Render a two-column layout: live preview on the left, editor on the right
   panel.innerHTML = `
-    <div class="admin-section-title" style="margin-bottom:4px;">Subscription Plans</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <div class="admin-section-title" style="margin:0;">Subscription Plans</div>
+      <button class="btn btn-sm" onclick="showAddPlanForm()" style="background:#6366f1;color:#fff;">+ Add Plan</button>
+    </div>
     <p class="admin-muted" style="margin-bottom:16px;font-size:13px;">
       Edit plan names, prices, features, and colors. Changes update instantly for all users.<br>
       To change the actual dollar amount charged, create a new price in Stripe and paste the <code>price_</code> ID below.
     </p>
+
+    <!-- Add plan inline form — hidden until "+ Add Plan" is clicked -->
+    <div id="add-plan-form" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:20px;">
+      <div class="admin-section-title" style="font-size:13px;margin-bottom:12px;">New Plan</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+        <div class="email-form-group" style="margin:0;">
+          <label>Internal Tier Key <span style="color:#94a3b8;font-weight:400;">(unique slug, e.g. growth)</span></label>
+          <input type="text" id="new-plan-tier" placeholder="growth" style="font-family:monospace;" />
+        </div>
+        <div class="email-form-group" style="margin:0;">
+          <label>Display Name</label>
+          <input type="text" id="new-plan-name" placeholder="Growth" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" onclick="createNewPlan()" style="background:#6366f1;color:#fff;">Create Plan</button>
+        <button class="btn btn-sm" onclick="document.getElementById('add-plan-form').style.display='none'">Cancel</button>
+      </div>
+      <div id="add-plan-status" style="margin-top:8px;font-size:12px;color:#64748b;"></div>
+    </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
       <!-- Live preview -->
@@ -3631,6 +3654,44 @@ async function savePlanFeatures(planId) {
   // Split by newline, trim each, remove empty lines
   const features = textarea.value.split('\n').map(f => f.trim()).filter(Boolean);
   await savePlanField(planId, 'features', features);
+}
+
+// Show the inline "New Plan" form
+function showAddPlanForm() {
+  const form = document.getElementById('add-plan-form');
+  if (form) {
+    form.style.display = 'block';
+    document.getElementById('new-plan-tier')?.focus();
+  }
+}
+
+// Create a new blank plan via POST /admin/plans, then reload the tab
+async function createNewPlan() {
+  const tier   = document.getElementById('new-plan-tier')?.value.trim();
+  const name   = document.getElementById('new-plan-name')?.value.trim();
+  const status = document.getElementById('add-plan-status');
+
+  if (!tier || !name) {
+    if (status) status.textContent = 'Both fields are required.';
+    return;
+  }
+
+  if (status) status.textContent = 'Creating…';
+
+  try {
+    await apiFetch('/admin/plans', {
+      method: 'POST',
+      body: JSON.stringify({ tier, name })
+    });
+
+    // Clear the loaded flag so the tab re-fetches fresh data including the new plan
+    const panel = document.getElementById('admin-tab-plans');
+    if (panel) panel.dataset.loaded = '';
+    loadAdminPlans();
+
+  } catch (err) {
+    if (status) status.textContent = 'Error: ' + err.message;
+  }
 }
 
 // ================================================================

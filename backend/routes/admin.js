@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 32;
+const ADMIN_JS_VERSION = 33;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -1354,6 +1354,54 @@ router.get('/plans', async (req, res) => {
   } catch (err) {
     console.error('[Admin] Plans fetch error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch plans' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /admin/plans
+//
+// Creates a new blank plan. All fields can be edited from the
+// admin Plans tab after creation. New plans default to inactive
+// so they are hidden from users until the admin is ready.
+// Body: { tier, name } — tier must be unique (e.g. 'growth')
+// ----------------------------------------------------------------
+router.post('/plans', async (req, res) => {
+  const { tier, name } = req.body;
+
+  if (!tier || !name) {
+    return res.status(400).json({ error: 'tier and name are required' });
+  }
+
+  // Slugify tier — lowercase letters and underscores only
+  const safeTier = tier.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('plans')
+      .insert({
+        tier: safeTier,
+        name,
+        price_display: '$0',
+        period_label: '/month',
+        features: [],
+        color: '#6366f1',
+        sort_order: 99,
+        is_active: false   // Hidden from users until admin enables it
+      })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    console.log(`[Admin] New plan '${safeTier}' created by ${req.user.email}`);
+    return res.status(201).json({ plan: data });
+
+  } catch (err) {
+    console.error('[Admin] Plan create error:', err.message);
+    if (err.message.includes('unique')) {
+      return res.status(409).json({ error: `A plan with tier '${safeTier}' already exists` });
+    }
+    return res.status(500).json({ error: 'Failed to create plan' });
   }
 });
 
