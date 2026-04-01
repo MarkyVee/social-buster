@@ -33,7 +33,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 43;
+const ADMIN_JS_VERSION = 44;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2860,6 +2860,67 @@ router.put('/fraud-flags/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[Admin] Fraud flag resolve error:', err.message);
     return res.status(500).json({ error: 'Failed to resolve fraud flag.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/activity
+// Paginated activity feed with optional filters.
+// Query params: page, limit, user_id, event_type, date_from, date_to
+// ----------------------------------------------------------------
+router.get('/activity', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const page      = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit     = Math.min(100, parseInt(req.query.limit) || 50);
+    const offset    = (page - 1) * limit;
+    const userId    = req.query.user_id    || null;
+    const eventType = req.query.event_type || null;
+    const dateFrom  = req.query.date_from  || null;
+    const dateTo    = req.query.date_to    || null;
+
+    let query = supabaseAdmin
+      .from('activity_log')
+      .select('id, user_id, event_type, metadata, ip, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (userId)    query = query.eq('user_id',    userId);
+    if (eventType) query = query.eq('event_type', eventType);
+    if (dateFrom)  query = query.gte('created_at', dateFrom);
+    if (dateTo)    query = query.lte('created_at', dateTo);
+
+    const { data, count, error } = await query;
+    if (error) throw new Error(error.message);
+
+    return res.json({ rows: data || [], total: count || 0, page, limit });
+
+  } catch (err) {
+    console.error('[Admin] GET /activity error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch activity log.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /admin/activity/:userId
+// Per-user activity — last 200 events. Used by "View Activity" button
+// in the Users tab and from the Activity tab user filter shortcut.
+// ----------------------------------------------------------------
+router.get('/activity/:userId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('activity_log')
+      .select('id, event_type, metadata, ip, created_at')
+      .eq('user_id', req.params.userId)
+      .order('created_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw new Error(error.message);
+
+    return res.json({ rows: data || [], user_id: req.params.userId });
+
+  } catch (err) {
+    console.error('[Admin] GET /activity/:userId error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch user activity.' });
   }
 });
 

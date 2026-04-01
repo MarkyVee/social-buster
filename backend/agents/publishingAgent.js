@@ -28,6 +28,7 @@ const fs                 = require('fs');
 const { v4: uuidv4 }    = require('uuid');
 const axios              = require('axios');
 const { supabaseAdmin }  = require('../services/supabaseService');
+const { logActivity }    = require('../services/activityService');
 const { publish }        = require('../services/platformAPIs');
 const { downloadGoogleDriveFile } = require('../services/googleDriveService');
 const {
@@ -410,6 +411,8 @@ async function publishPost(post) {
             error_message:    null
           })
           .eq('id', post.id);
+
+        logActivity(post.user_id, 'post_published', { post_id: post.id, platform: post.platform });
 
         console.log(`[PublishingAgent] ── DONE post ${post.id} → published (${result.platformPostId}) ──`);
 

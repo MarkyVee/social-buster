@@ -232,6 +232,17 @@ const watchdogQueue = new Queue('watchdog', {
   }
 });
 
+// Activity log cleanup queue — runs nightly at 04:00 UTC.
+// Deletes rows older than 90 days to keep the table lean.
+const activityCleanupQueue = new Queue('activity-cleanup', {
+  connection,
+  defaultJobOptions: {
+    ...DEFAULT_JOB_OPTIONS,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60 * 1000 }
+  }
+});
+
 // Affiliate payout queue — runs monthly (5th of each month).
 // Concurrency 1: only one payout run at a time (financial operations must not overlap).
 // 3 attempts with backoff in case of transient Stripe API errors.
@@ -257,5 +268,6 @@ module.exports = {
   evaluationQueue,
   watchdogQueue,
   payoutQueue,
+  activityCleanupQueue,
   connection    // Exported so workers can use the same parsed connection config
 };

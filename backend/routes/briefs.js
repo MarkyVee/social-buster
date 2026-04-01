@@ -15,6 +15,7 @@ const { checkLimit } = require('../middleware/checkLimit');
 const { generatePosts } = require('../services/llmService');
 const { supabaseAdmin, getUserProfile } = require('../services/supabaseService');
 const { cacheGet } = require('../services/redisService');
+const { logActivity } = require('../services/activityService');
 const { getStyleNotes } = require('../data/briefSemantics');
 
 // Apply auth + tenancy to ALL routes in this file
@@ -162,6 +163,9 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
       .select();
 
     if (postsError) throw new Error(`Failed to save generated posts: ${postsError.message}`);
+
+    // Log one activity event for the brief generation (not one per post — that would be noisy)
+    logActivity(userId, 'post_created', { brief_id: briefId, platform_count: savedPosts.length }, req.ip);
 
     // Attach media_recommendation to returned posts (stored in LLM output, not DB yet)
     const postsWithMedia = savedPosts.map(savedPost => {

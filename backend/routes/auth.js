@@ -14,6 +14,7 @@ const { createStripeCustomer } = require('../services/stripeService');
 const { requireAuth } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimit');
 const { cacheSet } = require('../services/redisService');
+const { logActivity } = require('../services/activityService');
 
 // Apply auth-specific rate limiting (by IP) to all routes in this file
 router.use(authLimiter);
@@ -145,6 +146,8 @@ router.post('/login', async (req, res) => {
       .eq('user_id', data.user.id);
     await cacheSet(`session:${data.user.id}`, sessionId, 86400 * 60); // 60-day TTL matches refresh token
 
+    logActivity(data.user.id, 'login', { user_agent: req.headers['user-agent'] }, req.ip);
+
     return res.json({
       message: 'Login successful',
       session: data.session,
@@ -212,6 +215,8 @@ router.post('/logout', requireAuth, async (req, res) => {
       // Non-fatal — Supabase sign-out already invalidated the token
       console.warn('[Auth] Could not clear active_session_id:', sessionErr.message);
     }
+
+    logActivity(req.user.id, 'logout', {}, req.ip);
 
     return res.json({ message: 'Logged out successfully' });
 

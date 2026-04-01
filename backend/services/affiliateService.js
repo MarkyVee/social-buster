@@ -21,6 +21,7 @@
 
 const crypto      = require('crypto');
 const { supabaseAdmin } = require('./supabaseService');
+const { logActivity }   = require('./activityService');
 const Stripe      = require('stripe');
 const stripe      = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' });
 
@@ -157,7 +158,10 @@ async function createReferralSlug(userId) {
       .select()
       .single();
 
-    if (!error) return data;
+    if (!error) {
+      logActivity(userId, 'referral_created', { slug: data.slug });
+      return data;
+    }
     if (!error.message.includes('unique')) throw new Error(error.message);
   }
   throw new Error('Failed to generate unique slug after 5 attempts');
@@ -1003,6 +1007,9 @@ async function recordReferral(referrerId, referredUserId, signupIp, deviceFinger
     console.warn(`[Affiliate] Referral fraud-flagged: referrer=${referrerId}, flags=${fraudFlags.join('; ')}`);
   } else {
     console.log(`[Affiliate] Referral recorded: referrer=${referrerId}, referred=${referredUserId}`);
+    // Log for both parties: referrer gets a conversion event, referred user gets a converted event
+    logActivity(referrerId,      'referral_converted', { referred_user_id: referredUserId });
+    logActivity(referredUserId,  'referral_converted', { referrer_id: referrerId });
   }
 }
 

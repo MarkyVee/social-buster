@@ -31,7 +31,8 @@ const {
   emailQueue,
   evaluationQueue,
   watchdogQueue,
-  payoutQueue
+  payoutQueue,
+  activityCleanupQueue
 } = require('../queues');
 
 // Importing these modules starts each worker immediately
@@ -45,7 +46,8 @@ const mediaProcessWorker  = require('./mediaProcessWorker');    // Media pre-pro
 const dmWorker            = require('./dmWorker');              // DM automation: sends DMs + expires stale conversations
 const emailWorker         = require('./emailWorker');           // Admin bulk email campaigns via Resend
 const evaluationWorker    = require('./evaluationWorker');      // FEAT-001: AI avatar field evaluations
-const payoutWorker        = require('./payoutWorker');           // Affiliate monthly payout runner
+const payoutWorker            = require('./payoutWorker');           // Affiliate monthly payout runner
+const activityCleanupWorker   = require('./activityCleanupWorker'); // Nightly activity log cleanup (90-day retention)
 require('./watchdogWorker');        // System health watchdog: anomaly detection + auto-pause
 
 // ---- Watchdog instrumentation ----
@@ -75,7 +77,8 @@ instrumentWorker(mediaProcessWorker,  'media-process');
 instrumentWorker(dmWorker,            'dm');
 instrumentWorker(emailWorker,         'email');
 instrumentWorker(evaluationWorker,    'evaluation');
-instrumentWorker(payoutWorker,        'payout');
+instrumentWorker(payoutWorker,            'payout');
+instrumentWorker(activityCleanupWorker,   'activity-cleanup');
 
 // ----------------------------------------------------------------
 // registerRepeatableJobs
@@ -168,6 +171,17 @@ async function registerRepeatableJobs() {
     {
       repeat: { cron: '0 2 15 * *' }, // 02:00 UTC on the 15th of every month
       jobId: 'repeatable:run-monthly-payouts'
+    }
+  );
+
+  // Activity log cleanup — nightly at 04:00 UTC
+  // Deletes rows older than 90 days to keep the table lean.
+  await activityCleanupQueue.add(
+    'cleanup-old-activity',
+    {},
+    {
+      repeat: { cron: '0 4 * * *' }, // 04:00 UTC every day
+      jobId: 'repeatable:cleanup-old-activity'
     }
   );
 

@@ -7,6 +7,7 @@
 
 const Stripe = require('stripe');
 const { supabaseAdmin } = require('./supabaseService');
+const { logActivity }   = require('./activityService');
 
 // Initialise Stripe with the secret key from environment
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
@@ -350,10 +351,10 @@ async function handleWebhookEvent(event) {
 
       console.log(`[Stripe Webhook] ${type}: customerId=${customerId}, subscriptionId=${subscription.id}`);
 
-      // Find which user this Stripe customer belongs to
+      // Find which user this Stripe customer belongs to (also fetch current plan for activity log)
       let { data: sub, error: lookupErr } = await supabaseAdmin
         .from('subscriptions')
-        .select('user_id')
+        .select('user_id, plan')
         .eq('stripe_customer_id', customerId)
         .single();
 
@@ -465,6 +466,17 @@ async function handleWebhookEvent(event) {
       } else {
         console.log(`[Stripe Webhook] SUCCESS: user=${sub.user_id}, plan=${plan}, status=${status}, rows=${updatedRows.length}`);
       }
+
+      // Log subscription change only when the plan tier actually changed (not on every renewal)
+      const oldPlan = sub.plan || 'free_trial';
+      if (oldPlan !== plan) {
+        logActivity(sub.user_id, 'subscription_changed', {
+          from_tier: oldPlan,
+          to_tier:   plan,
+          stripe_event_id: event.id
+        });
+      }
+
       break;
     }
 

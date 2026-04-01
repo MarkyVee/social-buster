@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 43;
+const ADMIN_JS_VERSION = 44;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -81,6 +81,7 @@ function renderAdminDashboard(el) {
         <span id="admin-fraud-badge" style="display:none;font-size:11px;background:#dc2626;color:#fff;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;"></span>
       </button>
       <button class="admin-tab"        data-tab="payouts"     onclick="switchAdminTab('payouts')">Payouts</button>
+      <button class="admin-tab"        data-tab="activity"    onclick="switchAdminTab('activity')">Activity</button>
     </div>
 
     <!-- Tab panels -->
@@ -99,6 +100,7 @@ function renderAdminDashboard(el) {
     <div id="admin-tab-legacy"      class="admin-panel hidden"></div>
     <div id="admin-tab-affiliates"  class="admin-panel hidden"></div>
     <div id="admin-tab-payouts"     class="admin-panel hidden"></div>
+    <div id="admin-tab-activity"    class="admin-panel hidden"></div>
   `;
 
   injectAdminStyles();
@@ -206,6 +208,7 @@ function switchAdminTab(tab) {
   if (tab === 'legacy')       loadAdminLegacy();
   if (tab === 'affiliates')   loadAdminAffiliates();
   if (tab === 'payouts')      loadAdminPayouts();
+  if (tab === 'activity')    loadAdminActivity();
 }
 
 // ================================================================
@@ -877,6 +880,11 @@ function buildUserDetailHtml(data) {
           <thead><tr><th>Platform</th><th>Status</th><th>Hook</th><th>Published</th></tr></thead>
           <tbody>${recentPostsHtml}</tbody>
         </table>
+      </div>
+
+      <!-- Activity log shortcut -->
+      <div style="margin-top:16px;">
+        <button class="btn btn-sm" onclick="adminViewUserActivity('${p.user_id}')">📋 View Activity Log</button>
       </div>
 
       <!-- Quick override form -->
@@ -5363,4 +5371,193 @@ async function adminRunPayouts() {
     }
     if (btn) { btn.disabled = false; btn.textContent = '▶ Run Payouts Now'; }
   }
+}
+
+// ================================================================
+// ACTIVITY TAB
+// Paginated feed of all user activity events with filters.
+// ================================================================
+
+let _activityPage = 1;
+let _activityFilters = {};
+
+async function loadAdminActivity(page, filters) {
+  page    = page    || 1;
+  filters = filters || _activityFilters;
+  _activityPage    = page;
+  _activityFilters = filters;
+
+  const panel = document.getElementById('admin-tab-activity');
+  if (!panel) return;
+
+  // Build the filter form only on first load
+  if (!panel.dataset.loaded) {
+    panel.dataset.loaded = 'true';
+    panel.innerHTML = `
+      <h2 style="margin:0 0 16px;">Activity Log</h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:flex-end;">
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:3px;">User ID</label>
+          <input id="act-filter-user" type="text" placeholder="UUID or partial…"
+            style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:240px;" />
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:3px;">Event Type</label>
+          <select id="act-filter-event" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">
+            <option value="">All events</option>
+            <option value="login">login</option>
+            <option value="logout">logout</option>
+            <option value="post_created">post_created</option>
+            <option value="post_published">post_published</option>
+            <option value="dm_sent">dm_sent</option>
+            <option value="subscription_changed">subscription_changed</option>
+            <option value="referral_created">referral_created</option>
+            <option value="referral_converted">referral_converted</option>
+            <option value="media_uploaded">media_uploaded</option>
+            <option value="platform_connected">platform_connected</option>
+            <option value="platform_disconnected">platform_disconnected</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:3px;">From</label>
+          <input id="act-filter-from" type="date"
+            style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" />
+        </div>
+        <div>
+          <label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:3px;">To</label>
+          <input id="act-filter-to" type="date"
+            style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;" />
+        </div>
+        <button onclick="applyActivityFilters()"
+          style="padding:7px 16px;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
+          Filter
+        </button>
+        <button onclick="clearActivityFilters()"
+          style="padding:7px 16px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:13px;">
+          Clear
+        </button>
+      </div>
+      <div id="activity-table-wrap"></div>
+      <div id="activity-pagination"
+        style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:16px;flex-wrap:wrap;">
+      </div>
+    `;
+  }
+
+  // Pre-fill filter fields when called programmatically (e.g. from user detail)
+  if (filters.user_id)    { const el = document.getElementById('act-filter-user');  if (el) el.value = filters.user_id; }
+  if (filters.event_type) { const el = document.getElementById('act-filter-event'); if (el) el.value = filters.event_type; }
+  if (filters.date_from)  { const el = document.getElementById('act-filter-from');  if (el) el.value = filters.date_from; }
+  if (filters.date_to)    { const el = document.getElementById('act-filter-to');    if (el) el.value = filters.date_to; }
+
+  const wrap = document.getElementById('activity-table-wrap');
+  if (wrap) wrap.innerHTML = '<div class="admin-loading"><div class="spinner spinner-sm"></div> Loading...</div>';
+
+  try {
+    const params = new URLSearchParams({ page, limit: 50 });
+    if (filters.user_id)    params.set('user_id',    filters.user_id);
+    if (filters.event_type) params.set('event_type', filters.event_type);
+    if (filters.date_from)  params.set('date_from',  filters.date_from);
+    if (filters.date_to)    params.set('date_to',    filters.date_to + 'T23:59:59Z');
+
+    const data = await apiFetch('/admin/activity?' + params.toString());
+
+    if (wrap) wrap.innerHTML = buildActivityTableHtml(data.rows);
+
+    const pag = document.getElementById('activity-pagination');
+    if (pag) {
+      const totalPages = Math.ceil((data.total || 0) / 50);
+      pag.innerHTML =
+        '<span style="font-size:13px;color:var(--text-secondary);">' + (data.total || 0).toLocaleString() + ' total events</span>' +
+        (page > 1 ? '<button class="btn btn-sm" onclick="loadAdminActivity(' + (page - 1) + ')">Prev</button>' : '') +
+        '<span style="font-size:13px;color:var(--text-secondary);">Page ' + page + ' of ' + (totalPages || 1) + '</span>' +
+        (page < totalPages ? '<button class="btn btn-sm" onclick="loadAdminActivity(' + (page + 1) + ')">Next</button>' : '');
+    }
+  } catch (err) {
+    if (wrap) wrap.innerHTML = '<div style="color:#ef4444;padding:16px;">Failed to load activity: ' + escapeAdminHtml(err.message) + '</div>';
+  }
+}
+
+function applyActivityFilters() {
+  const filters = {
+    user_id:    (document.getElementById('act-filter-user')  || {}).value || '',
+    event_type: (document.getElementById('act-filter-event') || {}).value || '',
+    date_from:  (document.getElementById('act-filter-from')  || {}).value || '',
+    date_to:    (document.getElementById('act-filter-to')    || {}).value || '',
+  };
+  loadAdminActivity(1, filters);
+}
+
+function clearActivityFilters() {
+  ['act-filter-user', 'act-filter-event', 'act-filter-from', 'act-filter-to'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _activityFilters = {};
+  loadAdminActivity(1, {});
+}
+
+// Called from the "View Activity Log" button in user detail.
+// Switches to the Activity tab pre-filtered to that user.
+function adminViewUserActivity(userId) {
+  _activityFilters = { user_id: userId };
+  switchAdminTab('activity');
+  setTimeout(function() { loadAdminActivity(1, { user_id: userId }); }, 50);
+}
+
+function buildActivityTableHtml(rows) {
+  if (!rows || rows.length === 0) {
+    return '<div style="color:var(--text-secondary);padding:16px;">No events found.</div>';
+  }
+
+  // Event type badge colours
+  const eventColors = {
+    login:                 ['#dbeafe','#1e40af'],
+    logout:                ['#f3f4f6','#374151'],
+    post_created:          ['#dcfce7','#166534'],
+    post_published:        ['#d1fae5','#065f46'],
+    dm_sent:               ['#fef3c7','#92400e'],
+    subscription_changed:  ['#ede9fe','#5b21b6'],
+    referral_created:      ['#fce7f3','#9d174d'],
+    referral_converted:    ['#fdf4ff','#7e22ce'],
+    media_uploaded:        ['#e0f2fe','#0369a1'],
+    platform_connected:    ['#d1fae5','#065f46'],
+    platform_disconnected: ['#fee2e2','#991b1b'],
+  };
+
+  var rowsHtml = rows.map(function(r) {
+    var colors = eventColors[r.event_type] || ['#f3f4f6','#374151'];
+    var bg = colors[0], color = colors[1];
+    var badge = '<span style="padding:2px 8px;background:' + bg + ';color:' + color + ';border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap;">' + escapeAdminHtml(r.event_type) + '</span>';
+    var meta = (r.metadata && Object.keys(r.metadata).length)
+      ? '<span style="font-size:11px;color:var(--text-secondary);">' + escapeAdminHtml(JSON.stringify(r.metadata)) + '</span>'
+      : '<span style="color:var(--text-secondary);font-size:11px;">—</span>';
+
+    return '<tr style="border-bottom:1px solid var(--border);">' +
+      '<td style="padding:8px 6px;font-size:12px;white-space:nowrap;color:var(--text-secondary);">' + new Date(r.created_at).toLocaleString() + '</td>' +
+      '<td style="padding:8px 6px;font-family:monospace;font-size:11px;">' +
+        '<button onclick="adminViewUserActivity(\'' + r.user_id + '\')" style="background:none;border:none;padding:0;cursor:pointer;color:#6366f1;font-family:monospace;font-size:11px;" title="Filter by this user">' +
+          escapeAdminHtml(r.user_id.slice(0, 8)) + '...' +
+        '</button>' +
+      '</td>' +
+      '<td style="padding:8px 6px;">' + badge + '</td>' +
+      '<td style="padding:8px 6px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + meta + '</td>' +
+      '<td style="padding:8px 6px;font-size:11px;color:var(--text-secondary);">' + escapeAdminHtml(r.ip || '—') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return '<div style="overflow-x:auto;">' +
+    '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+      '<thead>' +
+        '<tr style="border-bottom:2px solid var(--border);color:var(--text-secondary);">' +
+          '<th style="text-align:left;padding:8px 6px;">Time</th>' +
+          '<th style="text-align:left;padding:8px 6px;">User</th>' +
+          '<th style="text-align:left;padding:8px 6px;">Event</th>' +
+          '<th style="text-align:left;padding:8px 6px;">Details</th>' +
+          '<th style="text-align:left;padding:8px 6px;">IP</th>' +
+        '</tr>' +
+      '</thead>' +
+      '<tbody>' + rowsHtml + '</tbody>' +
+    '</table>' +
+  '</div>';
 }
