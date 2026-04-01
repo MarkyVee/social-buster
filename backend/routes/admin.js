@@ -2192,11 +2192,15 @@ router.post('/maintenance/retry-failed/:id', async (req, res) => {
 // The API token must have the "Cache Purge" permission on the zone.
 router.post('/maintenance/purge-cache', async (req, res) => {
   const zoneId   = process.env.CLOUDFLARE_ZONE_ID;
-  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+  // Use the dedicated cache-purge token if set, otherwise fall back to the
+  // shared API token. CLOUDFLARE_API_TOKEN is used for AI image generation
+  // and may not have Cache Purge permission — set CLOUDFLARE_CACHE_TOKEN
+  // to a separate token scoped to Zone → Cache Purge only.
+  const apiToken = process.env.CLOUDFLARE_CACHE_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
 
   if (!zoneId || !apiToken) {
     return res.status(400).json({
-      error: 'CLOUDFLARE_ZONE_ID or CLOUDFLARE_API_TOKEN not set in .env'
+      error: 'CLOUDFLARE_ZONE_ID and either CLOUDFLARE_CACHE_TOKEN or CLOUDFLARE_API_TOKEN must be set in .env'
     });
   }
 
