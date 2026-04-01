@@ -103,6 +103,7 @@ We maintain a strict adapter pattern so external providers can be swapped by cha
 - FFmpeg is background-only (BullMQ workers only).
 - Media processing seed must stay scoped to pending posts only.
 - Pending SQL migration on `media_items` table (see handoff.md).
+- **RLS service role policies must use `USING (true) WITH CHECK (true)`** — never `auth.role() = 'service_role'`. The latter does not work in this Supabase setup and silently blocks all `supabaseAdmin` writes. (ISSUE-029)
 
 ---
 

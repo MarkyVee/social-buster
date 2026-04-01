@@ -14,6 +14,16 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-029
+- **Date:** 2026-04-01
+- **Status:** resolved (2026-04-01)
+- **Category:** CRITICAL / Database
+- **Description:** `auth.role() = 'service_role'` RLS policy pattern is broken across the entire database. `supabaseAdmin` (service role key) was being blocked from writing to every table — subscription overrides, DM automation, media, platform connections, comments, tier limits, and more were all silently failing. Root cause: Supabase does not evaluate `auth.role()` correctly for the service role key in this setup.
+- **Found in:** All 15 tables with service role policies — `user_profiles`, `subscriptions`, `briefs`, `posts`, `media_items`, `platform_connections`, `post_metrics`, `comments`, `trigger_phrases`, `cloud_connections`, `video_segments`, `plans`, `cohort_performance`, `dm_automations`, `dm_automation_steps`, `dm_conversations`, `dm_collected_data`, `admin_messages`
+- **Resolution:** Replaced all `USING (auth.role() = 'service_role')` policies with `USING (true) WITH CHECK (true)` on every affected table. Fixed via Supabase SQL Editor — no redeploy needed. User-facing SELECT policies (e.g. `auth.uid() = recipient_id` on admin_messages) were left intact. Future migrations must use `USING (true) WITH CHECK (true)` for service role policies — never `auth.role() = 'service_role'`.
+
+---
+
 - **ID:** ISSUE-028
 - **Date:** 2026-04-01
 - **Status:** resolved (2026-04-01)

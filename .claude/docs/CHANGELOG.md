@@ -6,6 +6,7 @@ What was built, fixed, or shipped — logged per session.
 
 ## 2026-03-31
 
+- **FIXED ISSUE-029:** CRITICAL — `auth.role() = 'service_role'` RLS pattern broken across all 15 tables. `supabaseAdmin` was blocked from writing anywhere — subscription overrides, DM automation, media, comments, etc. all silently failing. Fixed by replacing every service role policy with `USING (true) WITH CHECK (true)` via Supabase SQL Editor. No redeploy. Future migrations must never use `auth.role() = 'service_role'`.
 - **FIXED ISSUE-027:** `tier_limits` RLS policy blocked auto-seed — table stayed empty, Limits tab showed nothing. Fixed policy to allow service role full access, manually seeded all 40 rows (10 features × 4 tiers) via Supabase SQL Editor. No redeploy.
 - **FIXED ISSUE-028:** `system_events` + `system_state` tables missing — watchdog migration never ran. Ran `migration_system_events.sql` in Supabase. Watchdog tab now records health events. No redeploy.
 - **FIXED ISSUE-026:** Platform-wide stale JS detection for all users — `APP_VERSION = 1` constant in `frontend/public/js/app.js` and `backend/server.js`. Public `GET /app-version` endpoint. `checkAppVersion()` fires after every login for every user. If the loaded JS doesn't match the server's version, a yellow "new version available — Refresh Now" banner appears in the main content area. Bumps app.js to v=48.
