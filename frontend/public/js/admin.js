@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 42;
+const ADMIN_JS_VERSION = 43;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -759,7 +759,7 @@ async function loadAdminUsers(page = 1, search = '') {
 function buildUsersTableHtml(users) {
   if (!users.length) return '<div class="admin-muted" style="padding:20px;">No users found.</div>';
 
-  const tierColors = { enterprise: '#6366f1', professional: '#0ea5e9', starter: '#16a34a', free_trial: '#64748b', suspended: '#dc2626' };
+  const tierColors = { legacy: '#f59e0b', enterprise: '#6366f1', professional: '#0ea5e9', starter: '#16a34a', free_trial: '#64748b', suspended: '#dc2626' };
   const rows = users.map(u => {
     const tierColor = tierColors[u.subscription_tier] || '#64748b';
     return `
@@ -888,6 +888,7 @@ function buildUserDetailHtml(data) {
           <option value="starter" ${p.subscription_tier === 'starter' ? 'selected' : ''}>starter</option>
           <option value="professional" ${p.subscription_tier === 'professional' ? 'selected' : ''}>professional</option>
           <option value="enterprise" ${p.subscription_tier === 'enterprise' ? 'selected' : ''}>enterprise</option>
+          <option value="legacy" ${p.subscription_tier === 'legacy' ? 'selected' : ''}>legacy</option>
           <option value="suspended" ${p.subscription_tier === 'suspended' ? 'selected' : ''}>suspended</option>
         </select>
         <input id="admin-notes-input" class="admin-input" type="text" placeholder="Admin notes (optional)" style="flex:1;min-width:200px;" value="${escapeAdminHtml(p.admin_notes || '')}" />
