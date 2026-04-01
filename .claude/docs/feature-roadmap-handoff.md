@@ -39,6 +39,9 @@
 | Admin dashboard — Legacy, Affiliates, Payouts tabs | Built (v41) — tab bar scrollable |
 | Legacy Membership + Affiliate Program (backend + admin) | Built — migration run, needs Stripe price ID seeded |
 | Plan card logo_url field (admin Plans editor) | Built — requires SQL: `ALTER TABLE plans ADD COLUMN IF NOT EXISTS logo_url TEXT` |
+| Platform "Coming Soon" in My Profile | Done (app.js v6) — only Instagram + Facebook selectable. Remove from exclusion list when OAuth ships. |
+| AI agent data collection (all tiers) | All agents run for every user. Intelligence display gated by tier, not collection. |
+| Signal weights learning engine (Layer 1) | Built (2026-04-01) — hookPerformanceAgent + toneObjectiveFitAgent + contextBuilder injection |
 | Cloudflare CDN cache purge (admin Diagnostics tab) | Built — needs `CLOUDFLARE_CACHE_TOKEN` env var in Coolify |
 | Tier limits (DB-driven, admin-configurable, frontend upgrade prompts) | Done |
 | Stripe billing (subscribe, upgrade, downgrade, cancel, webhook, admin override) | Done |
@@ -74,6 +77,8 @@
 4. **Repost from Intelligence Dashboard** — not yet built
 5. **Platform OAuth** — TikTok, LinkedIn, X, YouTube (deferred by user)
 6. **Horizontal block scaling** — deferred, full architecture designed (see Section 10). Implement at ~8-9K users.
+7. **Platform availability + tier gating** — TikTok/LinkedIn/X/Threads/WhatsApp/Telegram show "Coming Soon" in profile (done v6). Add tier-based platform caps to Limits dashboard. See [[FEATURES]] FEAT-022/023.
+8. **Agent data collection for all tiers** — agents always run regardless of tier. Gate only the display. See [[FEATURES]] FEAT-024.
 
 ---
 

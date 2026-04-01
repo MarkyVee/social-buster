@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 5;
+const APP_VERSION = 6;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -1945,16 +1945,19 @@ async function renderProfile(el) {
           <label>Preferred Platforms <span class="required-marker">*</span> <span class="text-muted text-sm">(select at least one)</span></label>
           <div id="platform-checkboxes" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px;">
             ${['instagram','facebook','tiktok','linkedin','x','threads','whatsapp','telegram'].map(p => {
-              const comingSoon = p === 'whatsapp' || p === 'telegram';
+              // Only Instagram and Facebook are live. Everything else is coming soon.
+              // When TikTok/LinkedIn/X/Threads/WhatsApp/Telegram OAuth ships,
+              // remove the platform from this list and it will become selectable.
+              const comingSoon = !['instagram','facebook'].includes(p);
               const displayName = p === 'x' ? 'X' : p.charAt(0).toUpperCase() + p.slice(1);
               return `
               <label style="display:flex;align-items:center;gap:8px;${comingSoon ? 'opacity:0.4;cursor:default;' : 'cursor:pointer;'}font-weight:normal;padding:6px 12px;border:1.5px solid #e2e8f0;border-radius:8px;transition:all 0.15s;"
-                     ${comingSoon ? 'title="Coming soon"' : ''}>
+                     ${comingSoon ? 'title="Coming soon — publishing support in development"' : ''}>
                 <input type="checkbox" name="preferred_platforms" value="${p}"
                   ${(profile.preferred_platforms || []).includes(p) ? 'checked' : ''}
                   ${comingSoon ? 'disabled' : ''} style="display:none;" />
                 ${platformLogoSvg(p, 20)}
-                <span style="font-size:13px;">${displayName}</span>${comingSoon ? '<span style="font-size:10px;color:#94a3b8;">(soon)</span>' : ''}
+                <span style="font-size:13px;">${displayName}</span>${comingSoon ? '<span style="font-size:10px;color:#94a3b8;margin-left:2px;">(soon)</span>' : ''}
               </label>`;
             }).join('')}
           </div>

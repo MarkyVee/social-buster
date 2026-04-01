@@ -653,6 +653,24 @@ Params: access_token={PAGE_ACCESS_TOKEN}
 
 ## AI Agent Learning System
 
+### Platform Availability & Tier Gating
+
+**Current state (app.js v6, 2026-04-01):**
+- Preferred Platforms in My Profile: only Instagram + Facebook are selectable. All others (TikTok, LinkedIn, X, Threads, WhatsApp, Telegram) show "(soon)" and are disabled.
+- To activate a platform when its OAuth ships: remove it from the `comingSoon` exclusion in app.js — one line change.
+- Tier-based platform caps: `tier_limits` table already has `maxPlatforms` logic in the profile form. Just needs DB rows populated per tier and the Limits tab updated. See [[FEATURES]] FEAT-022/023.
+
+**Critical rule — always collect, selectively reveal:**
+All AI agents (hookPerformanceAgent, toneObjectiveFitAgent, researchAgent, performanceAgent, etc.) run for **every user regardless of subscription tier**. Tier only gates what the user can SEE — not what gets collected. This means zero cold-start delay when a user upgrades. See [[FEATURES]] FEAT-024.
+
+**Planned tier gating for intelligence data:**
+- Free Trial → post generation only, no intelligence dashboard
+- Starter → basic preflight (cohort benchmarks + research)
+- Professional → full signal_weights (hook rankings, combo warnings, best times)
+- Enterprise → all agents including cohort-wide platformAlgorithmAgent
+
+---
+
 ### signal_weights — the learning engine foundation
 `user_profiles.signal_weights` (JSONB) is the connective tissue for all learning agents.
 Every agent writes multipliers here. contextBuilder reads them into every LLM brief prompt as a 10th context section.

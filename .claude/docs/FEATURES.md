@@ -270,6 +270,47 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+---
+
+- **ID:** FEAT-022
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Platform availability gating — Preferred Platforms in My Profile shows "Coming Soon" for all platforms except Instagram and Facebook. When a platform's OAuth + publishing ships, remove it from the coming-soon list. Later, also gate by subscription tier (e.g. Free Trial = 2 platforms, Starter = 3, Professional = 5, Enterprise = all).
+- **Current state:** TikTok, LinkedIn, X, Threads, WhatsApp, Telegram all show "(soon)" and are disabled in the profile form. Instagram + Facebook are fully active. Done in app.js v6 (2026-04-01).
+- **Next step:** When a platform ships OAuth, remove it from the `comingSoon` exclusion in app.js (one line change). Then add tier-based caps to the Limits dashboard after core platforms are live.
+- **Files:** `frontend/public/js/app.js` (platform-checkboxes map), `backend/routes/admin.js` (tier_limits table), `frontend/public/js/admin.js` (Limits tab)
+- **Related:** [[FEAT-023]], [[feature-roadmap-handoff]] Section 4
+
+---
+
+- **ID:** FEAT-023
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** MEDIUM
+- **Description:** Subscription-gated platform limits in Limits dashboard — admin can set max platforms per tier (e.g. Free=2, Starter=3, Professional=5, Enterprise=unlimited). Enforced in profile save + brief form platform selection. Users over the limit after a downgrade get a graceful "your saved platforms exceed your plan" banner.
+- **Implementation:** Add `platforms` feature key to `tier_limits` table (already exists for other features). Frontend profile form already has `maxPlatforms` logic that reads from the limits check — just needs the DB row populated. Add to admin Limits tab editor.
+- **Files:** `backend/routes/admin.js`, `frontend/public/js/app.js`, SQL seed for `tier_limits`
+- **Related:** [[FEAT-022]]
+
+---
+
+- **ID:** FEAT-024
+- **Date:** 2026-04-01
+- **Status:** planned
+- **Priority:** HIGH
+- **Description:** AI agent data collection runs for ALL users regardless of subscription tier. Agent intelligence (signal_weights, hook performance, tone/objective fit, cohort benchmarks, pain points, voice profile) is always collected in the background. Subscription tier only gates the DISPLAY of this data — not its collection. This ensures rich data exists the moment a user upgrades, with no cold-start delay.
+- **Reason:** If we only run agents for paid tiers, free users who upgrade get a blank intelligence dashboard for the first week while agents backfill. That's a terrible upgrade experience. Always collect, selectively reveal.
+- **Tier gating plan:**
+  - Free Trial: post generation only. No intelligence dashboard access.
+  - Starter: Basic preflight panel (cohort benchmarks, research summary).
+  - Professional: Full signal_weights panel — hook rankings, tone/objective combo warnings, best posting times.
+  - Enterprise: All agents including platformAlgorithmAgent (cohort-wide algorithm shift detection).
+- **Files:** All agent files (no changes — they already run for all users). Gate only in `routes/intelligence.js` `checkLimit('intelligence_dashboard')` and frontend rendering.
+- **Related:** [[DECISIONS]] 2026-04-01 (subscription packaging), [[feature-roadmap-handoff]] Section 10
+
+---
+
 ## Done
 
 _(none yet)_
