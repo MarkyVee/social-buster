@@ -48,10 +48,12 @@ router.post('/register', async (req, res) => {
 
   try {
     // Step 1: Create user in Supabase Auth
+    // email_confirm: false so Supabase sends a verification email.
+    // The user must click the link before they can log in.
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true // Auto-confirm so user can log in immediately after registration
+      email_confirm: false
     });
 
     if (authError) {
@@ -75,28 +77,12 @@ router.post('/register', async (req, res) => {
       console.error('[Auth] Stripe customer creation failed:', stripeErr.message);
     }
 
-    // Step 4: Sign in immediately to get the session JWT
-    // (admin.createUser doesn't return a session, so we sign in right after)
-    const { data: sessionData, error: sessionError } = await supabaseAdmin.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if (sessionError) throw sessionError;
-
-    // Generate a unique session ID and store it so only one device can be active.
-    // Any previous session (from another device) is automatically invalidated.
-    const sessionId = uuidv4();
-    await supabaseAdmin
-      .from('user_profiles')
-      .update({ active_session_id: sessionId })
-      .eq('user_id', authUserId);
-    await cacheSet(`session:${authUserId}`, sessionId, 86400 * 60); // 60-day TTL matches refresh token
-
+    // Step 4: Account created — email confirmation required before login.
+    // Supabase will send the verification email automatically.
+    // We do NOT sign the user in here — they must confirm their email first.
     return res.status(201).json({
       message: 'Account created successfully',
-      session: sessionData.session,
-      session_id: sessionId,
+      email_confirmation_required: true,
       user: {
         id: authUserId,
         email
@@ -133,7 +119,15 @@ router.post('/login', async (req, res) => {
     const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
 
     if (error) {
-      // Return a generic error to avoid revealing whether the email exists
+      // Supabase returns "Email not confirmed" when the user hasn't clicked the verification link.
+      // Give them a clear, actionable message instead of the generic auth error.
+      if (error.message?.toLowerCase().includes('email not confirmed')) {
+        return res.status(401).json({
+          error: 'Please verify your email address before logging in. Check your inbox for a confirmation link.',
+          email_not_confirmed: true
+        });
+      }
+      // Return a generic error for all other failures to avoid revealing whether the email exists
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 

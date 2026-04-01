@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -201,7 +201,10 @@ async function apiFetch(path, options = {}, _retried = false) {
 
   if (!response.ok) {
     const message = body.error || `Request failed with status ${response.status}`;
-    throw new Error(message);
+    const err = new Error(message);
+    // Pass through email_not_confirmed flag so the login handler can show a targeted warning
+    if (body.email_not_confirmed) err.email_not_confirmed = true;
+    throw err;
   }
 
   return body;
@@ -582,7 +585,20 @@ async function handleLogin(e) {
     renderAppShell();
 
   } catch (err) {
-    showAlert('auth-alerts', err.message, 'error');
+    // Special case: email not yet confirmed — show a distinct yellow warning
+    // instead of a generic red error so the user knows exactly what to do.
+    if (err.email_not_confirmed) {
+      document.getElementById('auth-alerts').innerHTML = `
+        <div style="background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
+          <div style="font-size:20px;line-height:1;">📬</div>
+          <div>
+            <div style="font-weight:600;color:#854d0e;font-size:14px;margin-bottom:3px;">Email not verified</div>
+            <div style="color:#a16207;font-size:13px;line-height:1.5;">${err.message}</div>
+          </div>
+        </div>`;
+    } else {
+      showAlert('auth-alerts', err.message, 'error');
+    }
     btn.disabled = false;
     btn.textContent = 'Sign In';
   }
@@ -604,14 +620,17 @@ async function handleRegister(e) {
       body: JSON.stringify({ email, password })
     });
 
+    // Email confirmation is required — show a holding screen instead of logging in.
+    // The user must click the link in their inbox before they can access the app.
+    if (data.email_confirmation_required) {
+      renderEmailConfirmationScreen(email);
+      return;
+    }
+
+    // Fallback: if somehow a session is returned (e.g. confirmation disabled), log straight in
     saveToken(data.session.access_token, data.session.refresh_token, data.session_id);
     App.user = data.user;
-
-    // Same race-condition guard as handleLogin above
-    try { await loadCurrentUser(); } catch { /* non-fatal — proceed to app */ }
-
-    // New users always land on Settings & Billing so they can choose a plan
-    // and connect their platforms before doing anything else.
+    try { await loadCurrentUser(); } catch { /* non-fatal */ }
     window.location.hash = 'settings';
     renderAppShell();
 
@@ -620,6 +639,48 @@ async function handleRegister(e) {
     btn.disabled = false;
     btn.textContent = 'Create Account';
   }
+}
+
+// ----------------------------------------------------------------
+// renderEmailConfirmationScreen — shown after registration until the
+// user clicks the verification link in their inbox.
+// ----------------------------------------------------------------
+function renderEmailConfirmationScreen(email) {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8fafc;">
+      <div style="max-width:460px;width:100%;margin:24px;background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,0.08);padding:40px 36px;text-align:center;">
+        <div style="font-size:48px;margin-bottom:16px;">📬</div>
+        <h2 style="font-size:22px;font-weight:700;color:#1e293b;margin:0 0 10px;">Check your inbox</h2>
+        <p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 8px;">
+          We sent a confirmation link to<br>
+          <strong style="color:#1e293b;">${email}</strong>
+        </p>
+        <p style="color:#64748b;font-size:14px;line-height:1.6;margin:0 0 28px;">
+          Click the link in that email to activate your account. It may take a minute or two to arrive — check your spam folder if you don't see it.
+        </p>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px 16px;margin-bottom:24px;text-align:left;">
+          <div style="font-size:13px;color:#166534;font-weight:600;margin-bottom:4px;">✅ What happens next</div>
+          <div style="font-size:13px;color:#15803d;line-height:1.6;">
+            1. Open the confirmation email<br>
+            2. Click "Confirm your email"<br>
+            3. You'll be redirected back here to log in
+          </div>
+        </div>
+        <button onclick="showAuthScreen()" style="width:100%;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569;font-size:14px;cursor:pointer;font-weight:500;">
+          ← Back to Login
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// ----------------------------------------------------------------
+// showAuthScreen — returns to the login/register screen.
+// Called from the email confirmation screen's back button.
+// ----------------------------------------------------------------
+function showAuthScreen() {
+  renderAuthScreen();
 }
 
 // ---- Password reset handler ----
