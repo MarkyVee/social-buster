@@ -259,6 +259,17 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+---
+
+- **ID:** FEAT-021
+- **Date:** 2026-03-31
+- **Status:** idea
+- **Priority:** LOW
+- **Description:** Admin cache-busting enforcement reminder — after each deploy, admins sometimes forget to bump the `?v=` version number on changed frontend JS/CSS files in `index.html`. This causes users to load stale cached files. Consider adding a visual checklist or warning in the admin Diagnostics tab reminding the deployer to bump version numbers after a JS/CSS deploy. The Cloudflare CDN purge button (added 2026-03-31) partially addresses this — purging the CDN cache forces fresh downloads even when the version number wasn't bumped — but the version bump is still the correct long-term fix.
+- **Related:** [[DECISIONS]], [[FEAT-020]]
+
+---
+
 ## Done
 
 _(none yet)_
