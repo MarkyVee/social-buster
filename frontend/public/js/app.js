@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 4;
+const APP_VERSION = 5;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -2221,7 +2221,8 @@ async function renderSubscriptionSection() {
         }
 
         return `
-          <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''} ${isCurrent ? 'pricing-card--current' : ''}" style="border-top:3px solid ${p.color || '#6366f1'};${isCurrent ? 'box-shadow:0 0 0 2px ' + (p.color || '#6366f1') + ';' : ''}">
+          <div class="pricing-card ${p.badge ? 'pricing-card--featured' : ''} ${isCurrent ? 'pricing-card--current' : ''}" style="position:relative;border-top:3px solid ${p.color || '#6366f1'};${isCurrent ? 'box-shadow:0 0 0 2px ' + (p.color || '#6366f1') + ';' : ''}">
+            ${p.logo_url ? `<img src="${p.logo_url}" alt="" style="position:absolute;top:12px;right:12px;width:36px;height:36px;object-fit:contain;border-radius:6px;" onerror="this.style.display='none'">` : ''}
             ${isCurrent ? '<div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;margin-bottom:4px;">Your Plan</div>' : ''}
             ${p.badge && !isCurrent ? `<div class="pricing-badge">${p.badge}</div>` : ''}
             <div class="pricing-name">${p.name}</div>

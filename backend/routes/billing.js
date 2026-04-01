@@ -43,7 +43,7 @@ router.get('/plans', async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('plans')
-      .select('tier, name, price_display, period_label, features, color, badge, sort_order')
+      .select('tier, name, price_display, period_label, features, color, badge, sort_order, logo_url')
       .eq('is_active', true)
       .order('sort_order');
 

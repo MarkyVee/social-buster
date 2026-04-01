@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 37;
+const ADMIN_JS_VERSION = 38;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -3559,7 +3559,8 @@ async function loadAdminPlans() {
 function renderPlanPreviewCard(plan) {
   const features = Array.isArray(plan.features) ? plan.features : [];
   return `
-    <div class="plan-preview-card" id="plan-preview-${plan.id}" style="border-left:4px solid ${plan.color};padding:16px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);${!plan.is_active ? 'opacity:0.5;' : ''}">
+    <div class="plan-preview-card" id="plan-preview-${plan.id}" style="position:relative;border-left:4px solid ${plan.color};padding:16px;background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.08);${!plan.is_active ? 'opacity:0.5;' : ''}">
+      ${plan.logo_url ? `<img src="${escapeAdminHtml(plan.logo_url)}" alt="" style="position:absolute;top:12px;right:12px;width:36px;height:36px;object-fit:contain;border-radius:6px;" onerror="this.style.display='none'">` : ''}
       ${plan.badge ? `<div style="font-size:11px;font-weight:600;color:${plan.color};text-transform:uppercase;margin-bottom:4px;">${escapeAdminHtml(plan.badge)}</div>` : ''}
       <div style="font-size:18px;font-weight:700;color:#1e293b;">${escapeAdminHtml(plan.name)}</div>
       <div style="margin:6px 0 12px;">
@@ -3618,6 +3619,13 @@ function renderPlanEditorCard(plan) {
           <input type="text" id="plan-badge-${plan.id}" value="${escapeAdminHtml(plan.badge || '')}"
             onblur="savePlanField('${plan.id}', 'badge', this.value || null)" placeholder="e.g. Most Popular" />
         </div>
+      </div>
+
+      <div class="email-form-group">
+        <label>Logo URL <span style="color:#94a3b8;font-weight:400;">(optional — shown top-right of card)</span></label>
+        <input type="text" id="plan-logo-${plan.id}" value="${escapeAdminHtml(plan.logo_url || '')}"
+          onblur="savePlanField('${plan.id}', 'logo_url', this.value || null)" placeholder="https://… (image URL)" />
+        ${plan.logo_url ? `<img src="${escapeAdminHtml(plan.logo_url)}" alt="" style="margin-top:6px;width:40px;height:40px;object-fit:contain;border:1px solid #e2e8f0;border-radius:6px;" onerror="this.style.display='none'">` : ''}
       </div>
 
       <div class="email-form-group">
