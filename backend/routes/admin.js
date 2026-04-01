@@ -22,6 +22,13 @@
  *   POST /admin/maintenance/reset-stuck    — Reset stuck 'publishing' posts to 'failed'
  *   POST /admin/maintenance/expire-stale-dms — Expire active DM convos older than 24h
  *   POST /admin/maintenance/retry-failed/:id — Retry a specific failed post
+ *   GET  /admin/users/:id/context            — Read agent_context/research/intelligence Redis keys
+ *   POST /admin/users/:id/run-agents         — Queue signal-weights run for one user
+ *   POST /admin/users/:id/reset-signals     — Clear signal_weights for one user
+ *   GET  /admin/agent-directives            — List all agent directives
+ *   POST /admin/agent-directives            — Create an agent directive
+ *   PUT  /admin/agent-directives/:id        — Update an agent directive
+ *   DELETE /admin/agent-directives/:id      — Delete an agent directive
  */
 
 const express = require('express');
@@ -33,7 +40,7 @@ const router  = express.Router();
 // The frontend fetches GET /admin/version on every dashboard load and
 // shows a "stale JS" warning banner if the numbers don't match.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 47;
+const ADMIN_JS_VERSION = 51;
 
 const { requireAuth }    = require('../middleware/auth');
 const { requireAdmin }   = require('../middleware/adminAuth');
@@ -2942,6 +2949,263 @@ router.get('/activity/:userId', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[Admin] GET /activity/:userId error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch user activity.' });
+  }
+});
+
+// ================================================================
+// AFFILIATE SLUG — view + assign from the user detail card
+// GET /admin/users/:id/slug  — read current slug for any user
+// PUT /admin/users/:id/slug  — assign or update slug for any user
+// ================================================================
+
+router.get('/users/:id/slug', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('referral_slugs')
+      .select('slug, is_custom, click_count, created_at')
+      .eq('user_id', req.params.id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return res.json({ slug: data || null });
+
+  } catch (err) {
+    console.error('[Admin] GET /users/:id/slug error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch slug.' });
+  }
+});
+
+router.put('/users/:id/slug', requireAdmin, async (req, res) => {
+  try {
+    const { slug } = req.body;
+
+    if (!slug || !slug.trim()) {
+      return res.status(400).json({ error: 'slug is required.' });
+    }
+
+    const clean = slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!clean) {
+      return res.status(400).json({ error: 'Slug must contain letters, numbers, or hyphens.' });
+    }
+
+    // Check uniqueness — slug must not already belong to a different user
+    const { data: existing } = await supabaseAdmin
+      .from('referral_slugs')
+      .select('user_id')
+      .eq('slug', clean)
+      .maybeSingle();
+
+    if (existing && existing.user_id !== req.params.id) {
+      return res.status(409).json({ error: `Slug "${clean}" is already taken by another user.` });
+    }
+
+    // Block if slug already exists — slugs are set once and never changed
+    const { data: current } = await supabaseAdmin
+      .from('referral_slugs')
+      .select('slug')
+      .eq('user_id', req.params.id)
+      .maybeSingle();
+
+    if (current?.slug) {
+      return res.status(409).json({ error: 'This user already has a slug. Slugs cannot be changed once set.' });
+    }
+
+    // Insert only — never update
+    const { data, error } = await supabaseAdmin
+      .from('referral_slugs')
+      .insert({ user_id: req.params.id, slug: clean, is_custom: true, customized_at: new Date().toISOString() })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    console.log(`[Admin] Assigned slug "${clean}" to user ${req.params.id}`);
+    return res.json({ slug: data });
+
+  } catch (err) {
+    console.error('[Admin] PUT /users/:id/slug error:', err.message);
+    return res.status(500).json({ error: 'Failed to assign slug.' });
+  }
+});
+
+// ================================================================
+// CONTEXT INSPECTOR
+// GET /admin/users/:id/context — read the agent_context Redis key for a user.
+// Shows the admin exactly what the LLM will receive on the user's next brief.
+// ================================================================
+router.get('/users/:id/context', requireAdmin, async (req, res) => {
+  try {
+    const context = await cacheGet(`agent_context:${req.params.id}`);
+
+    // Also read the research and intelligence keys so admin can see all three caches
+    const research    = await cacheGet(`research:${req.params.id}`);
+    const intelligence = await cacheGet(`intelligence:${req.params.id}`);
+
+    return res.json({
+      agent_context: context    || null,
+      research:      research   || null,
+      intelligence:  intelligence || null,
+      cached:        !!context
+    });
+
+  } catch (err) {
+    console.error('[Admin] GET /users/:id/context error:', err.message);
+    return res.status(500).json({ error: 'Failed to read context cache.' });
+  }
+});
+
+// ================================================================
+// AGENT CONTROLS — per-user signal weights management
+// POST /admin/users/:id/run-agents      — queue a signal-weights job for one user
+// POST /admin/users/:id/reset-signals   — wipe signal_weights for one user
+// ================================================================
+
+// Queue a signal-weights-user job for a specific user on demand.
+// Useful for testing, or fixing a user whose data went stale.
+router.post('/users/:id/run-agents', requireAdmin, async (req, res) => {
+  try {
+    const { signalWeightsQueue } = require('../queues');
+
+    // Use a unique jobId so it doesn't conflict with the weekly scheduled job
+    await signalWeightsQueue.add(
+      'signal-weights-user',
+      { userId: req.params.id },
+      {
+        jobId: `signal-weights-manual-${req.params.id}-${Date.now()}`,
+        removeOnComplete: { count: 50 },
+        removeOnFail:     { count: 20 }
+      }
+    );
+
+    console.log(`[Admin] Queued manual signal-weights job for user ${req.params.id}`);
+    return res.json({ success: true, message: 'Agent run queued. Results will appear in signal_weights within a few minutes.' });
+
+  } catch (err) {
+    console.error('[Admin] POST /users/:id/run-agents error:', err.message);
+    return res.status(500).json({ error: 'Failed to queue agent run.' });
+  }
+});
+
+// Reset signal_weights to null for a specific user.
+// Clears all learned data — the next agent run starts fresh.
+// Useful when a user's data is corrupted or they've fundamentally changed their strategy.
+router.post('/users/:id/reset-signals', requireAdmin, async (req, res) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from('user_profiles')
+      .update({ signal_weights: null })
+      .eq('user_id', req.params.id);
+
+    if (error) throw new Error(error.message);
+
+    console.log(`[Admin] Reset signal_weights for user ${req.params.id}`);
+    return res.json({ success: true, message: 'signal_weights cleared. Queue a new agent run to rebuild.' });
+
+  } catch (err) {
+    console.error('[Admin] POST /users/:id/reset-signals error:', err.message);
+    return res.status(500).json({ error: 'Failed to reset signal weights.' });
+  }
+});
+
+// ================================================================
+// AGENT DIRECTIVES
+// GET    /admin/agent-directives         — list all directives
+// POST   /admin/agent-directives         — create a new directive
+// PUT    /admin/agent-directives/:id     — update a directive
+// DELETE /admin/agent-directives/:id     — delete a directive
+// ================================================================
+
+// List all directives (sorted newest first)
+router.get('/agent-directives', requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('admin_agent_directives')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return res.json({ directives: data || [] });
+
+  } catch (err) {
+    console.error('[Admin] GET /agent-directives error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch agent directives.' });
+  }
+});
+
+// Create a new directive
+router.post('/agent-directives', requireAdmin, async (req, res) => {
+  try {
+    const { agent_name, user_id, directive, label } = req.body;
+
+    if (!directive || !directive.trim()) {
+      return res.status(400).json({ error: 'directive text is required.' });
+    }
+
+    const row = {
+      agent_name:  agent_name  || '*',
+      user_id:     user_id     || null,
+      directive:   directive.trim(),
+      label:       label?.trim() || '',
+      is_active:   true
+    };
+
+    const { data, error } = await supabaseAdmin
+      .from('admin_agent_directives')
+      .insert(row)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return res.status(201).json({ directive: data });
+
+  } catch (err) {
+    console.error('[Admin] POST /agent-directives error:', err.message);
+    return res.status(500).json({ error: 'Failed to create agent directive.' });
+  }
+});
+
+// Update a directive (text, label, active toggle, or any field)
+router.put('/agent-directives/:id', requireAdmin, async (req, res) => {
+  try {
+    const { agent_name, user_id, directive, label, is_active } = req.body;
+
+    const updates = { updated_at: new Date().toISOString() };
+    if (agent_name  !== undefined) updates.agent_name  = agent_name;
+    if (user_id     !== undefined) updates.user_id     = user_id || null;
+    if (directive   !== undefined) updates.directive   = directive.trim();
+    if (label       !== undefined) updates.label       = label?.trim() || '';
+    if (is_active   !== undefined) updates.is_active   = Boolean(is_active);
+
+    const { data, error } = await supabaseAdmin
+      .from('admin_agent_directives')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return res.json({ directive: data });
+
+  } catch (err) {
+    console.error('[Admin] PUT /agent-directives/:id error:', err.message);
+    return res.status(500).json({ error: 'Failed to update agent directive.' });
+  }
+});
+
+// Delete a directive permanently
+router.delete('/agent-directives/:id', requireAdmin, async (req, res) => {
+  try {
+    const { error } = await supabaseAdmin
+      .from('admin_agent_directives')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) throw new Error(error.message);
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error('[Admin] DELETE /agent-directives/:id error:', err.message);
+    return res.status(500).json({ error: 'Failed to delete agent directive.' });
   }
 });
 

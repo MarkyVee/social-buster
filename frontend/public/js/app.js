@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 6;
+const APP_VERSION = 7;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -1698,19 +1698,56 @@ async function renderIntelligencePlaceholder(el) {
 
 async function refreshIntelligence() {
   const btn = document.getElementById('refresh-intelligence-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Queuing...'; }
 
   try {
-    await apiFetch('/intelligence/refresh', { method: 'POST' });
+    // Queue the job — returns immediately with a jobId
+    const { jobId } = await apiFetch('/intelligence/refresh', { method: 'POST' });
+
+    if (btn) btn.textContent = '⏳ Generating...';
+
+    // Poll until done (every 2 seconds, max 90 seconds)
+    let elapsed = 0;
+    const MAX_WAIT = 90000;
+    const INTERVAL = 2000;
+
+    await new Promise((resolve, reject) => {
+      const timer = setInterval(async () => {
+        elapsed += INTERVAL;
+
+        try {
+          const poll = await apiFetch(`/intelligence/refresh/status/${jobId}`);
+
+          if (poll.status === 'completed') {
+            clearInterval(timer);
+            resolve();
+          } else if (poll.status === 'failed') {
+            clearInterval(timer);
+            reject(new Error(poll.error || 'Research generation failed.'));
+          } else if (elapsed >= MAX_WAIT) {
+            clearInterval(timer);
+            // Still queued after 90s — likely a Groq delay.
+            // Resolve anyway — research may appear later.
+            resolve();
+          }
+        } catch (pollErr) {
+          clearInterval(timer);
+          reject(pollErr);
+        }
+      }, INTERVAL);
+    });
+
     showAlert('intelligence-alerts', 'Research refreshed successfully.', 'success');
     // Reload the whole view to show new research
     renderIntelligencePlaceholder(document.getElementById('main-content-area'));
+
   } catch (err) {
     if (err.limitReached) {
       showUpgradePrompt(err.feature, err.message);
     } else {
       showAlert('intelligence-alerts', err.message, 'error');
     }
+  } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Research'; }
   }
 }

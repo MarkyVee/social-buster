@@ -7,7 +7,8 @@
  * Routes:
  *   GET  /intelligence/summary      — AI-readable performance summary (from Redis)
  *   GET  /intelligence/research     — niche/trend research (from Redis)
- *   POST /intelligence/refresh      — trigger a fresh research generation
+ *   POST /intelligence/refresh             — queue a research refresh (returns jobId immediately)
+ *   GET  /intelligence/refresh/status/:id  — poll job status (pending/completed/failed)
  *   GET  /intelligence/comments     — recent comments with sentiment analysis
  *   GET  /intelligence/performance  — aggregated post performance metrics
  *   GET  /intelligence/preflight    — blended pre-flight panel data for the brief form
@@ -27,6 +28,7 @@ const { standardLimiter }    = require('../middleware/rateLimit');
 const { checkLimit }         = require('../middleware/checkLimit');
 const { cacheGet }           = require('../services/redisService');
 const { refreshResearch }    = require('../agents/researchAgent');
+const { researchQueue }      = require('../queues');
 const { getCohortBenchmark } = require('../agents/performanceAgent');
 const { predictEngagement }  = require('../services/performancePredictorService');
 const { minePainPoints }     = require('../services/painPointMinerService');
@@ -82,23 +84,66 @@ router.get('/research', standardLimiter, async (req, res) => {
 
 // ----------------------------------------------------------------
 // POST /intelligence/refresh
-// Manually triggers a research refresh for the current user.
-// Uses the researchAgent which calls the LLM to generate fresh insights.
-// Typical completion: ~10–20 seconds on Groq.
+// Queues a research refresh job for the current user and returns
+// immediately with a jobId. The frontend polls /refresh/status/:jobId
+// until the job completes, then re-fetches /intelligence/research.
+//
+// Previously this called refreshResearch() inline and the HTTP
+// request sat open for 10-20 seconds waiting for Groq. Async queue
+// returns in <50ms regardless of LLM speed.
 // ----------------------------------------------------------------
 router.post('/refresh', standardLimiter, async (req, res) => {
   try {
-    // Run synchronously so the user knows when it's done
-    const research = await refreshResearch(req.user.id);
+    const job = await researchQueue.add(
+      'research-user',
+      { userId: req.user.id },
+      {
+        // Unique jobId per request — allows multiple manual refreshes
+        // without colliding with the weekly scheduled job
+        jobId: `research-manual-${req.user.id}-${Date.now()}`,
+        removeOnComplete: { count: 50 },
+        removeOnFail:     { count: 20 }
+      }
+    );
 
-    return res.json({
-      message:  'Research refreshed successfully',
-      research
-    });
+    return res.json({ status: 'queued', jobId: job.id });
 
   } catch (err) {
-    console.error('[Intelligence] Research refresh error:', err.message);
-    return res.status(500).json({ error: err.message || 'Failed to refresh research' });
+    console.error('[Intelligence] Research refresh queue error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to queue research refresh' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /intelligence/refresh/status/:jobId
+// Polls the status of a queued research job.
+// Returns: { status: 'pending' | 'completed' | 'failed', error? }
+// Once 'completed', the frontend re-fetches /intelligence/research.
+// ----------------------------------------------------------------
+router.get('/refresh/status/:jobId', standardLimiter, async (req, res) => {
+  try {
+    const job = await researchQueue.getJob(req.params.jobId);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found.' });
+    }
+
+    const state = await job.getState();
+
+    if (state === 'completed') {
+      return res.json({ status: 'completed' });
+    }
+
+    if (state === 'failed') {
+      return res.json({ status: 'failed', error: job.failedReason || 'Research generation failed.' });
+    }
+
+    // waiting / active / delayed — all 'pending' from the user's perspective
+    return res.json({ status: 'pending' });
+
+  } catch (err) {
+    console.error('[Intelligence] Research status poll error:', err.message);
+    return res.status(500).json({ error: 'Failed to check job status.' });
   }
 });
 

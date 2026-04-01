@@ -30,25 +30,16 @@
  *   injected directly into the agent's system prompt before it runs, so the
  *   LLM reasons with it as part of its core context.
  *
- * DIRECTIVE RESOLUTION ORDER (most specific wins):
+ * DIRECTIVE RESOLUTION ORDER (most specific wins, all matches combined):
  *   1. user_id + agent_name match   ← most targeted
  *   2. user_id + agent_name = '*'   ← applies to all agents for one user
  *   3. user_id = null + agent_name  ← applies to all users for one agent
  *   4. user_id = null + agent_name = '*' ← global, applies to everything
  *
  * Multiple matches are combined (joined with newlines) so global + targeted
- * directives both apply.
+ * directives both apply at once.
  *
- * PENDING (build after all agents are complete):
- *   — admin_agent_directives table + SQL migration
- *   — Admin UI: per-agent directive editor in admin dashboard
- *   — Admin: re-run agent for specific user button
- *   — Admin: reset signal_weights for specific user button
- *   See FEAT-025 in .claude/docs/FEATURES.md
- *
- * RIGHT NOW: getAgentDirective() always returns null.
- * The hook is wired into all agents so wiring in the real implementation
- * later requires no changes to agent files.
+ * REQUIRES: admin_agent_directives table (migration_agent_directives.sql)
  */
 
 const { supabaseAdmin } = require('./supabaseService');
@@ -57,37 +48,42 @@ const { supabaseAdmin } = require('./supabaseService');
 // getAgentDirective — called at the top of every agent run.
 //
 // Returns a string directive if one exists, or null if there is none.
-// Agents that receive null should run exactly as they always have.
+// Agents that receive null run exactly as they always have.
 // ----------------------------------------------------------------
 async function getAgentDirective(agentName, userId) {
-  // STUB — returns null until admin_agent_directives table is built.
-  // Uncomment and implement the block below once the table exists.
-
-  /*
   try {
+    // Fetch all active directives that match this agent + user combination.
+    // We can't do a single .or() that covers all four resolution cases cleanly
+    // in PostgREST, so we fetch broadly and filter in JS — the result set is
+    // tiny (admins rarely have more than a handful of directives).
     const { data: rows } = await supabaseAdmin
       .from('admin_agent_directives')
       .select('directive, agent_name, user_id')
-      .eq('is_active', true)
-      .or(`agent_name.eq.${agentName},agent_name.eq.*`)
-      .or(`user_id.eq.${userId},user_id.is.null`)
-      .order('created_at', { ascending: false });
+      .eq('is_active', true);
 
     if (!rows || rows.length === 0) return null;
 
-    // Combine all matching directives, most specific first
-    const combined = rows
+    // Keep rows that match this agent (or wildcard) AND this user (or global)
+    const matching = rows.filter(r => {
+      const agentMatch = r.agent_name === agentName || r.agent_name === '*';
+      const userMatch  = r.user_id === userId || r.user_id === null;
+      return agentMatch && userMatch;
+    });
+
+    if (matching.length === 0) return null;
+
+    // Combine all matching directives
+    const combined = matching
       .map(r => r.directive?.trim())
       .filter(Boolean)
       .join('\n\n');
 
     return combined || null;
-  } catch (_) {
-    return null; // Never let a missing directive break an agent run
-  }
-  */
 
-  return null;
+  } catch (_) {
+    // Never let a missing directive break an agent run
+    return null;
+  }
 }
 
 module.exports = { getAgentDirective };

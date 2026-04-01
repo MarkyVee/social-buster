@@ -36,6 +36,53 @@ form.append('source', fs.createReadStream(path), { knownLength: fileSize }); // 
 
 ---
 
+## Video Trim Test Script ✅ CONFIRMED WORKING (2026-04-01)
+
+Standalone script to verify the full trim + publish flow without any platform credentials or API calls.
+Run this any time `ffmpegService.js` or `trimVideo()` is changed.
+
+**Location:** `scripts/test-video-trim.js`
+**Input required:** Drop any `.mp4` (3+ minutes) at `test-assets/input/sample.mp4`
+
+**One-time setup (first run only):**
+```
+cd "c:\Users\MarkVidano\Desktop\Social Buster\backend"
+npm install --save-dev ffmpeg-static ffprobe-static
+cd ..
+```
+
+**Run:**
+```
+cd "c:\Users\MarkVidano\Desktop\Social Buster"
+node scripts/test-video-trim.js
+```
+
+**Last run results (2026-04-01) — 9/10 PASS:**
+
+| Test | Result | What it proved |
+|------|--------|----------------|
+| Q1 — 30s clip picker stays ~30s on Facebook (not 180s) | ✅ PASS | Clip picker end time fix works — 30.488s output |
+| Q2 — 120s request caps to TikTok 60s limit | ✅ PASS | Platform cap works correctly |
+| Q3 — 30s clip on Instagram doesn't expand to 90s | ✅ PASS | Short clips stay short |
+| Q4 — null endTime trims to platform limit | ✅ PASS | No clip end = platform limit applied |
+| Q4b — null endTime, source shorter than limit | ✅ PASS | Source boundary respected |
+| Q3+forceReencode — 30s clip through real publish path | ✅ PASS | H.264 re-encode preserves duration (30.014s) |
+| Q5a — clip picker values (60→90s) pass correct args | ✅ PASS | DB values flow to FFmpeg correctly |
+| Q5b — null trim_end_seconds passes null endTime | ✅ PASS | Null propagates correctly |
+| Q5c — Instagram manual slider (10→40s) | ✅ PASS | All platforms work |
+| EDGE — end before start | ❌ expected | FFmpeg silently produces garbage instead of throwing — not a real-world risk since the clip picker UI prevents this |
+
+**Q1 is the most important** — it verifies the clip picker end time fix (commit: "Fix: clip picker end time ignored").
+The bug was: without `endTime`, `trimVideo` encoded up to the full platform limit (e.g. 180s for Facebook) even if the user picked a 30s clip.
+
+**Known non-issue:** EDGE test (end before start) shows FFmpeg doesn't throw — it silently produces a zero-length file.
+Not fixed because it cannot be triggered through the normal clip picker UI. Low priority.
+
+**Note:** `test-assets/` is gitignored. The script imports `trimVideo` and `PLATFORM_LIMITS` directly from
+`ffmpegService.js` and uses `ffmpeg-static`/`ffprobe-static` — no global FFmpeg install needed.
+
+---
+
 ## Video Analysis Pipeline (SOLVED ✅)
 
 All issues resolved. Key protected patterns:

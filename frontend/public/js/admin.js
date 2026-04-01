@@ -18,7 +18,7 @@
 // AND the ?v= number on admin.js in index.html.
 // When you bump ?v=, bump this number too.
 // ----------------------------------------------------------------
-const ADMIN_JS_VERSION = 47;
+const ADMIN_JS_VERSION = 51;
 
 // ----------------------------------------------------------------
 // renderAdminDashboard — entry point called by app.js renderView()
@@ -833,6 +833,7 @@ async function loadAdminUserDetail(userId) {
     detailEl.innerHTML = buildUserDetailHtml(data);
     // Load activity summary into the placeholder rendered by buildUserDetailHtml
     loadAdminUserActivitySummary(userId);
+    loadAdminUserSlug(userId);
   } catch (err) {
     detailEl.innerHTML = `<div class="admin-error">Failed to load user: ${escapeAdminHtml(err.message)}</div>`;
   }
@@ -891,6 +892,22 @@ function buildUserDetailHtml(data) {
         <button class="btn btn-sm" onclick="adminViewUserActivity('${p.user_id}')">📋 View Full Activity Log</button>
       </div>
 
+      <!-- Affiliate slug -->
+      <div class="admin-section-title" style="margin-top:20px;">Affiliate Referral Slug</div>
+      <div id="admin-slug-${p.user_id}" style="margin-top:6px;">
+        <div class="admin-muted text-sm" style="margin-bottom:8px;">Loading...</div>
+      </div>
+
+      <!-- Context inspector -->
+      <div class="admin-section-title" style="margin-top:20px;">Context Inspector</div>
+      <div class="admin-muted" style="font-size:0.82rem;margin-bottom:8px;">
+        What the LLM will receive on this user's next brief — reads the live Redis cache.
+      </div>
+      <button class="btn btn-sm" onclick="loadAdminUserContext('${p.user_id}')">
+        🔍 Load Context Cache
+      </button>
+      <div id="admin-context-${p.user_id}" style="margin-top:10px;"></div>
+
       <!-- Quick override form -->
       <div class="admin-section-title" style="margin-top:20px;">Override Subscription Tier</div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px;">
@@ -906,6 +923,21 @@ function buildUserDetailHtml(data) {
         <input id="admin-notes-input" class="admin-input" type="text" placeholder="Admin notes (optional)" style="flex:1;min-width:200px;" value="${escapeAdminHtml(p.admin_notes || '')}" />
         <button class="btn btn-sm btn-primary" onclick="saveAdminUserOverride('${p.user_id}')">Save Override</button>
         <span id="admin-save-status-${p.user_id}" class="admin-muted"></span>
+      </div>
+
+      <!-- Agent controls -->
+      <div class="admin-section-title" style="margin-top:20px;">Intelligence Agent Controls</div>
+      <div class="admin-muted" style="font-size:0.82rem;margin-bottom:10px;">
+        Run agents to rebuild this user's signal_weights from scratch, or reset to clear bad data before re-running.
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="adminRunAgents('${p.user_id}')">
+          ▶ Re-run Agents
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="adminResetSignals('${p.user_id}')">
+          🗑 Reset Signal Weights
+        </button>
+        <span id="admin-agent-status-${p.user_id}" class="admin-muted" style="align-self:center;font-size:0.82rem;"></span>
       </div>
     </div>`;
 }
@@ -987,6 +1019,165 @@ async function saveAdminUserOverride(userId) {
     });
     if (statusEl) statusEl.textContent = '✅ Saved';
     setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+  }
+}
+
+// ----------------------------------------------------------------
+// loadAdminUserSlug — loads affiliate slug into the user detail card
+// ----------------------------------------------------------------
+async function loadAdminUserSlug(userId) {
+  const el = document.getElementById(`admin-slug-${userId}`);
+  if (!el) return;
+
+  try {
+    const data = await apiFetch(`/admin/users/${userId}/slug`);
+    const slug = data?.slug;
+
+    const baseUrl = window.location.origin;
+
+    if (slug?.slug) {
+      // Slug exists — show read-only, no edit option
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <code style="background:#f1f5f9;padding:3px 8px;border-radius:4px;font-size:0.85rem;">${escapeAdminHtml(slug.slug)}</code>
+          <a href="${baseUrl}/ref/${escapeAdminHtml(slug.slug)}" target="_blank"
+             style="color:#6366f1;font-size:0.82rem;text-decoration:none;">
+            /ref/${escapeAdminHtml(slug.slug)} ↗
+          </a>
+          <span class="admin-muted text-sm">· ${slug.click_count || 0} clicks</span>
+        </div>
+        <div class="admin-muted text-sm" style="margin-top:4px;">Slugs are permanent and cannot be changed once set.</div>
+      `;
+    } else {
+      // No slug yet — show assign form
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+          <input type="text" id="admin-slug-input-${userId}" class="admin-input"
+            style="width:180px;" placeholder="e.g. jane-smith" />
+          <button class="btn btn-sm btn-primary" onclick="saveAdminUserSlug('${userId}')">Assign Slug</button>
+          <span id="admin-slug-status-${userId}" class="admin-muted" style="font-size:0.82rem;"></span>
+        </div>
+        <div class="admin-muted text-sm">Once set this cannot be changed. Letters, numbers, hyphens only.</div>
+      `;
+    }
+  } catch (err) {
+    el.innerHTML = `<div class="admin-muted text-sm">Could not load slug: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+async function saveAdminUserSlug(userId) {
+  const input    = document.getElementById(`admin-slug-input-${userId}`);
+  const statusEl = document.getElementById(`admin-slug-status-${userId}`);
+  const slug     = input?.value?.trim();
+
+  if (!slug) { if (statusEl) statusEl.textContent = 'Enter a slug first.'; return; }
+  if (statusEl) statusEl.textContent = 'Saving...';
+
+  try {
+    await apiFetch(`/admin/users/${userId}/slug`, {
+      method: 'PUT',
+      body: JSON.stringify({ slug })
+    });
+    showToast('Affiliate slug saved.', 'success');
+    loadAdminUserSlug(userId); // Refresh to show the link
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+  }
+}
+
+// ----------------------------------------------------------------
+// loadAdminUserContext — reads agent_context, research, and intelligence
+// Redis keys for a user and renders them in a collapsible inspector panel.
+// ----------------------------------------------------------------
+async function loadAdminUserContext(userId) {
+  const el = document.getElementById(`admin-context-${userId}`);
+  if (!el) return;
+
+  el.innerHTML = '<div class="admin-muted text-sm">Loading...</div>';
+
+  try {
+    const data = await apiFetch(`/admin/users/${userId}/context`);
+
+    const renderSection = (title, content) => {
+      if (!content) {
+        return `<div style="margin-bottom:8px;">
+          <strong style="font-size:0.85rem;">${title}</strong>
+          <span class="admin-muted text-sm" style="margin-left:8px;">Not cached</span>
+        </div>`;
+      }
+
+      const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+      const id = `ctx-${title.replace(/\s/g, '-').toLowerCase()}-${userId}`;
+
+      return `
+        <details style="margin-bottom:8px;">
+          <summary style="cursor:pointer;font-size:0.85rem;font-weight:600;">
+            ${title}
+            <span class="admin-badge" style="background:#16a34a;color:#fff;margin-left:6px;">Cached</span>
+            <span class="admin-muted text-sm" style="margin-left:4px;">${text.length.toLocaleString()} chars</span>
+          </summary>
+          <pre id="${id}" style="font-size:0.75rem;background:#f8f9fa;padding:10px;border-radius:4px;
+            max-height:300px;overflow-y:auto;white-space:pre-wrap;margin-top:6px;
+            border:1px solid var(--border, #e5e7eb);">${escapeAdminHtml(text)}</pre>
+        </details>
+      `;
+    };
+
+    el.innerHTML = `
+      <div class="admin-card" style="margin-top:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span style="font-size:0.85rem;font-weight:600;">
+            ${data.cached
+              ? '<span style="color:#16a34a;">✓ agent_context cached</span>'
+              : '<span style="color:#f59e0b;">⚠ agent_context not in cache — will be built on next brief</span>'}
+          </span>
+          <button class="btn btn-xs btn-secondary" onclick="loadAdminUserContext('${userId}')">Refresh</button>
+        </div>
+        ${renderSection('agent_context (LLM prompt block)', data.agent_context)}
+        ${renderSection('research (niche/trend cache)', data.research)}
+        ${renderSection('intelligence (performance summary)', data.intelligence)}
+      </div>
+    `;
+
+  } catch (err) {
+    el.innerHTML = `<div class="admin-error text-sm">Failed to load context: ${escapeAdminHtml(err.message)}</div>`;
+  }
+}
+
+// ----------------------------------------------------------------
+// adminRunAgents — queue a signal-weights agent run for one user.
+// ----------------------------------------------------------------
+async function adminRunAgents(userId) {
+  const statusEl = document.getElementById(`admin-agent-status-${userId}`);
+  if (statusEl) statusEl.textContent = 'Queuing…';
+
+  try {
+    const data = await apiFetch(`/admin/users/${userId}/run-agents`, { method: 'POST' });
+    if (statusEl) statusEl.textContent = '✅ ' + (data.message || 'Queued');
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+    showToast('Agent run queued successfully.', 'success');
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
+  }
+}
+
+// ----------------------------------------------------------------
+// adminResetSignals — clear signal_weights for one user.
+// Warns before destroying learned data.
+// ----------------------------------------------------------------
+async function adminResetSignals(userId) {
+  if (!confirm('This will permanently clear all learned signal weights for this user.\n\nThey will need a fresh agent run to rebuild. Continue?')) return;
+
+  const statusEl = document.getElementById(`admin-agent-status-${userId}`);
+  if (statusEl) statusEl.textContent = 'Resetting…';
+
+  try {
+    const data = await apiFetch(`/admin/users/${userId}/reset-signals`, { method: 'POST' });
+    if (statusEl) statusEl.textContent = '✅ ' + (data.message || 'Reset done');
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+    showToast('Signal weights cleared.', 'success');
   } catch (err) {
     if (statusEl) statusEl.textContent = `❌ ${err.message}`;
   }
@@ -4456,31 +4647,52 @@ async function loadAdminAvatars() {
   panel.innerHTML = '<div class="loading-overlay"><div class="spinner spinner-lg"></div></div>';
 
   try {
-    // Fetch avatars and pending suggestions in parallel
-    const [avatarsRes, suggestionsRes] = await Promise.all([
+    // Fetch avatars, suggestions, and performance stats in parallel
+    const [avatarsRes, suggestionsRes, statsRes] = await Promise.all([
       apiFetch('/evaluation/admin/avatars'),
-      apiFetch('/evaluation/admin/suggestions')
+      apiFetch('/evaluation/admin/suggestions'),
+      apiFetch('/evaluation/admin/avatar-stats').catch(() => ({ stats: {} }))
     ]);
 
-    const avatars = avatarsRes?.avatars || [];
+    const avatars     = avatarsRes?.avatars    || [];
     const suggestions = suggestionsRes?.suggestions || [];
+    const stats       = statsRes?.stats        || {};
 
     panel.dataset.loaded = 'true';
 
     // Build avatar table
-    const avatarRows = avatars.map(a => `
-      <tr>
-        <td>${a.icon} ${escapeAdminHtml(a.name)}</td>
-        <td>${a.active ? '<span style="color:#16a34a;">Active</span>' : '<span style="color:#94a3b8;">Inactive</span>'}</td>
-        <td>${(a.field_focus || []).map(f => `<span class="admin-badge">${escapeAdminHtml(f)}</span>`).join(' ') || 'All'}</td>
-        <td>${(a.post_type_focus || []).map(f => `<span class="admin-badge" style="background:#e0f2fe;">${escapeAdminHtml(f)}</span>`).join(' ') || 'Universal'}</td>
-        <td>
-          <button class="btn btn-xs btn-secondary" onclick="openAvatarEditor('${a.id}')">Edit</button>
-          <button class="btn btn-xs ${a.active ? 'btn-danger' : 'btn-primary'}"
-            onclick="toggleAvatarActive('${a.id}', ${!a.active})">${a.active ? 'Disable' : 'Enable'}</button>
-        </td>
-      </tr>
-    `).join('');
+    const avatarRows = avatars.map(a => {
+      const s = stats[a.id] || { total: 0, last_30_days: 0, by_field: {} };
+
+      // Build a compact field breakdown tooltip text
+      const fieldBreakdown = Object.entries(s.by_field)
+        .sort((x, y) => y[1] - x[1])
+        .map(([f, n]) => `${f}: ${n}`)
+        .join(' | ') || 'none yet';
+
+      const statsHtml = s.total === 0
+        ? '<span class="text-muted" style="font-size:0.8rem;">No data</span>'
+        : `<span title="Field breakdown: ${escapeAdminHtml(fieldBreakdown)}" style="cursor:default;">
+            <strong style="font-size:0.9rem;">${s.total}</strong>
+            <span class="text-muted" style="font-size:0.78rem;"> total</span><br>
+            <span style="font-size:0.78rem;color:#6366f1;">${s.last_30_days} last 30d</span>
+           </span>`;
+
+      return `
+        <tr>
+          <td>${a.icon} ${escapeAdminHtml(a.name)}</td>
+          <td>${a.active ? '<span style="color:#16a34a;">Active</span>' : '<span style="color:#94a3b8;">Inactive</span>'}</td>
+          <td>${(a.field_focus || []).map(f => `<span class="admin-badge">${escapeAdminHtml(f)}</span>`).join(' ') || 'All'}</td>
+          <td>${(a.post_type_focus || []).map(f => `<span class="admin-badge" style="background:#e0f2fe;">${escapeAdminHtml(f)}</span>`).join(' ') || 'Universal'}</td>
+          <td>${statsHtml}</td>
+          <td>
+            <button class="btn btn-xs btn-secondary" onclick="openAvatarEditor('${a.id}')">Edit</button>
+            <button class="btn btn-xs ${a.active ? 'btn-danger' : 'btn-primary'}"
+              onclick="toggleAvatarActive('${a.id}', ${!a.active})">${a.active ? 'Disable' : 'Enable'}</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
 
     // Build suggestions cards
     const suggestionsHtml = suggestions.length === 0
@@ -4509,9 +4721,12 @@ async function loadAdminAvatars() {
     panel.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <h3 style="margin:0;">Evaluation Avatars</h3>
-        <button class="btn btn-sm btn-primary" id="btn-run-meta-analysis" onclick="runAvatarMetaAnalysis()">
-          🧠 Analyze & Suggest Improvements
-        </button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-sm btn-secondary" onclick="openAvatarEditor(null)">+ Add Avatar</button>
+          <button class="btn btn-sm btn-primary" id="btn-run-meta-analysis" onclick="runAvatarMetaAnalysis()">
+            🧠 Analyze & Suggest Improvements
+          </button>
+        </div>
       </div>
       <div id="meta-analysis-results" style="display:none;margin-bottom:16px;"></div>
 
@@ -4524,6 +4739,7 @@ async function loadAdminAvatars() {
               <th>Status</th>
               <th>Field Focus</th>
               <th>Post Type Focus</th>
+              <th>Evaluations</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -4536,7 +4752,7 @@ async function loadAdminAvatars() {
         ${suggestionsHtml}
       </div>
 
-      <div class="admin-card">
+      <div class="admin-card" style="margin-bottom:20px;">
         <h4 style="margin-bottom:12px;">Evaluation Settings</h4>
         <div style="display:flex;align-items:center;gap:12px;">
           <label style="font-size:0.9rem;">Retention (days):</label>
@@ -4548,6 +4764,9 @@ async function loadAdminAvatars() {
           Evaluation results older than this are automatically deleted. Range: 1-365 days.
         </div>
       </div>
+
+      <!-- Agent Directives section — loaded separately below -->
+      <div id="agent-directives-section"></div>
 
       <!-- Hidden editor modal -->
       <div id="avatar-editor-modal" class="eval-popup-overlay" style="display:none;">
@@ -4608,6 +4827,10 @@ async function loadAdminAvatars() {
     // Store avatars data for the editor
     panel._avatarsData = avatars;
 
+    // Load agent directives section independently so an error there
+    // doesn't crash the whole Avatars tab
+    loadAgentDirectives();
+
   } catch (err) {
     panel.innerHTML = `<div class="admin-error">
       <p>Failed to load avatars: ${escapeAdminHtml(err.message)}</p>
@@ -4624,17 +4847,31 @@ async function loadAdminAvatars() {
 function openAvatarEditor(avatarId) {
   const panel = document.getElementById('admin-tab-avatars');
   const avatars = panel?._avatarsData || [];
-  const avatar = avatars.find(a => a.id === avatarId);
-  if (!avatar) return;
 
-  document.getElementById('avatar-editor-id').value = avatar.id;
-  document.getElementById('avatar-editor-name').value = avatar.name;
-  document.getElementById('avatar-editor-icon').value = avatar.icon;
-  document.getElementById('avatar-editor-desc').value = avatar.description || '';
-  document.getElementById('avatar-editor-prompt').value = avatar.system_prompt;
-  document.getElementById('avatar-editor-field-focus').value = (avatar.field_focus || []).join(', ');
-  document.getElementById('avatar-editor-posttype-focus').value = (avatar.post_type_focus || []).join(', ');
-  document.getElementById('avatar-editor-title').textContent = `Edit: ${avatar.icon} ${avatar.name}`;
+  // Reset form to blank first (handles both create and edit modes)
+  document.getElementById('avatar-editor-id').value            = '';
+  document.getElementById('avatar-editor-name').value          = '';
+  document.getElementById('avatar-editor-icon').value          = '🤖';
+  document.getElementById('avatar-editor-desc').value          = '';
+  document.getElementById('avatar-editor-prompt').value        = '';
+  document.getElementById('avatar-editor-field-focus').value   = '';
+  document.getElementById('avatar-editor-posttype-focus').value = '';
+  document.getElementById('avatar-editor-title').textContent   = 'Add Avatar';
+
+  if (avatarId) {
+    // Edit mode — populate with existing values
+    const avatar = avatars.find(a => a.id === avatarId);
+    if (!avatar) return;
+
+    document.getElementById('avatar-editor-id').value            = avatar.id;
+    document.getElementById('avatar-editor-name').value          = avatar.name;
+    document.getElementById('avatar-editor-icon').value          = avatar.icon;
+    document.getElementById('avatar-editor-desc').value          = avatar.description || '';
+    document.getElementById('avatar-editor-prompt').value        = avatar.system_prompt;
+    document.getElementById('avatar-editor-field-focus').value   = (avatar.field_focus || []).join(', ');
+    document.getElementById('avatar-editor-posttype-focus').value = (avatar.post_type_focus || []).join(', ');
+    document.getElementById('avatar-editor-title').textContent   = `Edit: ${avatar.icon} ${avatar.name}`;
+  }
 
   document.getElementById('avatar-editor-modal').style.display = 'flex';
 }
@@ -4659,14 +4896,24 @@ async function saveAvatarEditor() {
   };
 
   try {
-    await apiFetch(`/evaluation/admin/avatars/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(body)
-    });
+    if (id) {
+      // Edit existing avatar
+      await apiFetch(`/evaluation/admin/avatars/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      showToast('Avatar updated successfully.', 'success');
+    } else {
+      // Create new avatar
+      await apiFetch('/evaluation/admin/avatars', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      showToast('Avatar created successfully.', 'success');
+    }
 
     closeAvatarEditor();
     loadAdminAvatars(); // Refresh the table
-    showToast('Avatar updated successfully.', 'success');
   } catch (err) {
     alert('Failed to save: ' + err.message);
   }
@@ -4777,6 +5024,253 @@ async function saveEvalSettings() {
       body: JSON.stringify({ retention_days: parseInt(days, 10) })
     });
     showToast('Evaluation settings saved.', 'success');
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+// ================================================================
+// AGENT DIRECTIVES — admin-injectable guidance per agent / per user.
+// Loaded as a sub-section of the Avatars tab.
+// ================================================================
+
+// Valid agent names for the dropdown
+const AGENT_NAMES = [
+  { value: '*',                       label: '* All Agents (global)' },
+  { value: 'hookPerformanceAgent',    label: 'Hook Performance' },
+  { value: 'hookTrendAgent',          label: 'Hook Trends' },
+  { value: 'toneObjectiveFitAgent',   label: 'Tone + Objective Fit' },
+  { value: 'postTypeCalendarAgent',   label: 'Post Type Calendar' },
+  { value: 'commentSentimentAgent',   label: 'Comment Sentiment' },
+  { value: 'ctaEffectivenessAgent',   label: 'CTA Effectiveness' },
+  { value: 'contentFatigueAgent',     label: 'Content Fatigue' },
+  { value: 'platformAlgorithmAgent',  label: 'Platform Algorithm' },
+  { value: 'briefOptimizationAgent',  label: 'Brief Optimization' },
+  { value: 'contentGapAgent',         label: 'Content Gap' },
+];
+
+// ----------------------------------------------------------------
+// loadAgentDirectives — renders the directives card into
+// #agent-directives-section inside the Avatars tab.
+// ----------------------------------------------------------------
+async function loadAgentDirectives() {
+  const section = document.getElementById('agent-directives-section');
+  if (!section) return;
+
+  section.innerHTML = `<div class="text-muted text-sm" style="padding:8px 0;">Loading agent directives…</div>`;
+
+  try {
+    const data = await apiFetch('/admin/agent-directives');
+    const directives = data?.directives || [];
+
+    const agentNameLabel = (val) => AGENT_NAMES.find(a => a.value === val)?.label || val;
+
+    const rows = directives.length === 0
+      ? '<tr><td colspan="5" class="text-muted" style="padding:12px;text-align:center;">No directives yet. Create one below.</td></tr>'
+      : directives.map(d => `
+        <tr id="directive-row-${d.id}" style="${d.is_active ? '' : 'opacity:0.5;'}">
+          <td style="max-width:200px;">
+            <div style="font-weight:600;font-size:0.85rem;">${escapeAdminHtml(d.label || '(no label)')}</div>
+            <div style="font-size:0.8rem;color:#888;margin-top:2px;">${escapeAdminHtml(agentNameLabel(d.agent_name))}</div>
+            ${d.user_id ? `<div style="font-size:0.75rem;color:#f59e0b;margin-top:2px;">User-specific</div>` : `<div style="font-size:0.75rem;color:#6366f1;margin-top:2px;">All users</div>`}
+          </td>
+          <td style="max-width:340px;">
+            <div style="font-size:0.82rem;color:#444;white-space:pre-wrap;max-height:80px;overflow:hidden;">${escapeAdminHtml(d.directive)}</div>
+          </td>
+          <td style="white-space:nowrap;">
+            <span class="admin-badge" style="background:${d.is_active ? '#16a34a' : '#94a3b8'};color:#fff;">
+              ${d.is_active ? 'Active' : 'Paused'}
+            </span>
+          </td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn-xs btn-secondary" onclick="openDirectiveEditor('${d.id}')">Edit</button>
+            <button class="btn btn-xs ${d.is_active ? 'btn-warning' : 'btn-primary'}"
+              onclick="toggleDirectiveActive('${d.id}', ${!d.is_active})"
+              style="${d.is_active ? 'background:#f59e0b;color:#fff;border-color:#f59e0b;' : ''}">
+              ${d.is_active ? 'Pause' : 'Activate'}
+            </button>
+            <button class="btn btn-xs btn-danger" onclick="deleteDirective('${d.id}')">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+
+    // Build the agent dropdown options
+    const agentOptions = AGENT_NAMES.map(a =>
+      `<option value="${a.value}">${escapeAdminHtml(a.label)}</option>`
+    ).join('');
+
+    section.innerHTML = `
+      <div class="admin-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h4 style="margin:0;">Agent Directives</h4>
+          <button class="btn btn-sm btn-primary" onclick="openDirectiveEditor(null)">+ New Directive</button>
+        </div>
+        <p class="text-muted text-sm" style="margin-bottom:12px;">
+          Inject soft guidance into any agent run — globally, per agent, or per user.
+          Directives are appended as an "Admin Note" block in the LLM prompt.
+        </p>
+
+        <table class="admin-table" style="table-layout:auto;">
+          <thead>
+            <tr>
+              <th>Label / Agent</th>
+              <th>Directive Text</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <!-- Directive editor modal -->
+      <div id="directive-editor-modal" class="eval-popup-overlay" style="display:none;">
+        <div class="eval-popup" style="max-width:620px;">
+          <div class="eval-popup-header">
+            <h3 id="directive-editor-title">New Agent Directive</h3>
+            <button class="eval-popup-close" onclick="closeDirectiveEditor()">&times;</button>
+          </div>
+          <div style="padding:16px 20px;">
+            <input type="hidden" id="directive-editor-id" />
+
+            <div style="margin-bottom:12px;">
+              <label class="form-label">Label <span class="text-muted">(for your reference)</span></label>
+              <input type="text" id="directive-editor-label" class="form-control"
+                placeholder="e.g. Summer campaign — boost promotional" />
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+              <div>
+                <label class="form-label">Agent</label>
+                <select id="directive-editor-agent" class="form-control">
+                  ${agentOptions}
+                </select>
+              </div>
+              <div>
+                <label class="form-label">User ID <span class="text-muted">(leave blank = all users)</span></label>
+                <input type="text" id="directive-editor-user" class="form-control"
+                  placeholder="UUID or blank for global" />
+              </div>
+            </div>
+
+            <div style="margin-bottom:16px;">
+              <label class="form-label">Directive Text</label>
+              <textarea id="directive-editor-text" class="form-control" rows="6"
+                style="font-size:0.9rem;"
+                placeholder="Write in plain English. Example: Have you considered that this user's audience is primarily B2B? Weight weekday morning posts more heavily than weekend posts."></textarea>
+              <div class="text-muted text-sm" style="margin-top:4px;">
+                This text is appended to the agent's context as an Admin Note. Write naturally — the LLM reads it as guidance, not code.
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button class="btn btn-secondary" onclick="closeDirectiveEditor()">Cancel</button>
+              <button class="btn btn-primary" onclick="saveDirectiveEditor()">Save Directive</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Store directives data for the editor
+    section._directivesData = directives;
+
+  } catch (err) {
+    section.innerHTML = `
+      <div class="admin-card">
+        <h4 style="margin-bottom:8px;">Agent Directives</h4>
+        <div class="admin-error">
+          <p>Failed to load directives: ${escapeAdminHtml(err.message)}</p>
+          <p class="text-muted text-sm" style="margin-top:6px;">
+            If you see "relation does not exist", run <code>migration_agent_directives.sql</code> in Supabase SQL Editor first.
+          </p>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// ----------------------------------------------------------------
+// Directive editor — open / close / save
+// ----------------------------------------------------------------
+function openDirectiveEditor(directiveId) {
+  const section = document.getElementById('agent-directives-section');
+  const directives = section?._directivesData || [];
+
+  // Reset form
+  document.getElementById('directive-editor-id').value    = '';
+  document.getElementById('directive-editor-label').value = '';
+  document.getElementById('directive-editor-agent').value = '*';
+  document.getElementById('directive-editor-user').value  = '';
+  document.getElementById('directive-editor-text').value  = '';
+  document.getElementById('directive-editor-title').textContent = 'New Agent Directive';
+
+  if (directiveId) {
+    const d = directives.find(x => x.id === directiveId);
+    if (d) {
+      document.getElementById('directive-editor-id').value    = d.id;
+      document.getElementById('directive-editor-label').value = d.label || '';
+      document.getElementById('directive-editor-agent').value = d.agent_name;
+      document.getElementById('directive-editor-user').value  = d.user_id || '';
+      document.getElementById('directive-editor-text').value  = d.directive;
+      document.getElementById('directive-editor-title').textContent = 'Edit Directive';
+    }
+  }
+
+  document.getElementById('directive-editor-modal').style.display = 'flex';
+}
+
+function closeDirectiveEditor() {
+  document.getElementById('directive-editor-modal').style.display = 'none';
+}
+
+async function saveDirectiveEditor() {
+  const id        = document.getElementById('directive-editor-id').value;
+  const label     = document.getElementById('directive-editor-label').value.trim();
+  const agentName = document.getElementById('directive-editor-agent').value;
+  const userId    = document.getElementById('directive-editor-user').value.trim() || null;
+  const directive = document.getElementById('directive-editor-text').value.trim();
+
+  if (!directive) {
+    alert('Directive text is required.');
+    return;
+  }
+
+  const body = { agent_name: agentName, user_id: userId, directive, label };
+
+  try {
+    if (id) {
+      await apiFetch(`/admin/agent-directives/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await apiFetch('/admin/agent-directives', { method: 'POST', body: JSON.stringify(body) });
+    }
+
+    closeDirectiveEditor();
+    loadAgentDirectives();
+    showToast('Agent directive saved.', 'success');
+  } catch (err) {
+    alert('Failed to save: ' + err.message);
+  }
+}
+
+async function toggleDirectiveActive(directiveId, isActive) {
+  try {
+    await apiFetch(`/admin/agent-directives/${directiveId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ is_active: isActive })
+    });
+    loadAgentDirectives();
+  } catch (err) {
+    alert('Failed: ' + err.message);
+  }
+}
+
+async function deleteDirective(directiveId) {
+  if (!confirm('Delete this directive permanently? This cannot be undone.')) return;
+  try {
+    await apiFetch(`/admin/agent-directives/${directiveId}`, { method: 'DELETE' });
+    loadAgentDirectives();
+    showToast('Directive deleted.', 'success');
   } catch (err) {
     alert('Failed: ' + err.message);
   }

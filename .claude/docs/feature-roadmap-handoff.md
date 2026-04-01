@@ -203,6 +203,14 @@
 5. **Public-facing Legacy signup page** with slot countdown (not yet built)
 6. **Affiliate terms** — update Terms page with affiliate/Legacy legal copy
 
+### Lifetime Affiliate Lock (BUSINESS RULE — DO NOT CHANGE)
+Once a user signs up via an affiliate's referral link, that user is permanently tied to that affiliate.
+- The referring affiliate earns commission on that user for life, regardless of plan changes
+- The user **cannot** change their affiliate — no UI, no admin override, no exception
+- The `referrals` table row is the source of truth — it is never deleted, never reassigned
+- If a user asks to switch affiliates: decline. If an admin tries to reassign: do not build that feature.
+- Rationale: affiliates trust that referred users are theirs permanently — changing this retroactively destroys trust in the program
+
 ### Key landmines
 - Admin tab bar has 14 tabs — Legacy/Affiliates/Payouts are at the far right, scroll horizontally
 - `claim_legacy_slot` RPC uses `SELECT FOR UPDATE` — atomic, race-condition safe

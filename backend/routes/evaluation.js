@@ -205,6 +205,57 @@ router.get('/admin/avatars', requireAdmin, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
+// POST /evaluation/admin/avatars — create a new avatar
+// ----------------------------------------------------------------
+router.post('/admin/avatars', requireAdmin, async (req, res) => {
+  try {
+    const { name, icon, description, system_prompt, field_focus, post_type_focus } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'name is required.' });
+    }
+    if (!system_prompt?.trim()) {
+      return res.status(400).json({ error: 'system_prompt is required.' });
+    }
+
+    // Set sort_order to one higher than current max so new avatar appears last
+    const { data: existing } = await supabaseAdmin
+      .from('evaluation_avatars')
+      .select('sort_order')
+      .order('sort_order', { ascending: false })
+      .limit(1);
+
+    const nextOrder = ((existing?.[0]?.sort_order) || 0) + 1;
+
+    const { data, error } = await supabaseAdmin
+      .from('evaluation_avatars')
+      .insert({
+        name:           name.trim(),
+        icon:           icon?.trim() || '🤖',
+        description:    description?.trim() || '',
+        system_prompt:  system_prompt.trim(),
+        field_focus:    Array.isArray(field_focus)  ? field_focus  : [],
+        post_type_focus: Array.isArray(post_type_focus) ? post_type_focus : [],
+        active:         true,
+        sort_order:     nextOrder
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Invalidate avatar cache so the new avatar is picked up immediately
+    await cacheSet('eval_avatars', null, 1);
+
+    return res.status(201).json({ avatar: data });
+
+  } catch (err) {
+    console.error('[Evaluation] Admin create avatar error:', err.message);
+    return res.status(500).json({ error: 'Failed to create avatar.' });
+  }
+});
+
+// ----------------------------------------------------------------
 // PUT /evaluation/admin/avatars/:id — update avatar prompt/config
 // ----------------------------------------------------------------
 router.put('/admin/avatars/:id', requireAdmin, async (req, res) => {
@@ -354,6 +405,54 @@ router.put('/admin/settings', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[Evaluation] Admin settings error:', err.message);
     return res.status(500).json({ error: 'Failed to update settings.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /evaluation/admin/avatar-stats
+//
+// Returns aggregated performance stats per avatar from evaluation_results.
+// Used by the admin Avatars tab to show how active/effective each avatar is.
+//
+// Returns: { stats: { [avatarId]: { total, last_30_days, by_field } } }
+// ----------------------------------------------------------------
+router.get('/admin/avatar-stats', requireAdmin, async (req, res) => {
+  try {
+    const cutoff30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Fetch all evaluation results (avatar_id + field + created_at only)
+    const { data, error } = await supabaseAdmin
+      .from('evaluation_results')
+      .select('avatar_id, field, created_at');
+
+    if (error) throw error;
+
+    const stats = {};
+
+    for (const row of (data || [])) {
+      if (!row.avatar_id) continue;
+
+      if (!stats[row.avatar_id]) {
+        stats[row.avatar_id] = { total: 0, last_30_days: 0, by_field: {} };
+      }
+
+      stats[row.avatar_id].total++;
+
+      if (row.created_at >= cutoff30) {
+        stats[row.avatar_id].last_30_days++;
+      }
+
+      if (row.field) {
+        const s = stats[row.avatar_id].by_field;
+        s[row.field] = (s[row.field] || 0) + 1;
+      }
+    }
+
+    return res.json({ stats });
+
+  } catch (err) {
+    console.error('[Evaluation] Admin avatar-stats error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch avatar stats.' });
   }
 });
 
