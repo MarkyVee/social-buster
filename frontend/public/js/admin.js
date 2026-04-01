@@ -3939,6 +3939,9 @@ async function loadAdminDiagnostics() {
         <button class="btn btn-sm" onclick="loadAdminDiagnostics(); document.getElementById('admin-tab-diagnostics').dataset.loaded='';">
           5. Refresh
         </button>
+        <button class="btn btn-sm" onclick="adminPurgeCloudflareCache()" title="Clears Cloudflare edge cache — use after deploying JS/CSS changes if users are seeing stale pages">
+          🌐 Purge CDN Cache
+        </button>
       </div>
 
       <!-- Stuck Posts -->
@@ -3991,6 +3994,18 @@ async function adminExpireStaleDMs() {
     if (panel) { panel.dataset.loaded = ''; loadAdminDiagnostics(); }
   } catch (err) {
     alert('Failed: ' + err.message);
+  }
+}
+
+// Maintenance action: purge Cloudflare edge cache
+// Use this after deploying JS/CSS changes when users are still seeing stale pages.
+async function adminPurgeCloudflareCache() {
+  if (!confirm('Purge the Cloudflare CDN cache?\n\nThis forces all users to download fresh JS/CSS files. Takes about 30 seconds to propagate. Safe to run at any time.')) return;
+  try {
+    const result = await apiFetch('/admin/maintenance/purge-cache', { method: 'POST' });
+    alert(result.message);
+  } catch (err) {
+    alert('Cache purge failed: ' + err.message);
   }
 }
 

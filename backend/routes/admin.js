@@ -2072,6 +2072,51 @@ router.post('/maintenance/retry-failed/:id', async (req, res) => {
   }
 });
 
+// POST /admin/maintenance/purge-cache
+// Purges the Cloudflare edge cache for the entire zone.
+// Use this after deploying JS/CSS changes when the browser is still
+// serving stale files despite cache-busting version bumps.
+// Requires CLOUDFLARE_ZONE_ID and CLOUDFLARE_API_TOKEN in .env.
+// The API token must have the "Cache Purge" permission on the zone.
+router.post('/maintenance/purge-cache', async (req, res) => {
+  const zoneId   = process.env.CLOUDFLARE_ZONE_ID;
+  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+
+  if (!zoneId || !apiToken) {
+    return res.status(400).json({
+      error: 'CLOUDFLARE_ZONE_ID or CLOUDFLARE_API_TOKEN not set in .env'
+    });
+  }
+
+  try {
+    const axios = require('axios');
+    const cfRes = await axios.post(
+      `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`,
+      { purge_everything: true },
+      {
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type':  'application/json'
+        },
+        timeout: 15_000
+      }
+    );
+
+    if (!cfRes.data?.success) {
+      const errors = cfRes.data?.errors?.map(e => e.message).join(', ') || 'Unknown error';
+      console.error('[Admin] Cloudflare cache purge failed:', errors);
+      return res.status(502).json({ error: `Cloudflare rejected the request: ${errors}` });
+    }
+
+    console.log('[Admin] Cloudflare cache purged successfully');
+    return res.json({ message: 'Cloudflare cache purged — all edge nodes will serve fresh files within 30 seconds.' });
+
+  } catch (err) {
+    console.error('[Admin] Cache purge error:', err.message);
+    return res.status(500).json({ error: 'Cache purge request failed: ' + err.message });
+  }
+});
+
 // ----------------------------------------------------------------
 // categorizeError — maps error_message text to a human-readable category
 // for the diagnostics dashboard. Pattern matching, no AI needed.
