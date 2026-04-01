@@ -2,9 +2,24 @@
 -- Social Buster — Affiliate Program Migration
 -- Run this in Supabase SQL Editor.
 --
--- Creates all 9 tables for the Legacy membership + affiliate
--- program. Safe to re-run — all CREATE IF NOT EXISTS guards
--- are in place.
+-- IMPORTANT: Run the blocks IN ORDER — each table may reference
+-- the one before it. Running out of order will cause FK errors.
+--
+-- Block execution order:
+--   1. legacy_cohorts
+--   2. legacy_slots
+--   3. referral_slugs
+--   4. referrals
+--   5. referral_plan_history
+--   6. affiliate_payouts        ← MUST come before clawbacks
+--   7. affiliate_earnings       ← MUST come before clawbacks
+--   8. affiliate_clawbacks      ← references payouts + earnings
+--   9. affiliate_reserve_releases
+--  10. affiliate_status_log
+--  11. ALTER TABLE user_profiles
+--  12. claim_legacy_slot RPC function
+--
+-- Safe to re-run — all CREATE IF NOT EXISTS guards are in place.
 --
 -- RLS NOTE: All service role policies use USING (true) WITH CHECK (true)
 -- NOT auth.role() = 'service_role' — that pattern is broken in
@@ -13,7 +28,7 @@
 
 
 -- ============================================================
--- 1. legacy_cohorts
+-- BLOCK 1: legacy_cohorts
 -- One row per cohort year (2025, 2026, etc).
 -- Each year has its own locked Stripe Price ID.
 -- Existing subscribers are NEVER moved to a new cohort price.
@@ -39,7 +54,7 @@ CREATE POLICY "Service role full access to legacy_cohorts"
 
 
 -- ============================================================
--- 2. legacy_slots
+-- BLOCK 2: legacy_slots
 -- Single-row table tracking slot cap and usage.
 -- Uses SELECT FOR UPDATE in application code to prevent
 -- race conditions on simultaneous Legacy signups.
@@ -71,10 +86,10 @@ CREATE POLICY "Public can read legacy_slots"
 
 
 -- ============================================================
--- 3. referral_slugs
+-- BLOCK 3: referral_slugs
 -- One row per Legacy member. Slug is immutable after the user
 -- sets a custom value. Auto-generated slug is set at account
--- creation. Slug → user_id mapping is server-side only.
+-- creation. Slug -> user_id mapping is server-side only.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS referral_slugs (
   id             UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -101,7 +116,7 @@ CREATE POLICY "Users can read own slug"
 
 
 -- ============================================================
--- 4. referrals
+-- BLOCK 4: referrals
 -- One row per referred signup. Tracks the relationship between
 -- referrer (affiliate) and the user they brought in.
 -- Includes fraud detection fields.
@@ -136,7 +151,7 @@ CREATE POLICY "Service role full access to referrals"
 
 
 -- ============================================================
--- 5. referral_plan_history
+-- BLOCK 5: referral_plan_history
 -- Immutable log of every plan change on a referred user.
 -- Used by admin audit log and commission recalculation.
 -- Never delete rows from this table.
@@ -160,80 +175,10 @@ CREATE POLICY "Service role full access to referral_plan_history"
 
 
 -- ============================================================
--- 6. affiliate_earnings
--- One row per invoice payment from a referred user.
--- stripe_invoice_id is the idempotency key — prevents double-
--- crediting if the same Stripe webhook fires twice.
--- status moves: pending → eligible → paid | clawed_back
--- ============================================================
-CREATE TABLE IF NOT EXISTS affiliate_earnings (
-  id                    UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  referral_id           UUID NOT NULL REFERENCES referrals(id) ON DELETE RESTRICT,
-  affiliate_id          UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
-  stripe_invoice_id     TEXT NOT NULL UNIQUE,       -- idempotency key
-  invoice_amount        INT  NOT NULL,              -- cents — what referred user paid
-  commission_rate       NUMERIC(5,4) NOT NULL,      -- e.g. 0.2000
-  commission_amount     INT  NOT NULL,              -- cents earned (floor of invoice_amount * rate)
-  affiliate_tier_at_time INT NOT NULL,              -- number of active referrals at invoice time
-  referred_plan_at_time TEXT NOT NULL,              -- referred user's plan at invoice time
-  period_month          TEXT NOT NULL,              -- YYYY-MM — which month this accrues to
-  status                TEXT NOT NULL DEFAULT 'pending', -- pending, eligible, paid, clawed_back
-  eligible_at           TIMESTAMPTZ,               -- when 30-day window opens (set on creation)
-  created_at            TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT earnings_status_check CHECK (status IN ('pending', 'eligible', 'paid', 'clawed_back'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_earnings_affiliate    ON affiliate_earnings (affiliate_id);
-CREATE INDEX IF NOT EXISTS idx_earnings_referral     ON affiliate_earnings (referral_id);
-CREATE INDEX IF NOT EXISTS idx_earnings_period       ON affiliate_earnings (period_month);
-CREATE INDEX IF NOT EXISTS idx_earnings_status       ON affiliate_earnings (status);
-CREATE INDEX IF NOT EXISTS idx_earnings_eligible_at  ON affiliate_earnings (eligible_at);
-
-ALTER TABLE affiliate_earnings ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Service role full access to affiliate_earnings" ON affiliate_earnings;
-CREATE POLICY "Service role full access to affiliate_earnings"
-  ON affiliate_earnings FOR ALL USING (true) WITH CHECK (true);
-
--- Affiliates can read their own earnings
-DROP POLICY IF EXISTS "Affiliates can read own earnings" ON affiliate_earnings;
-CREATE POLICY "Affiliates can read own earnings"
-  ON affiliate_earnings FOR SELECT USING (auth.uid() = affiliate_id);
-
-
--- ============================================================
--- 7. affiliate_clawbacks
--- One row per reversed commission. Immutable — never delete.
--- Linked to the earning that was reversed and the payout it
--- was deducted from (null until applied at payout time).
--- ============================================================
-CREATE TABLE IF NOT EXISTS affiliate_clawbacks (
-  id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  affiliate_id            UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
-  earning_id              UUID NOT NULL REFERENCES affiliate_earnings(id) ON DELETE RESTRICT,
-  reason                  TEXT NOT NULL,            -- chargeback, refund, fraud
-  stripe_event_id         TEXT NOT NULL UNIQUE,     -- source Stripe dispute/refund event
-  amount_reversed         INT  NOT NULL,            -- cents
-  deducted_from_payout_id UUID,                     -- FK to affiliate_payouts — null until applied
-  created_at              TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_clawbacks_affiliate ON affiliate_clawbacks (affiliate_id);
-CREATE INDEX IF NOT EXISTS idx_clawbacks_earning   ON affiliate_clawbacks (earning_id);
-CREATE INDEX IF NOT EXISTS idx_clawbacks_created   ON affiliate_clawbacks (created_at DESC);
-
-ALTER TABLE affiliate_clawbacks ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Service role full access to affiliate_clawbacks" ON affiliate_clawbacks;
-CREATE POLICY "Service role full access to affiliate_clawbacks"
-  ON affiliate_clawbacks FOR ALL USING (true) WITH CHECK (true);
-
--- Affiliates can read their own clawbacks (dashboard display only)
-DROP POLICY IF EXISTS "Affiliates can read own clawbacks" ON affiliate_clawbacks;
-CREATE POLICY "Affiliates can read own clawbacks"
-  ON affiliate_clawbacks FOR SELECT USING (auth.uid() = affiliate_id);
-
-
--- ============================================================
--- 8. affiliate_payouts
+-- BLOCK 6: affiliate_payouts
+-- IMPORTANT: This must come BEFORE affiliate_clawbacks and
+-- affiliate_reserve_releases — both tables reference this one.
+--
 -- One row per monthly payout attempt. Tracks gross, deductions,
 -- net, Stripe transfer ID, and the verified Connect account ID
 -- used at payout time (for fraud audit trail).
@@ -272,7 +217,86 @@ CREATE POLICY "Affiliates can read own payouts"
 
 
 -- ============================================================
--- 9. affiliate_reserve_releases
+-- BLOCK 7: affiliate_earnings
+-- IMPORTANT: This must come BEFORE affiliate_clawbacks —
+-- clawbacks reference this table.
+--
+-- One row per invoice payment from a referred user.
+-- stripe_invoice_id is the idempotency key — prevents double-
+-- crediting if the same Stripe webhook fires twice.
+-- status moves: pending -> eligible -> paid | clawed_back
+-- ============================================================
+CREATE TABLE IF NOT EXISTS affiliate_earnings (
+  id                    UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  referral_id           UUID NOT NULL REFERENCES referrals(id) ON DELETE RESTRICT,
+  affiliate_id          UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
+  stripe_invoice_id     TEXT NOT NULL UNIQUE,       -- idempotency key
+  invoice_amount        INT  NOT NULL,              -- cents — what referred user paid
+  commission_rate       NUMERIC(5,4) NOT NULL,      -- e.g. 0.2000
+  commission_amount     INT  NOT NULL,              -- cents earned (floor of invoice_amount * rate)
+  affiliate_tier_at_time INT NOT NULL,              -- number of active referrals at invoice time
+  referred_plan_at_time TEXT NOT NULL,              -- referred user's plan at invoice time
+  period_month          TEXT NOT NULL,              -- YYYY-MM — which month this accrues to
+  status                TEXT NOT NULL DEFAULT 'pending', -- pending, eligible, paid, clawed_back
+  eligible_at           TIMESTAMPTZ,               -- when 30-day window opens (set on creation)
+  created_at            TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT earnings_status_check CHECK (status IN ('pending', 'eligible', 'paid', 'clawed_back'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_earnings_affiliate    ON affiliate_earnings (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_referral     ON affiliate_earnings (referral_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_period       ON affiliate_earnings (period_month);
+CREATE INDEX IF NOT EXISTS idx_earnings_status       ON affiliate_earnings (status);
+CREATE INDEX IF NOT EXISTS idx_earnings_eligible_at  ON affiliate_earnings (eligible_at);
+
+ALTER TABLE affiliate_earnings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service role full access to affiliate_earnings" ON affiliate_earnings;
+CREATE POLICY "Service role full access to affiliate_earnings"
+  ON affiliate_earnings FOR ALL USING (true) WITH CHECK (true);
+
+-- Affiliates can read their own earnings
+DROP POLICY IF EXISTS "Affiliates can read own earnings" ON affiliate_earnings;
+CREATE POLICY "Affiliates can read own earnings"
+  ON affiliate_earnings FOR SELECT USING (auth.uid() = affiliate_id);
+
+
+-- ============================================================
+-- BLOCK 8: affiliate_clawbacks
+-- IMPORTANT: Runs AFTER affiliate_payouts and affiliate_earnings.
+-- Both tables must exist before this one is created.
+--
+-- One row per reversed commission. Immutable — never delete.
+-- Linked to the earning that was reversed and the payout it
+-- was deducted from (null until applied at payout time).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS affiliate_clawbacks (
+  id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  affiliate_id            UUID NOT NULL REFERENCES auth.users(id) ON DELETE RESTRICT,
+  earning_id              UUID NOT NULL REFERENCES affiliate_earnings(id) ON DELETE RESTRICT,
+  reason                  TEXT NOT NULL,            -- chargeback, refund, fraud
+  stripe_event_id         TEXT NOT NULL UNIQUE,     -- source Stripe dispute/refund event
+  amount_reversed         INT  NOT NULL,            -- cents
+  deducted_from_payout_id UUID REFERENCES affiliate_payouts(id), -- null until applied at payout time
+  created_at              TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_clawbacks_affiliate ON affiliate_clawbacks (affiliate_id);
+CREATE INDEX IF NOT EXISTS idx_clawbacks_earning   ON affiliate_clawbacks (earning_id);
+CREATE INDEX IF NOT EXISTS idx_clawbacks_created   ON affiliate_clawbacks (created_at DESC);
+
+ALTER TABLE affiliate_clawbacks ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service role full access to affiliate_clawbacks" ON affiliate_clawbacks;
+CREATE POLICY "Service role full access to affiliate_clawbacks"
+  ON affiliate_clawbacks FOR ALL USING (true) WITH CHECK (true);
+
+-- Affiliates can read their own clawbacks (dashboard display only)
+DROP POLICY IF EXISTS "Affiliates can read own clawbacks" ON affiliate_clawbacks;
+CREATE POLICY "Affiliates can read own clawbacks"
+  ON affiliate_clawbacks FOR SELECT USING (auth.uid() = affiliate_id);
+
+
+-- ============================================================
+-- BLOCK 9: affiliate_reserve_releases
 -- Tracks when the 10% clawback reserve from a prior payout
 -- is released back to the affiliate (after 60 days clean).
 -- ============================================================
@@ -295,7 +319,7 @@ CREATE POLICY "Service role full access to affiliate_reserve_releases"
 
 
 -- ============================================================
--- 10. affiliate_status_log
+-- BLOCK 10: affiliate_status_log
 -- Immutable audit log of every status change for every affiliate.
 -- Never delete rows. Used by admin audit view.
 -- ============================================================
@@ -322,7 +346,7 @@ CREATE POLICY "Service role full access to affiliate_status_log"
 
 
 -- ============================================================
--- 11. user_profiles — add Legacy-related columns
+-- BLOCK 11: user_profiles — add Legacy-related columns
 -- cohort_year: which year's pricing they locked in
 -- stripe_connect_account_id: their connected Stripe account
 -- affiliate_suspended: true if admin has suspended payouts
@@ -336,3 +360,36 @@ ALTER TABLE user_profiles
   ADD COLUMN IF NOT EXISTS affiliate_suspended_reason   TEXT,
   ADD COLUMN IF NOT EXISTS affiliate_suspended_at       TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS referral_slug_id             UUID REFERENCES referral_slugs(id);
+
+
+-- ============================================================
+-- BLOCK 12: claim_legacy_slot RPC function
+-- Called by affiliateService.claimLegacySlot() at checkout.
+-- Uses SELECT FOR UPDATE to prevent race conditions when two
+-- people try to claim the last slot at the exact same time.
+-- If no slots remain, raises an exception (caught in the service).
+-- ============================================================
+CREATE OR REPLACE FUNCTION claim_legacy_slot()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_cap  INT;
+  v_used INT;
+BEGIN
+  -- Lock the single row so concurrent checkouts wait their turn
+  SELECT slot_cap, slots_used
+    INTO v_cap, v_used
+    FROM legacy_slots
+   FOR UPDATE;
+
+  IF v_used >= v_cap THEN
+    RAISE EXCEPTION 'Legacy slots are sold out (cap=%, used=%)', v_cap, v_used;
+  END IF;
+
+  UPDATE legacy_slots
+     SET slots_used = slots_used + 1,
+         updated_at = now();
+END;
+$$;

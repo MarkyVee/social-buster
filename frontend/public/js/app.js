@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 2;
+const APP_VERSION = 3;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -448,6 +448,9 @@ function renderView(view) {
       if (typeof renderAdminDashboard === 'function') renderAdminDashboard(contentEl);
       else contentEl.innerHTML = '<div class="page-header"><div class="page-title">Admin</div><p>admin.js not loaded.</p></div>';
       break;
+    case 'affiliate':
+      renderAffiliateView(contentEl);
+      break;
     case 'help':
       renderHelpView(contentEl);
       break;
@@ -688,6 +691,12 @@ function renderAppShell() {
           <button class="sidebar-link" data-view="intelligence" onclick="navigate('intelligence')">
             <span class="sidebar-icon">🧠</span> Intelligence
           </button>
+
+          ${App.user?.subscription?.plan === 'legacy' ? `
+          <div class="sidebar-section-label" style="margin-top:12px;">Legacy</div>
+          <button class="sidebar-link" data-view="affiliate" onclick="navigate('affiliate')">
+            <span class="sidebar-icon">💎</span> Affiliate Program
+          </button>` : ''}
 
           ${App.user?.is_admin ? `
           <div class="sidebar-section-label" style="margin-top:12px;">Admin</div>
@@ -3748,6 +3757,354 @@ async function checkAppVersion() {
 
   } catch (_) {
     // Version check is non-critical — never crash the app over this
+  }
+}
+
+// ============================================================
+// RENDER AFFILIATE VIEW
+// Only accessible to Legacy members (plan === 'legacy').
+// Shows: referral link, earnings summary, referral list,
+// payout history, Stripe Connect status.
+// ============================================================
+async function renderAffiliateView(el) {
+  el.innerHTML = `
+    <div class="page-header">
+      <div class="page-title">💎 Affiliate Program</div>
+      <p style="color:var(--text-secondary);">Share your referral link, earn commissions on every referred subscriber.</p>
+    </div>
+    <div id="affiliate-content">
+      <div class="loading-overlay" style="min-height:200px;"><div class="spinner"></div></div>
+    </div>
+  `;
+
+  try {
+    const data = await apiFetch('/affiliate/dashboard');
+
+    if (data.suspended) {
+      document.getElementById('affiliate-content').innerHTML = `
+        <div class="card" style="border-left:4px solid #ef4444;padding:20px;">
+          <strong style="color:#ef4444;">⚠️ Affiliate Account Suspended</strong>
+          <p style="margin:8px 0 0;">${data.suspendedReason || 'Your affiliate account has been suspended. Please contact support.'}</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Format currency cents → dollars
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+
+    // Commission tier badge color
+    const tierColor = data.activeReferrals >= 11 ? '#f59e0b' : data.activeReferrals >= 6 ? '#6366f1' : '#10b981';
+
+    document.getElementById('affiliate-content').innerHTML = `
+
+      <!-- ---- Referral Link ---- -->
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 12px;">Your Referral Link</h3>
+        ${data.referralLink ? `
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <input id="ref-link-input" type="text" readonly value="${data.referralLink}"
+              style="flex:1;min-width:200px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);font-size:14px;">
+            <button onclick="
+              document.getElementById('ref-link-input').select();
+              document.execCommand('copy');
+              showToast('Referral link copied!', 'success');
+            " style="padding:8px 16px;background:var(--primary,#6366f1);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
+              Copy Link
+            </button>
+          </div>
+          <p style="font-size:12px;color:var(--text-secondary);margin:8px 0 0;">
+            ${data.clickCount.toLocaleString()} click${data.clickCount !== 1 ? 's' : ''} total
+            ${data.isCustomSlug ? '· Custom slug' : '· Auto-generated slug'}
+          </p>
+        ` : `<p style="color:var(--text-secondary);">Your referral link is being generated...</p>`}
+
+        ${!data.isCustomSlug ? `
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+            <p style="margin:0 0 8px;font-size:13px;font-weight:600;">Set a custom slug (one-time, permanent)</p>
+            <div style="display:flex;gap:8px;">
+              <input id="slug-input" type="text" placeholder="your-brand-name"
+                maxlength="40"
+                style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+              <button onclick="affiliateSetSlug()" style="padding:8px 16px;background:#10b981;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;">
+                Set Slug
+              </button>
+            </div>
+            <p style="font-size:11px;color:var(--text-secondary);margin:6px 0 0;">
+              3–40 characters, letters/numbers/hyphens only. Cannot be changed after setting.
+            </p>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- ---- Stats Row ---- -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:20px;">
+        <div class="card" style="text-align:center;padding:16px;">
+          <div style="font-size:28px;font-weight:700;color:${tierColor};">${data.activeReferrals}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Active Referrals</div>
+          <div style="font-size:11px;color:${tierColor};margin-top:4px;font-weight:600;">${data.tierLabel}</div>
+        </div>
+        <div class="card" style="text-align:center;padding:16px;">
+          <div style="font-size:28px;font-weight:700;color:#f59e0b;">${Math.round(data.commissionRate * 100)}%</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Commission Rate</div>
+        </div>
+        <div class="card" style="text-align:center;padding:16px;">
+          <div style="font-size:28px;font-weight:700;color:#10b981;">${fmt(data.eligibleEarnings)}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Eligible (Next Payout)</div>
+        </div>
+        <div class="card" style="text-align:center;padding:16px;">
+          <div style="font-size:28px;font-weight:700;">${fmt(data.lifetimeEarnings)}</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Lifetime Earned</div>
+        </div>
+      </div>
+
+      <!-- ---- Stripe Connect ---- -->
+      <div class="card" style="margin-bottom:20px;">
+        <h3 style="margin:0 0 12px;">Payout Account (Stripe Connect)</h3>
+        ${data.connectOnboarded ? `
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span style="color:#10b981;font-size:20px;">✓</span>
+            <div>
+              <div style="font-weight:600;">Connected & ready</div>
+              <div style="font-size:12px;color:var(--text-secondary);">Payouts are sent on the 5th of each month (min $50).</div>
+            </div>
+          </div>
+        ` : `
+          <p style="color:var(--text-secondary);margin:0 0 12px;font-size:14px;">
+            Connect your bank account via Stripe to receive monthly payouts. Required before any payout can be sent.
+          </p>
+          <button onclick="affiliateConnectStripe()" style="padding:10px 20px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;">
+            Connect Stripe Account
+          </button>
+        `}
+      </div>
+
+      <!-- ---- Tabs: Earnings / Referrals / Payouts ---- -->
+      <div class="card">
+        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px;">
+          <button id="aff-tab-earnings" onclick="affiliateTab('earnings')"
+            style="padding:10px 20px;border:none;background:none;cursor:pointer;font-weight:600;border-bottom:2px solid var(--primary,#6366f1);color:var(--primary,#6366f1);">
+            Earnings
+          </button>
+          <button id="aff-tab-referrals" onclick="affiliateTab('referrals')"
+            style="padding:10px 20px;border:none;background:none;cursor:pointer;color:var(--text-secondary);">
+            Referrals
+          </button>
+          <button id="aff-tab-payouts" onclick="affiliateTab('payouts')"
+            style="padding:10px 20px;border:none;background:none;cursor:pointer;color:var(--text-secondary);">
+            Payouts
+          </button>
+        </div>
+        <div id="aff-tab-content">
+          <!-- Loaded by affiliateTab() -->
+          <div class="loading-overlay" style="min-height:100px;"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- ---- How It Works ---- -->
+      <div class="card" style="margin-top:20px;background:var(--bg-secondary);">
+        <h3 style="margin:0 0 12px;">How Commissions Work</h3>
+        <ul style="margin:0;padding-left:20px;line-height:1.8;font-size:14px;color:var(--text-secondary);">
+          <li>Earn <strong>15%</strong> on 1–5 active referrals · <strong>20%</strong> on 6–10 · <strong>25%</strong> on 11+</li>
+          <li>An "active referral" is someone who paid an invoice in the last 35 days</li>
+          <li>Commissions become eligible to pay out 30 days after the invoice date</li>
+          <li>Payouts run on the 5th of each month · minimum $50</li>
+          <li>10% is held in reserve for 60 days in case of chargebacks, then released</li>
+          <li>No commissions are earned on your own Legacy membership fee</li>
+        </ul>
+      </div>
+    `;
+
+    // Auto-load earnings tab
+    affiliateTab('earnings');
+
+  } catch (err) {
+    console.error('[Affiliate] Dashboard load error:', err);
+    document.getElementById('affiliate-content').innerHTML = `
+      <div class="card" style="color:#ef4444;">Failed to load affiliate dashboard. Please refresh.</div>
+    `;
+  }
+}
+
+// ----------------------------------------------------------------
+// Affiliate tab switcher — loads Earnings, Referrals, or Payouts
+// ----------------------------------------------------------------
+async function affiliateTab(tab) {
+  // Update tab button styles
+  ['earnings', 'referrals', 'payouts'].forEach(t => {
+    const btn = document.getElementById(`aff-tab-${t}`);
+    if (!btn) return;
+    if (t === tab) {
+      btn.style.borderBottom = '2px solid var(--primary,#6366f1)';
+      btn.style.color = 'var(--primary,#6366f1)';
+    } else {
+      btn.style.borderBottom = '2px solid transparent';
+      btn.style.color = 'var(--text-secondary)';
+    }
+  });
+
+  const content = document.getElementById('aff-tab-content');
+  if (!content) return;
+
+  content.innerHTML = '<div class="loading-overlay" style="min-height:100px;"><div class="spinner"></div></div>';
+
+  try {
+    const fmt = (cents) => '$' + (cents / 100).toFixed(2);
+
+    if (tab === 'earnings') {
+      const data = await apiFetch('/affiliate/earnings?limit=25');
+      if (!data.earnings.length) {
+        content.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:20px;">No earnings yet. Share your referral link to get started.</p>';
+        return;
+      }
+      content.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:8px 4px;">Month</th>
+              <th style="text-align:left;padding:8px 4px;">Plan</th>
+              <th style="text-align:right;padding:8px 4px;">Invoice</th>
+              <th style="text-align:right;padding:8px 4px;">Commission</th>
+              <th style="text-align:left;padding:8px 4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.earnings.map(e => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;">${e.period_month}</td>
+                <td style="padding:8px 4px;text-transform:capitalize;">${e.referred_plan_at_time || '—'}</td>
+                <td style="padding:8px 4px;text-align:right;">${fmt(e.invoice_amount)}</td>
+                <td style="padding:8px 4px;text-align:right;color:#10b981;font-weight:600;">${fmt(e.commission_amount)}</td>
+                <td style="padding:8px 4px;">
+                  <span style="padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;
+                    background:${e.status === 'paid' ? '#d1fae5' : e.status === 'eligible' ? '#dbeafe' : e.status === 'clawed_back' ? '#fee2e2' : '#fef3c7'};
+                    color:${e.status === 'paid' ? '#065f46' : e.status === 'eligible' ? '#1e40af' : e.status === 'clawed_back' ? '#991b1b' : '#92400e'};">
+                    ${e.status}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+    } else if (tab === 'referrals') {
+      const data = await apiFetch('/affiliate/referrals?limit=25');
+      if (!data.referrals.length) {
+        content.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:20px;">No referrals yet. Share your link to start earning.</p>';
+        return;
+      }
+      content.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:8px 4px;">Signed Up</th>
+              <th style="text-align:left;padding:8px 4px;">Plan</th>
+              <th style="text-align:left;padding:8px 4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.referrals.map(r => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;">${new Date(r.created_at).toLocaleDateString()}</td>
+                <td style="padding:8px 4px;text-transform:capitalize;">${r.current_plan}</td>
+                <td style="padding:8px 4px;">
+                  <span style="padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;
+                    background:${r.status === 'active' ? '#d1fae5' : r.status === 'cancelled' ? '#fee2e2' : '#fef3c7'};
+                    color:${r.status === 'active' ? '#065f46' : r.status === 'cancelled' ? '#991b1b' : '#92400e'};">
+                    ${r.status}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+
+    } else if (tab === 'payouts') {
+      const data = await apiFetch('/affiliate/payouts?limit=25');
+      if (!data.payouts.length) {
+        content.innerHTML = '<p style="color:var(--text-secondary);text-align:center;padding:20px;">No payouts yet. Payouts run on the 5th of each month (min $50 eligible).</p>';
+        return;
+      }
+      content.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);">
+              <th style="text-align:left;padding:8px 4px;">Period</th>
+              <th style="text-align:right;padding:8px 4px;">Gross</th>
+              <th style="text-align:right;padding:8px 4px;">Deductions</th>
+              <th style="text-align:right;padding:8px 4px;">Net Paid</th>
+              <th style="text-align:left;padding:8px 4px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.payouts.map(p => `
+              <tr style="border-bottom:1px solid var(--border);">
+                <td style="padding:8px 4px;">${p.period_month}</td>
+                <td style="padding:8px 4px;text-align:right;">${fmt(p.gross_amount)}</td>
+                <td style="padding:8px 4px;text-align:right;color:#ef4444;">
+                  -${fmt((p.clawbacks_deducted || 0) + (p.reserve_withheld || 0) + (p.stripe_fees || 0))}
+                </td>
+                <td style="padding:8px 4px;text-align:right;font-weight:600;color:#10b981;">${fmt(p.net_amount)}</td>
+                <td style="padding:8px 4px;">
+                  <span style="padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;
+                    background:${p.status === 'paid' ? '#d1fae5' : p.status === 'failed' ? '#fee2e2' : p.status === 'held' ? '#fef3c7' : '#f3f4f6'};
+                    color:${p.status === 'paid' ? '#065f46' : p.status === 'failed' ? '#991b1b' : p.status === 'held' ? '#92400e' : '#374151'};">
+                    ${p.status}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+  } catch (err) {
+    content.innerHTML = `<p style="color:#ef4444;padding:16px;">Failed to load ${tab}. Please refresh.</p>`;
+  }
+}
+
+// ----------------------------------------------------------------
+// Set custom referral slug — one-time, permanent
+// ----------------------------------------------------------------
+async function affiliateSetSlug() {
+  const input = document.getElementById('slug-input');
+  if (!input) return;
+
+  const slug = input.value.trim().toLowerCase();
+
+  if (!slug || slug.length < 3) {
+    showToast('Slug must be at least 3 characters.', 'error');
+    return;
+  }
+
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    showToast('Only lowercase letters, numbers, and hyphens allowed.', 'error');
+    return;
+  }
+
+  try {
+    await apiFetch('/affiliate/slug', { method: 'POST', body: JSON.stringify({ slug }) });
+    showToast('Custom slug set! Reloading...', 'success');
+    setTimeout(() => navigate('affiliate'), 1200);
+  } catch (err) {
+    showToast(err.message || 'Failed to set slug.', 'error');
+  }
+}
+
+// ----------------------------------------------------------------
+// Start Stripe Connect onboarding — redirects to Stripe
+// ----------------------------------------------------------------
+async function affiliateConnectStripe() {
+  try {
+    const data = await apiFetch('/affiliate/connect', { method: 'POST' });
+    if (data.url) {
+      window.location.href = data.url;
+    }
+  } catch (err) {
+    showToast(err.message || 'Failed to start Stripe Connect.', 'error');
   }
 }
 

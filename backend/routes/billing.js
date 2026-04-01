@@ -11,17 +11,25 @@
 const express = require('express');
 const router = express.Router();
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+
 const {
   createCheckoutSession,
   createPortalSession,
   cancelSubscription,
   downgradeToFree,
-  changePlan
+  changePlan,
+  createStripeCustomer,
 } = require('../services/stripeService');
 const { supabaseAdmin } = require('../services/supabaseService');
 const { requireAuth } = require('../middleware/auth');
 const { standardLimiter } = require('../middleware/rateLimit');
 const { getAllLimits } = require('../middleware/checkLimit');
+const {
+  getLegacySlotDisplay,
+  getCurrentLegacyCohort,
+  parseReferralCookie,
+} = require('../services/affiliateService');
 
 // Apply standard rate limiting to all billing routes
 router.use(standardLimiter);
@@ -242,6 +250,131 @@ router.post('/downgrade-free', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[Billing] Downgrade error:', err.message);
     return res.status(500).json({ error: err.message || 'Failed to downgrade' });
+  }
+});
+
+// ----------------------------------------------------------------
+// GET /billing/legacy/info
+// Public route — returns the current Legacy cohort pricing and
+// the slot display data (for the pricing page countdown).
+// No auth required so the landing/pricing page can show this.
+// ----------------------------------------------------------------
+router.get('/legacy/info', async (req, res) => {
+  try {
+    const [cohort, slotDisplay] = await Promise.all([
+      getCurrentLegacyCohort(),
+      getLegacySlotDisplay(),
+    ]);
+
+    if (!cohort) {
+      return res.json({ available: false, slotDisplay });
+    }
+
+    return res.json({
+      available: true,
+      cohortYear: cohort.cohort_year,
+      priceMonthly: cohort.price_monthly,    // cents — e.g. 5900 = $59/mo
+      slotDisplay,
+    });
+
+  } catch (err) {
+    console.error('[Billing] Legacy info error:', err.message);
+    return res.status(500).json({ error: 'Failed to load Legacy info.' });
+  }
+});
+
+// ----------------------------------------------------------------
+// POST /billing/legacy/checkout
+// Initiates a Stripe Checkout session for Legacy membership.
+//
+// How it differs from the normal /billing/subscribe flow:
+//  - Uses the current cohort's locked Stripe Price ID (not a plan lookup)
+//  - Passes checkout_type: "legacy" in metadata so the webhook knows
+//    to run the slot claim + referral recording logic
+//  - Passes the referral cookie value in metadata so the webhook can
+//    record the referral relationship without reading cookies server-side
+//  - Passes cohort_year + stripe_price_id so the webhook can lock them
+//    on the user's profile
+//  - The user must be logged in (requires auth)
+//  - If slots are already sold out, returns 409 before creating a session
+// ----------------------------------------------------------------
+router.post('/legacy/checkout', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // 1. Verify the user is not already a Legacy member
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('subscription_tier')
+      .eq('user_id', userId)
+      .single();
+
+    if (profile?.subscription_tier === 'legacy') {
+      return res.status(400).json({ error: 'You are already a Legacy member.' });
+    }
+
+    // 2. Verify slots are still available (pre-check — real atomic claim happens in webhook)
+    const slotDisplay = await getLegacySlotDisplay();
+    if (slotDisplay.soldOut) {
+      return res.status(409).json({
+        error: 'Legacy membership is sold out.',
+        soldOut: true,
+      });
+    }
+
+    // 3. Get the current cohort pricing
+    const cohort = await getCurrentLegacyCohort();
+    if (!cohort || !cohort.stripe_price_id) {
+      return res.status(503).json({ error: 'Legacy membership is not currently available.' });
+    }
+
+    // 4. Look up or create the user's Stripe customer ID
+    let { data: sub } = await supabaseAdmin
+      .from('subscriptions')
+      .select('stripe_customer_id')
+      .eq('user_id', userId)
+      .single();
+
+    if (!sub?.stripe_customer_id) {
+      const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+      const email = authData?.user?.email;
+      if (!email) throw new Error('Could not find user email to create Stripe customer');
+
+      const customer = await createStripeCustomer(userId, email);
+      sub = { stripe_customer_id: customer.id };
+    }
+
+    // 5. Read the referral cookie (if present) so we can pass it to the webhook
+    //    via session metadata. The webhook will use it to record the referral.
+    //    We store the raw cookie value — parseReferralCookie() verifies the HMAC.
+    const referralCookieRaw = req.cookies['sb_ref'] || '';
+
+    // 6. Create the Stripe Checkout session for Legacy
+    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    const session = await stripe.checkout.sessions.create({
+      customer: sub.stripe_customer_id,
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{ price: cohort.stripe_price_id, quantity: 1 }],
+      success_url: `${baseUrl}/#settings?payment=legacy_success`,
+      cancel_url:  `${baseUrl}/#settings?payment=cancelled`,
+      // All metadata is read by the checkout.session.completed webhook handler
+      metadata: {
+        checkout_type:    'legacy',
+        user_id:          userId,
+        cohort_year:      String(cohort.cohort_year),
+        stripe_price_id:  cohort.stripe_price_id,
+        referral_cookie:  referralCookieRaw,       // passed to webhook for referral recording
+        ip_at_signup:     req.ip || '',
+      },
+    });
+
+    return res.json({ checkoutUrl: session.url });
+
+  } catch (err) {
+    console.error('[Billing] Legacy checkout error:', err.message);
+    return res.status(500).json({ error: 'Failed to create Legacy checkout session.' });
   }
 });
 
