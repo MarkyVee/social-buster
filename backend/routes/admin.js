@@ -1460,7 +1460,7 @@ router.put('/plans/:id', async (req, res) => {
   const { id } = req.params;
   const allowed = [
     'name', 'price_display', 'period_label', 'stripe_price_id',
-    'features', 'color', 'badge', 'sort_order', 'is_active'
+    'features', 'color', 'badge', 'sort_order', 'is_active', 'logo_url'
   ];
 
   const updates = { updated_at: new Date().toISOString() };
