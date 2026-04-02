@@ -772,6 +772,12 @@ function checkOAuthResult() {
       showAlert('media-alerts',
         `✅ Google Drive connected${result.email ? ' as ' + result.email : ''}! Now choose which folder to scan.`,
         'success');
+      // Refresh token_warnings so the "reconnect" banner clears immediately
+      try {
+        const fresh = await apiFetch('/auth/me');
+        App.user = { ...App.user, ...fresh.user };
+        renderTokenWarnings();
+      } catch (_) { /* non-fatal — banner will clear on next page load */ }
     } else if (result.status === 'cancelled') {
       showAlert('media-alerts', 'Google Drive connection was cancelled.', 'error');
     } else if (result.status === 'error') {
