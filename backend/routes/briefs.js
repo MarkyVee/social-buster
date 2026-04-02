@@ -68,6 +68,12 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
     }
   }
 
+  // Validate optional notes field — cap at 1000 characters to prevent LLM prompt bloat
+  // and runaway token costs. Brief notes are a hint, not an essay.
+  if (notes && notes.trim().length > 1000) {
+    errors.push('Notes must be 1000 characters or fewer');
+  }
+
   if (errors.length > 0) {
     return res.status(400).json({ error: errors.join('. ') });
   }
@@ -78,7 +84,7 @@ router.post('/', aiLimiter, checkLimit('briefs_per_month'), async (req, res) => 
     objective:       objective.toLowerCase(),
     tone:            tone.toLowerCase(),
     platforms:       platforms.map(p => p.toLowerCase()),
-    notes:           notes?.trim() || null
+    notes:           notes?.trim().slice(0, 1000) || null  // Hard cap as safety net
   };
 
   let briefId = null;

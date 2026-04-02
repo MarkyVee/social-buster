@@ -160,18 +160,19 @@ const mediaProcessQueue = new Queue('media-process', {
 // Max 2 concurrent — FFmpeg is CPU-intensive; running too many at once slows the server.
 // Only processes videos that are newly added to the library (analysis_status = 'pending').
 //
-// attempts: 1 (no retry) — analysis failures are non-critical; the clip picker falls back
-// to the manual slider. More importantly, a video that is too large / corrupted will
-// OOM-kill or timeout on every attempt — retrying just wastes CPU and blocks the queue.
-// The mediaAgent marks the item as 'failed' so the user sees the badge, not a spinner.
+// attempts: 2 — gives one retry in case of a transient OOM or timeout on a large video.
+// A second attempt on a truly corrupted/oversized video will still fail, but this catches
+// transient failures (e.g. server briefly under load) without burning excessive CPU.
+// The mediaAgent marks the item as 'failed' on permanent failure so the user sees the
+// badge rather than a spinner, and the clip picker falls back to the manual slider.
 const mediaAnalysisQueue = new Queue('media-analysis', {
   connection,
   defaultJobOptions: {
     ...DEFAULT_JOB_OPTIONS,
-    attempts: 1,
+    attempts: 2,
     backoff: {
       type:  'exponential',
-      delay: 15000
+      delay: 15000      // Wait 15s before retry — gives server load time to settle
     }
   }
 });
@@ -193,15 +194,16 @@ const dmQueue = new Queue('dm', {
 
 // Email queue — admin bulk email campaigns via Resend.
 // Concurrency 1 in the worker (one campaign at a time).
-// No auto-retry — admin can re-send manually if a campaign fails.
+// 3 attempts with 30s backoff — catches transient SMTP/Resend API failures without
+// flooding the email provider. 30s gap gives rate-limited APIs time to recover.
 const emailQueue = new Queue('email', {
   connection,
   defaultJobOptions: {
     ...DEFAULT_JOB_OPTIONS,
-    attempts: 1,
+    attempts: 3,
     backoff: {
       type:  'exponential',
-      delay: 5000
+      delay: 30000      // First retry after 30s — gives Resend time to recover from rate limits
     }
   }
 });
