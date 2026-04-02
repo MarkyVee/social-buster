@@ -14,6 +14,16 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-030
+- **Date:** 2026-04-01
+- **Status:** wont-fix (Meta platform limitation)
+- **Category:** LOW / DM Automation
+- **Description:** Facebook comment webhook payload omits `val.from?.id` when a commenter has strict privacy settings. `commentAgent.js` reads `authorId = val.from?.id` — if undefined, `processRealtimeComment` receives a null `authorPlatformId` and logs `[CommentAgent] Trigger matched for @Unknown but no authorPlatformId — cannot DM` then skips the DM. DM automation otherwise works correctly; this is a per-user Meta privacy edge case that cannot be resolved on our end.
+- **Found in:** `backend/agents/commentAgent.js` — `processRealtimeComment()`
+- **Resolution:** None possible. Meta does not include the commenter's user ID in the webhook payload when their privacy settings block it. We cannot DM a user we have no ID for. Existing warning log is sufficient. No code change needed. See also [[platform_publishing_guide]].
+
+---
+
 - **ID:** ISSUE-029
 - **Date:** 2026-04-01
 - **Status:** resolved (2026-04-01)
@@ -111,3 +121,4 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 | ISSUE-020 | 2026-03-26 | CRITICAL/Frontend | Helmet CSP `useDefaults:true` broke inline onclick → set `useDefaults:false`, explicit directives |
 | ISSUE-022 | 2026-03-27 | HIGH/Integration | Page picker showed 4 of 9 Pages → cross-reference `debug_token` granular_scopes |
 | ISSUE-023 | 2026-03-27 | CRITICAL/Integration | DM broken after reconnect → Page ID mismatch + stale dedup. Cleaned DB, added pageId fallback |
+| ISSUE-030 | 2026-04-01 | wont-fix | Facebook webhook omits `val.from.id` for privacy-restricted commenters → cannot DM, Meta limitation |

@@ -381,7 +381,9 @@ async function processRealtimeComment(pageId, platformPostId, commentId, comment
       .single();
 
     if (postErr || !post) {
-      // Post not found — might be a post we didn't publish. Ignore silently.
+      // Post not found — log the mismatch so we can diagnose platform_post_id format issues.
+      // Common cause: webhook sends {page_id}_{post_id} but we stored a different format (or vice versa).
+      console.warn(`[CommentAgent] Realtime: post not found for platformPostId="${platformPostId}" platform=${platform} pageId=${pageId} — comment ignored`);
       return;
     }
 
@@ -458,7 +460,7 @@ async function processRealtimeComment(pageId, platformPostId, commentId, comment
       connection.platform_user_id  // pageId from the webhook's matching connection
     );
 
-    console.log(`[CommentAgent] Realtime: Processed comment "${commentText.substring(0, 30)}..." on post ${post.id}`);
+    console.log(`[CommentAgent] Realtime: Processed comment "${commentText.substring(0, 30)}..." on post ${post.id} (platformPostId matched: "${platformPostId}")`);
 
   } catch (err) {
     console.error('[CommentAgent] Realtime comment processing error:', err.message);
