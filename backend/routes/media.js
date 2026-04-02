@@ -99,18 +99,26 @@ router.get('/oauth/google_drive/callback', authLimiter, async (req, res) => {
     const oauth2Api = google.oauth2({ version: 'v2', auth: client });
     const { data: googleUser } = await oauth2Api.userinfo.get();
 
-    // Store encrypted tokens — upsert so reconnecting replaces the old record
+    // Store encrypted tokens — upsert so reconnecting replaces the old record.
+    // IMPORTANT: only overwrite refresh_token if Google returned a new one.
+    // Google only issues a refresh token on first auth (or forced re-consent).
+    // If we always write null when it's absent, reconnecting wipes the existing
+    // refresh token and breaks all future background scans.
+    const upsertData = {
+      user_id:          userId,
+      provider:         'google_drive',
+      access_token:     encryptToken(tokens.access_token),
+      token_expires_at: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
+      provider_email:   googleUser.email || null,
+      connected_at:     new Date().toISOString()
+    };
+    if (tokens.refresh_token) {
+      upsertData.refresh_token = encryptToken(tokens.refresh_token);
+    }
+
     await supabaseAdmin
       .from('cloud_connections')
-      .upsert({
-        user_id:          userId,
-        provider:         'google_drive',
-        access_token:     encryptToken(tokens.access_token),
-        refresh_token:    tokens.refresh_token ? encryptToken(tokens.refresh_token) : null,
-        token_expires_at: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
-        provider_email:   googleUser.email || null,
-        connected_at:     new Date().toISOString()
-      }, { onConflict: 'user_id,provider' });
+      .upsert(upsertData, { onConflict: 'user_id,provider' });
 
     return finish('connected', googleUser.email || '');
 

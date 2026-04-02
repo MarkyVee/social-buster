@@ -71,6 +71,10 @@ async function runWatchdogCycle() {
     // ---- 6. Database connectivity ----
     await checkDatabase(results.database);
 
+    // ---- 7. OAuth token health (user-level — does not affect confidence score) ----
+    // Logs anomalies to system_events so expired/missing tokens appear in the admin panel.
+    await checkTokenHealth(anomalies);
+
   } catch (err) {
     console.error('[Watchdog] Unexpected error in checks:', err.message);
   }
@@ -401,6 +405,71 @@ async function checkDatabase(result) {
   } catch (err) {
     result.score = 0;
     result.issues.push(`Database unreachable: ${err.message}`);
+  }
+}
+
+// ================================================================
+// TOKEN HEALTH CHECK
+// Scans cloud_connections (Google Drive) and platform_connections
+// (Facebook, Instagram) for expired or missing tokens.
+// Does NOT affect the confidence score — these are user-level issues,
+// not system failures. They are logged as anomalies so they appear
+// in the admin health panel.
+// ================================================================
+async function checkTokenHealth(anomalies) {
+  try {
+    const now = new Date();
+
+    // ---- Google Drive (cloud_connections) ----
+    const { data: cloudConns } = await supabaseAdmin
+      .from('cloud_connections')
+      .select('user_id, provider, provider_email, token_expires_at, refresh_token')
+      .eq('provider', 'google_drive');
+
+    for (const conn of (cloudConns || [])) {
+      // Missing refresh token — user will never be able to re-auth silently
+      if (!conn.refresh_token) {
+        anomalies.push({
+          severity: 'warning',
+          category: 'tokens',
+          title:   `Google Drive: refresh token missing`,
+          details: { user_id: conn.user_id, provider_email: conn.provider_email }
+        });
+      } else if (conn.token_expires_at && new Date(conn.token_expires_at) < now) {
+        anomalies.push({
+          severity: 'warning',
+          category: 'tokens',
+          title:   `Google Drive: access token expired`,
+          details: { user_id: conn.user_id, provider_email: conn.provider_email, expired_at: conn.token_expires_at }
+        });
+      }
+    }
+
+    // ---- Meta platforms (platform_connections — facebook + instagram) ----
+    const { data: platConns } = await supabaseAdmin
+      .from('platform_connections')
+      .select('user_id, platform, platform_user_id, token_expires_at')
+      .in('platform', ['facebook', 'instagram']);
+
+    // Only log one anomaly per user+platform combination
+    const seen = new Set();
+    for (const conn of (platConns || [])) {
+      const key = `${conn.user_id}:${conn.platform}`;
+      if (seen.has(key)) continue;
+      if (conn.token_expires_at && new Date(conn.token_expires_at) < now) {
+        anomalies.push({
+          severity: 'warning',
+          category: 'tokens',
+          title:   `${conn.platform.charAt(0).toUpperCase() + conn.platform.slice(1)}: access token expired`,
+          details: { user_id: conn.user_id, platform_user_id: conn.platform_user_id, expired_at: conn.token_expires_at }
+        });
+        seen.add(key);
+      }
+    }
+
+  } catch (err) {
+    // Non-fatal — don't let a token check error break the rest of the watchdog cycle
+    console.warn('[Watchdog] Token health check failed:', err.message);
   }
 }
 

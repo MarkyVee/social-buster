@@ -353,13 +353,65 @@ router.get('/me', requireAuth, async (req, res) => {
       subscription.admin_override = true;
     }
 
+    // Check for expired or expiring platform/cloud tokens so the frontend
+    // can show a warning banner the moment the user logs in.
+    // Checks: Google Drive (cloud_connections) + Meta platforms (platform_connections).
+    const tokenWarnings = [];
+    const now = Date.now();
+    const WARN_WINDOW_MS = 24 * 60 * 60 * 1000; // warn if expiring within 24 hours
+
+    try {
+      // Google Drive token check
+      const { data: cloudConns } = await supabaseAdmin
+        .from('cloud_connections')
+        .select('provider, provider_email, token_expires_at, refresh_token')
+        .eq('user_id', req.user.id);
+
+      for (const conn of (cloudConns || [])) {
+        if (!conn.refresh_token) {
+          tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'error', message: `Google Drive needs to be reconnected — refresh token missing.` });
+        } else if (conn.token_expires_at) {
+          const expiresAt = new Date(conn.token_expires_at).getTime();
+          if (expiresAt < now) {
+            tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'error', message: `Google Drive token expired. Please reconnect.` });
+          } else if (expiresAt < now + WARN_WINDOW_MS) {
+            tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'warning', message: `Google Drive connection expires soon. Reconnect to avoid interruptions.` });
+          }
+        }
+      }
+
+      // Meta platform token check (Facebook, Instagram)
+      const { data: platConns } = await supabaseAdmin
+        .from('platform_connections')
+        .select('platform, platform_user_id, token_expires_at')
+        .eq('user_id', req.user.id)
+        .in('platform', ['facebook', 'instagram']);
+
+      const seenPlatforms = new Set();
+      for (const conn of (platConns || [])) {
+        if (seenPlatforms.has(conn.platform)) continue; // one warning per platform
+        if (conn.token_expires_at) {
+          const expiresAt = new Date(conn.token_expires_at).getTime();
+          const label = conn.platform.charAt(0).toUpperCase() + conn.platform.slice(1);
+          if (expiresAt < now) {
+            tokenWarnings.push({ type: 'platform', provider: conn.platform, severity: 'error', message: `${label} token expired. Please reconnect in Settings.` });
+            seenPlatforms.add(conn.platform);
+          } else if (expiresAt < now + WARN_WINDOW_MS) {
+            tokenWarnings.push({ type: 'platform', provider: conn.platform, severity: 'warning', message: `${label} connection expires soon. Reconnect in Settings to avoid interruptions.` });
+            seenPlatforms.add(conn.platform);
+          }
+        }
+      }
+    } catch (_) { /* non-fatal — don't block login */ }
+
     return res.json({
       user: {
-        id:       req.user.id,
-        email:    req.user.email,
-        is_admin: isAdmin,
+        id:            req.user.id,
+        email:         req.user.email,
+        is_admin:      isAdmin,
         subscription,
-        profile
+        profile,
+        token_warnings: tokenWarnings   // [] when all tokens are healthy
       }
     });
 

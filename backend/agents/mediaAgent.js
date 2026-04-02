@@ -26,6 +26,7 @@ const { supabaseAdmin }        = require('../services/supabaseService');
 const { decryptToken }         = require('../services/tokenEncryption');
 const { getGoogleDriveClient } = require('../services/googleDriveService');
 const { mediaAnalysisQueue }   = require('../queues');
+const { sendAlert }            = require('../services/alertService');
 
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'];
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic'];
@@ -62,6 +63,28 @@ async function scanUserMediaLibrary(userId) {
 
     } catch (err) {
       console.error(`[MediaAgent] Error scanning ${connection.provider}:`, err.message);
+
+      // If the error is a token failure (expired or missing refresh token),
+      // email the user so they know to reconnect — otherwise this fails silently forever.
+      const isTokenError = err.message?.toLowerCase().includes('refresh token') ||
+                           err.message?.toLowerCase().includes('token') && err.message?.toLowerCase().includes('reconnect');
+      if (isTokenError) {
+        try {
+          const { data: authData } = await supabaseAdmin.auth.admin.getUserById(userId);
+          const userEmail = authData?.user?.email;
+          if (userEmail) {
+            await sendAlert(
+              `Action required: reconnect your ${connection.provider === 'google_drive' ? 'Google Drive' : connection.provider} account`,
+              `Hi,\n\nYour ${connection.provider === 'google_drive' ? 'Google Drive' : connection.provider} connection needs to be reconnected in Social Buster.\n\nReason: ${err.message}\n\nPlease log in and go to Media Library → Settings to reconnect.\n\nThis is an automated message from Social Buster.`
+            );
+            // Also send to admin so it shows up in server alerts
+            console.warn(`[MediaAgent] Token failure for user ${userId} (${userEmail}) — alert sent.`);
+          }
+        } catch (alertErr) {
+          // Never crash because the alert failed
+          console.error('[MediaAgent] Failed to send token alert email:', alertErr.message);
+        }
+      }
     }
   }
 

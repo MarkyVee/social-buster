@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -400,6 +400,8 @@ function navigate(view) {
   window.location.hash = view;
   renderView(view);
   updateSidebarActiveState(view);
+  // Re-render token warnings on every view so they persist as the user navigates
+  renderTokenWarnings();
 }
 
 function updateSidebarActiveState(view) {
@@ -792,6 +794,8 @@ function renderAppShell() {
 
       <!-- ---- Main content area ---- -->
       <main class="main-content">
+        <!-- Token warning banners — injected by renderTokenWarnings() on login and each navigate() -->
+        <div id="token-warnings-banner"></div>
         <div id="main-content-area"></div>
       </main>
 
@@ -801,6 +805,9 @@ function renderAppShell() {
   // Navigate to the view from the hash, or default to dashboard
   const initialView = window.location.hash.replace('#', '') || 'dashboard';
   navigate(initialView);
+
+  // Show token health warnings immediately after login
+  renderTokenWarnings();
 
   // Start polling for unread messages — updates the sidebar badge every 60s.
   // Guard against messages.js not being loaded yet (graceful degradation).
@@ -822,6 +829,56 @@ function startUnreadBadgePoller() {
   };
   refresh(); // immediate check on login
   App._unreadPoller = setInterval(refresh, 60 * 1000);
+}
+
+// ============================================================
+// TOKEN WARNING BANNER
+// Reads token_warnings from the /auth/me response (stored on App.user)
+// and renders dismissible red/yellow banners above the main content area.
+// Called on login and on every navigate() so warnings are always visible.
+// ============================================================
+function renderTokenWarnings() {
+  const container = document.getElementById('token-warnings-banner');
+  if (!container) return;
+
+  const warnings = App.user?.token_warnings;
+  if (!warnings || warnings.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = warnings.map((w, i) => {
+    // error = red banner, warning = yellow banner
+    const isError = w.severity === 'error';
+    const bg    = isError ? '#fee2e2' : '#fef9c3';
+    const border = isError ? '#f87171' : '#fde047';
+    const icon  = isError ? '🔴' : '⚠️';
+
+    // Route the user to the right settings page to fix the issue
+    const fixLink = w.type === 'cloud'
+      ? `<a href="#" onclick="navigate('media');return false;" style="font-weight:600;text-decoration:underline;">Go to Media Library</a>`
+      : `<a href="#" onclick="navigate('settings');return false;" style="font-weight:600;text-decoration:underline;">Go to Settings</a>`;
+
+    return `
+      <div id="token-warn-${i}" style="
+        background:${bg};
+        border-left:4px solid ${border};
+        padding:10px 16px;
+        margin:8px 16px 0;
+        border-radius:6px;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        font-size:14px;
+        gap:12px;
+      ">
+        <span>${icon} ${w.message} ${fixLink}</span>
+        <button onclick="document.getElementById('token-warn-${i}').remove();"
+          style="background:none;border:none;cursor:pointer;font-size:18px;line-height:1;color:#666;"
+          title="Dismiss">×</button>
+      </div>
+    `;
+  }).join('');
 }
 
 // ============================================================
