@@ -324,6 +324,12 @@ async function publishPost(post) {
               const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/processed-media/${storagePath}`;
               post.media_url = publicUrl;
               console.log(`[PublishingAgent]    Cropped image uploaded → ${publicUrl}`);
+              // Wait 5 seconds for Supabase CDN to propagate the new file.
+              // Instagram's crawler fetches the URL almost immediately — if we send
+              // it before the CDN has the file, Instagram gets a 404 and returns
+              // error 9004 "media could not be fetched". 5s is enough for CDN sync.
+              console.log(`[PublishingAgent]    Waiting 5s for CDN propagation before calling Instagram...`);
+              await new Promise(resolve => setTimeout(resolve, 5000));
             } else {
               console.warn(`[PublishingAgent]    Cropped image upload failed (${uploadRes.status}), using original URL`);
             }
