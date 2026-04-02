@@ -166,6 +166,7 @@
 
 ## 7. Pending Items (Non-Feature)
 
+- **SSL/TLS certificate** — obtain and install a secure certificate for social-buster.com (required before Meta App Review and before any real users sign up — HTTPS is mandatory for OAuth redirects, webhook verification, and user trust)
 - Meta App Review submission
 - Age gating on brief target_audience
 - Help section video tutorials (placeholder ready)
