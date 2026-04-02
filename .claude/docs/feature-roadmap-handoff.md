@@ -1,6 +1,6 @@
 # Social Buster — Feature Roadmap & Handoff
 
-> **Last updated:** 2026-04-01 (session 3)
+> **Last updated:** 2026-04-02 (session 4)
 > **Purpose:** Quick-reference for any AI or developer picking up the project. For detailed history, see [[CHANGELOG]], [[ISSUES]], and [[platform_publishing_guide]].
 
 ---
@@ -25,7 +25,7 @@
 | Area | Status |
 |------|--------|
 | Auth, multi-tenancy, RLS | Done |
-| Brief system + AI generation + WYSIWYG previews | Done |
+| Brief system + AI generation + WYSIWYG previews | Done — ISSUE-032: Groq 413 TPM fix deployed 2026-04-02 (max_tokens 5120→2048) |
 | Media library (Google Drive), AI images, video analysis, clip picker | Done |
 | Facebook publishing (text, image, video) | Done |
 | Instagram publishing (image, Reels) | Done |
@@ -78,9 +78,10 @@
 
 ## 4. What's Next (Priority Order)
 
-1. **Platform validation + content compliance** — Character counters for all platforms, image aspect ratio validation, centralized `platformSpecs.json` (active plan exists)
-2. **Meta App Review** — `pages_messaging` + `instagram_manage_messages` need approval for non-admin users
-3. **Remove diagnostic logging** — clean verbose DM/publishing logs
+1. **Test Facebook DM realtime path** — publish a new post, have Mark comment "GO", confirm logs show `[CommentAgent] Realtime: matched post via...` instead of the polling fallback (ISSUE-031 fix deployed, needs verification)
+2. **Platform validation + content compliance** — Character counters for all platforms, image aspect ratio validation, centralized `platformSpecs.json` (active plan exists)
+3. **Meta App Review** — `pages_messaging` + `instagram_manage_messages` need approval for non-admin users
+4. **Remove diagnostic logging** — clean verbose DM/publishing logs after realtime DM confirmed working
 4. **Repost from Intelligence Dashboard** — not yet built
 5. **Platform OAuth** — TikTok, LinkedIn, X, YouTube (deferred by user)
 6. **Horizontal block scaling** — deferred, full architecture designed (see Section 10). Implement at ~8-9K users.

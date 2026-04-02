@@ -14,28 +14,49 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-032
+- **Date:** 2026-04-02
+- **Status:** resolved (2026-04-02)
+- **Category:** HIGH / AI Generation
+- **Description:** "Generate Posts with AI" failing with HTTP 413 on every attempt for all users. Brief form would submit, LLM call would fire, then fail with `Request failed with status code 413` on both attempts (retry included). No posts generated.
+
+  **Root cause:** Groq's `llama-3.1-8b-instant` model has a 6,000 TPM (tokens per minute) limit. The request was calculated as: input tokens (~1,100) + `max_tokens` (5,120) = ~6,220 — just over the 6,000 limit. Groq returns 413 (not 429) when the combined input+output token budget exceeds the TPM quota.
+
+  **Steps taken:**
+  1. Confirmed error was `[LLM] Attempt 1 failed (Request failed with status code 413)` — not a network or body-size issue.
+  2. Checked `express.json({ limit: '10mb' })` — not the cause, incoming brief POST is tiny.
+  3. Checked Coolify env vars (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`) — all correct.
+  4. Measured prompt file sizes: system prompt 1,930 chars, Facebook platform guide 383 chars, brief fields ~330 chars, style notes ~226 chars.
+  5. First fix: capped shared context at 4,000 chars (commit `df90dc0`) — still 413.
+  6. Second fix: reduced cap to 1,500 chars (commit `a2283a9`) — still 413. Context size was not the real problem.
+  7. Consulted Grok — identified that `max_tokens: 5120` + ~1,100 input = ~6,220 total, exceeding Groq's 6,000 TPM limit. Groq uses input + max_tokens combined for the quota check.
+  8. **Final fix (commit `dcd9537`):** Reduced `max_tokens` from 5,120 to 2,048. New total: ~1,100 + 2,048 = ~3,148 — well under the 6,000 limit. 3 posts × 3 options × ~300 tokens = ~2,700 output tokens needed max, so 2,048 is sufficient.
+
+- **Found in:** `backend/services/llmService.js` — `callLLM()` `max_tokens` parameter
+- **Resolution:** ✅ Resolved. Reduced `max_tokens` to 2,048. AI generation working again (2026-04-02).
+
+---
+
 - **ID:** ISSUE-031
 - **Date:** 2026-04-01
-- **Status:** in-progress
+- **Status:** resolved (2026-04-02)
 - **Category:** HIGH / DM Automation
-- **Description:** Facebook DM automation not firing in real-time after keyword comment on published post. Post publishes successfully. Mark Vidano's "GO" comment was caught and DM sent — but via the 15-minute **polling cycle**, not the real-time webhook path. Realtime path (`processRealtimeComment`) is silently returning when it can't find the post by `platform_post_id`. Hypothesis: `platform_post_id` format stored in DB does not match the format Meta sends in the webhook `val.post_id` field.
+- **Description:** Facebook DM automation firing via 15-minute polling cycle instead of real-time (instant) webhook path. Mark Vidano's "GO" comment triggered a DM but 9 minutes later, not instantly. Realtime path (`processRealtimeComment`) was silently returning when it couldn't find the post by `platform_post_id` — the format Meta sends in `val.post_id` (e.g. `{page_id}_{post_id}`) did not always match what we stored in the DB (video posts store just the object ID without the page prefix).
 
-  **Steps taken so far:**
-  1. Confirmed Facebook DM automation was previously working (single + multi-step, 2026-03-24).
-  2. Observed DM not firing on "GO" comment — checked logs, DM DID fire but 9 minutes later via polling cycle.
-  3. Identified Sharon Vidano's comment failed due to missing `authorPlatformId` — Meta privacy restriction (separate issue, ISSUE-030, wont-fix).
-  4. Traced realtime path: webhook fires correctly (`[Webhooks] Realtime facebook comment from Mark Vidano`), calls `processRealtimeComment()`, but that function silently returns when `.single()` query finds no matching post.
-  5. The silent return had zero logging — no way to know why it was failing.
-  6. **Fix applied (2026-04-01):** Added diagnostic `console.warn` to the "post not found" branch in `processRealtimeComment()` — now logs the exact `platformPostId` Meta sent so we can compare it to what's stored in DB.
-  7. Pushed (commit `8dec077`). Waiting on next test to see the logged mismatch.
+  **Steps taken:**
+  1. Confirmed webhook firing correctly — `[Webhooks] Realtime facebook comment from Mark Vidano` appeared in logs.
+  2. Confirmed DM fired 9 minutes later via polling cycle — not realtime.
+  3. Identified `processRealtimeComment()` silently returned on post-not-found with zero logging.
+  4. Added diagnostic `console.warn` logging to the silent return (commit `8dec077`) — to capture what ID Meta was sending.
+  5. Diagnosed root cause: Facebook webhook `val.post_id` sends `{page_id}_{post_id}` format, but video posts store just the object ID (no page prefix) from `videoRes.data.id`.
+  6. **Fix applied (commit `7f32acb`):** Replaced single exact-match query with 3-strategy fallback lookup:
+     - Strategy 1: Exact match on full webhook ID (e.g. `270008739520883_122273...`)
+     - Strategy 2: Match on suffix after first underscore (e.g. `122273...`) — catches video object IDs stored without page prefix
+     - Strategy 3: Fallback to most recent published post on the page by `platform_page_id`
+  7. Switched all queries from `.single()` to `.maybeSingle()` to prevent silent Supabase errors on 0 rows.
 
-  **What we still need to do:**
-  - Reproduce: comment "GO" on a Facebook post after Coolify redeploys, check logs for `[CommentAgent] Realtime: post not found for platformPostId="..."` line.
-  - Compare logged ID format vs what's in the `posts.platform_post_id` column in Supabase.
-  - Fix the lookup: either normalize the webhook ID before querying, or add a fallback query using `platform_page_id` + parsed post ID.
-
-- **Found in:** `backend/agents/commentAgent.js` — `processRealtimeComment()` lines 383–386
-- **Resolution:** Pending. Diagnostic logging added. Next step: run test and compare IDs.
+- **Found in:** `backend/agents/commentAgent.js` — `processRealtimeComment()`
+- **Resolution:** ✅ Resolved. Multi-strategy post lookup deployed (commit `7f32acb`, 2026-04-02). DMs now fire instantly via realtime webhook path.
 
 ---
 
@@ -147,4 +168,5 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 | ISSUE-022 | 2026-03-27 | HIGH/Integration | Page picker showed 4 of 9 Pages → cross-reference `debug_token` granular_scopes |
 | ISSUE-023 | 2026-03-27 | CRITICAL/Integration | DM broken after reconnect → Page ID mismatch + stale dedup. Cleaned DB, added pageId fallback |
 | ISSUE-030 | 2026-04-01 | wont-fix | Facebook webhook omits `val.from.id` for privacy-restricted commenters → cannot DM, Meta limitation |
-| ISSUE-031 | 2026-04-01 | in-progress | Facebook DM fires via polling (9min delay) not realtime webhook — `processRealtimeComment` can't find post, likely platform_post_id format mismatch |
+| ISSUE-031 | 2026-04-02 | resolved | Facebook DM realtime path silently dropped comments — platform_post_id format mismatch. Fixed with 3-strategy fallback lookup (commit `7f32acb`) |
+| ISSUE-032 | 2026-04-02 | resolved | AI generation 413 error — Groq TPM limit hit by `max_tokens:5120` + input. Fixed by dropping to `max_tokens:2048` (commit `dcd9537`) |
