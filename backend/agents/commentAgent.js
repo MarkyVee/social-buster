@@ -372,18 +372,64 @@ function matchTriggerPhrase(commentText, triggers, platform) {
 // ----------------------------------------------------------------
 async function processRealtimeComment(pageId, platformPostId, commentId, commentText, authorId, authorName, platform) {
   try {
-    // Find the internal post by platform_post_id
-    const { data: post, error: postErr } = await supabaseAdmin
-      .from('posts')
-      .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
-      .eq('platform_post_id', platformPostId)
-      .eq('status', 'published')
-      .single();
+    // Find the internal post by platform_post_id.
+    //
+    // Facebook webhook sends val.post_id as "{page_id}_{post_id}" (e.g. "270008739520883_122273...").
+    // But we may have stored just the object ID portion when publishing (e.g. video returns only its
+    // video object ID, text posts return the full "{page_id}_{post_id}" from the /feed endpoint).
+    //
+    // Strategy: try exact match first. If not found, try the portion after the FIRST underscore
+    // (strips the page_id prefix). Also try just the page_id lookup as a last resort
+    // so we catch any post on that page if both ID formats fail.
+    let post = null;
 
-    if (postErr || !post) {
-      // Post not found — log the mismatch so we can diagnose platform_post_id format issues.
-      // Common cause: webhook sends {page_id}_{post_id} but we stored a different format (or vice versa).
-      console.warn(`[CommentAgent] Realtime: post not found for platformPostId="${platformPostId}" platform=${platform} pageId=${pageId} — comment ignored`);
+    // Build candidate IDs to try in order:
+    //   1. Exact webhook ID (e.g. "270008739520883_122273...")
+    //   2. Part after first underscore (e.g. "122273...") — matches video object IDs stored without prefix
+    //   3. Fallback: most recent published post on this page (catches edge cases)
+    const candidateIds = [platformPostId];
+    if (platformPostId && platformPostId.includes('_')) {
+      candidateIds.push(platformPostId.split('_').slice(1).join('_'));
+    }
+
+    for (const candidateId of candidateIds) {
+      const { data, error } = await supabaseAdmin
+        .from('posts')
+        .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
+        .eq('platform_post_id', candidateId)
+        .eq('status', 'published')
+        .maybeSingle();
+
+      if (!error && data) {
+        post = data;
+        if (candidateId !== platformPostId) {
+          console.log(`[CommentAgent] Realtime: matched post via alternate ID "${candidateId}" (webhook sent "${platformPostId}")`);
+        }
+        break;
+      }
+    }
+
+    // Final fallback: look up by page ID — finds the most recently published post on this page.
+    // This handles cases where the post ID format is completely different from what we stored.
+    if (!post && pageId) {
+      const { data, error } = await supabaseAdmin
+        .from('posts')
+        .select('id, user_id, platform, platform_post_id, platform_page_id, published_at')
+        .eq('platform_page_id', pageId)
+        .eq('platform', platform)
+        .eq('status', 'published')
+        .order('published_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!error && data) {
+        post = data;
+        console.log(`[CommentAgent] Realtime: matched post via page_id fallback (pageId=${pageId}, post_id=${data.platform_post_id})`);
+      }
+    }
+
+    if (!post) {
+      console.warn(`[CommentAgent] Realtime: post not found for platformPostId="${platformPostId}" platform=${platform} pageId=${pageId} — all lookup strategies exhausted`);
       return;
     }
 
