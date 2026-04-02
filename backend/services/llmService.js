@@ -126,9 +126,10 @@ function buildUserPrompt(brief, userContext) {
   // Shared context from all agents (research, performance, cohort, comments, content patterns, video tags).
   // This is the cross-agent intelligence layer — each section comes from a different agent
   // and is formatted as plain text ready for LLM injection.
-  // Cap at 4,000 chars to stay well within Groq's request body limit when combined
-  // with the system prompt, platform guides, and brief fields (~3,000 more chars).
-  const MAX_CONTEXT_CHARS = 4000;
+  // Cap at 1,500 chars to stay within Groq's request body limit.
+  // Budget breakdown: system prompt ~1,900 + platform guides ~500 + brief fields ~500
+  // + context 1,500 = ~4,400 chars total — safely under the limit.
+  const MAX_CONTEXT_CHARS = 1500;
   const rawContext = userContext.shared_context || '(No intelligence data available yet — use best practices.)';
   const sharedContext = rawContext.length > MAX_CONTEXT_CHARS
     ? rawContext.slice(0, MAX_CONTEXT_CHARS) + '\n...(truncated for length)'
