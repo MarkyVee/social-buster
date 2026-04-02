@@ -24,7 +24,7 @@
   <a href="/" class="back-link">&larr; Back to Social Buster</a>
 
   <h1>Privacy Policy</h1>
-  <p class="date">Last updated: March 28, 2026</p>
+  <p class="date">Last updated: April 2, 2026</p>
 
   <p>Social Buster ("we," "us," or "our") operates the Social Buster platform at <strong>socialbuster.com</strong>, an AI-powered social media marketing tool. This Privacy Policy explains how we collect, use, store, and protect your information when you use our service.</p>
 
@@ -66,6 +66,7 @@
   <h3>1e. Usage and Log Data</h3>
   <ul>
     <li>Feature usage timestamps, API request logs, and error logs — used to maintain, debug, and improve the service.</li>
+    <li><strong>Session identifiers:</strong> When you log in, we generate a unique session ID stored in your browser. If you log in from a new device or browser, your previous session is automatically invalidated — only one active session per account is permitted at a time. We store only your current active session ID. We do not collect device fingerprints, browsing history, or location data.</li>
   </ul>
 
   <!-- ============================================================ -->
@@ -201,7 +202,7 @@
     <li><strong>Account data:</strong> Retained for as long as your account is active.</li>
     <li><strong>Post content and media:</strong> Retained until you delete it or delete your account.</li>
     <li><strong>DM conversations and leads:</strong> Retained until you delete them or delete your account.</li>
-    <li><strong>Comments:</strong> Retained for up to 90 days for analytics purposes, then automatically purged.</li>
+    <li><strong>Comments:</strong> Comments on your posts are retained while your account is active to power sentiment analysis and intelligence features. When you delete your account or revoke Meta access, comments are <strong>anonymized</strong> — the commenter's name, handle, platform comment ID, and link to the original post are permanently removed. The comment text, sentiment classification, and platform remain as anonymous, de-identified data points indefinitely to improve recommendations for all users. No individual user or commenter can be identified from this anonymized data. See Section 9 for full details on account deletion.</li>
     <li><strong>Log data:</strong> Retained for up to 30 days, then automatically purged.</li>
     <li><strong>Aggregated metrics:</strong> Retained indefinitely as they contain no personally identifiable information.</li>
   </ul>
@@ -242,6 +243,11 @@
         <td>Email, subscription plan (Stripe handles all payment details directly)</td>
       </tr>
       <tr>
+        <td>Stripe Connect</td>
+        <td>Affiliate commission payouts to eligible Legacy members</td>
+        <td>Affiliate's email address, payout amounts, and Stripe Connect account ID. Banking and identity details are entered directly on Stripe's hosted platform — we never receive or store them.</td>
+      </tr>
+      <tr>
         <td>Groq / OpenAI-compatible API</td>
         <td>AI content generation (captions, hashtags, hooks)</td>
         <td>Brief details and brand context (no personal data)</td>
@@ -265,7 +271,52 @@
   </table>
 
   <!-- ============================================================ -->
-  <h2>10. Your Rights (California Residents — CCPA)</h2>
+  <h2>10. Legacy Membership and Affiliate Program</h2>
+  <p>Social Buster operates a referral-based affiliate program exclusively available to Legacy members — a limited founding-member subscription tier. This section describes how referral and commission data is collected, used, and retained.</p>
+
+  <h3>10a. Who Can Participate</h3>
+  <p>Only active Legacy members are eligible to participate in the affiliate program. Standard subscribers (Free Trial, Starter, Professional, Buster) cannot earn affiliate commissions. Legacy membership is offered in limited cohorts at a price determined by Social Buster and is never priced at more than 50% of the highest available combined retail subscription price at the time of the cohort's launch.</p>
+
+  <h3>10b. Referral Tracking</h3>
+  <p>Each Legacy member who joins the affiliate program is assigned a unique referral slug (a short link identifier). When a new user signs up through your referral link, your account is permanently recorded as the referring affiliate for that user. <strong>This referral assignment is permanent and cannot be changed, transferred, or reassigned</strong> — for any reason, by anyone, including Social Buster staff. The referring affiliate earns applicable commissions on that user for the lifetime of their subscription.</p>
+  <p>We store the following referral data in your account:</p>
+  <ul>
+    <li>Your referral slug and the signup date of each referred user</li>
+    <li>Commission amounts earned, pending, and paid out</li>
+    <li>Payout history including amounts, dates, and Stripe Connect transfer IDs</li>
+    <li>Any clawback or reserve activity related to chargebacks or refunds</li>
+  </ul>
+
+  <h3>10c. Commission Eligibility Rules</h3>
+  <p>Commissions are only paid on qualifying referrals. The following referrals do <strong>not</strong> generate commissions:</p>
+  <ul>
+    <li>Free Trial accounts — no subscription fee means no commission basis</li>
+    <li>Other Legacy member accounts — Legacy members referring other Legacy members do not earn commissions on those referrals</li>
+    <li>Any account that has not made a qualifying paid subscription payment</li>
+  </ul>
+  <p>Commission rates and caps are set by Social Buster and may be updated over time. Your Legacy membership agreement will specify the applicable rate at the time you join.</p>
+
+  <h3>10d. Payout Requirements and Forfeiture Rules</h3>
+  <p>To receive a commission payout, <strong>your own Legacy membership subscription must be current and in good standing at the time of payout.</strong> Payouts are processed on the 15th of each month for commissions earned in the prior calendar month.</p>
+  <p>Commissions are <strong>forfeited (permanently lost, not deferred)</strong> if any of the following occur within a 12-month rolling period:</p>
+  <ul>
+    <li>Your Legacy subscription is paused, canceled, or suspended</li>
+    <li>Your Legacy subscription remains unpaid for more than 35 days</li>
+    <li>Your account is flagged for fraud, abuse, or violation of our Terms of Service</li>
+  </ul>
+  <p>Forfeited commissions are not reinstated if your subscription is later reactivated. Commissions earned after reactivation accrue normally going forward.</p>
+
+  <h3>10e. Reserve Withholding</h3>
+  <p>To protect against chargebacks and refunds, we withhold a reserve from each payout. The reserve percentage is set by Social Buster and disclosed in your affiliate dashboard. Reserves are released 60 days after the payout date, provided no chargeback or refund has been initiated against the underlying subscription. If a chargeback or refund occurs, the corresponding commission may be clawed back from future payouts or from the held reserve.</p>
+
+  <h3>10f. Stripe Connect and Payout Processing</h3>
+  <p>Affiliate payouts are processed via Stripe Connect. To receive payouts, you must complete Stripe's identity verification and onboarding process on their hosted platform. Social Buster does not collect or store your banking details, tax identification numbers, or identity documents — these are provided directly to Stripe and governed by <a href="https://stripe.com/privacy" target="_blank">Stripe's Privacy Policy</a>. We store only your Stripe Connect account ID and payout records.</p>
+
+  <h3>10g. Program Modification and Termination</h3>
+  <p>Social Buster reserves the right to modify commission rates, eligibility rules, or payout terms with 30 days' written notice to active affiliates. Social Buster reserves the right to terminate the affiliate program entirely, in which case all pending commissions for qualifying referrals at the time of termination will be paid out in the final payout cycle, subject to the eligibility and forfeiture rules above.</p>
+
+  <!-- ============================================================ -->
+  <h2>11. Your Rights (California Residents — CCPA)</h2>
   <p>If you are a California resident, you have the following rights under the California Consumer Privacy Act (CCPA):</p>
   <ul>
     <li><strong>Right to know</strong> — You can request a copy of the personal information we have collected about you.</li>
@@ -276,20 +327,20 @@
   <p>To exercise any of these rights, contact us at <a href="mailto:mark@markseminko.com">mark@markseminko.com</a>.</p>
 
   <!-- ============================================================ -->
-  <h2>11. Children's Privacy</h2>
+  <h2>12. Children's Privacy</h2>
   <p>Social Buster is not directed at children under 13. We do not knowingly collect personal information from children under 13. If we learn that we have collected data from a child under 13, we will delete it promptly.</p>
 
   <!-- ============================================================ -->
-  <h2>12. Changes to This Policy</h2>
+  <h2>13. Changes to This Policy</h2>
   <p>We may update this Privacy Policy from time to time. When we make significant changes, we will update the "Last updated" date at the top of this page and notify you via email or an in-app notification. Your continued use of the service after changes are posted constitutes your acceptance of the updated policy.</p>
 
   <!-- ============================================================ -->
-  <h2>13. Third-Party Trademarks</h2>
+  <h2>14. Third-Party Trademarks</h2>
   <p>Facebook, Instagram, Facebook Messenger, and Threads are trademarks of Meta Platforms, Inc. TikTok is a trademark of ByteDance Ltd. LinkedIn is a trademark of LinkedIn Corporation. X (formerly Twitter) is a trademark of X Corp. YouTube is a trademark of Google LLC.</p>
   <p>Social Buster is not affiliated with, endorsed by, or sponsored by any of these companies. Our use of these platform names is solely to describe the integrations and services we provide.</p>
 
   <!-- ============================================================ -->
-  <h2>14. Contact Us</h2>
+  <h2>15. Contact Us</h2>
   <p>If you have questions about this Privacy Policy or how we handle your data, contact us at:</p>
   <p>
     <strong>Email:</strong> <a href="mailto:mark@markseminko.com">mark@markseminko.com</a><br>
