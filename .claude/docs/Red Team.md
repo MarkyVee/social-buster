@@ -5,6 +5,20 @@
 
 ---
 
+## ⚠️ Top 3 Existential Risks (as of 2026-04-02)
+
+These three issues can kill the product or lose access to Meta's platform. Fix them before any new features.
+
+| Rank | Risk | Potential Impact | Why It's Existential |
+|------|------|-----------------|----------------------|
+| 1 | **Publishing flow not crash-safe** (`processing` status window) | Stuck posts + duplicate publishes on watchdog recovery | Core product (posting) becomes unreliable; thundering herd on recovery can amplify damage |
+| 2 | **Missing data-level idempotency** (especially DMs) | Duplicate DMs / posts | User-facing spam + Meta platform enforcement risk — repeated messages are an abuse signal that can trigger automated Page restrictions or permanent API access loss |
+| 3 | **`appsecret_proof` not in `fbCall()` wrapper** (ISSUE-034) | Meta blocks all Graph API calls once "Require App Secret" is enforced | Production integration dead; blocks App Review and all scaling |
+
+> All other items in this document are important but secondary to these three.
+
+---
+
 ## Table of Contents
 1. [Failure Analysis & Root Cause Analysis (RCA)](#1-failure-analysis--root-cause-analysis)
 2. [Stress Testing](#2-stress-testing)
@@ -14,6 +28,7 @@
 6. [Integration Testing Plan](#6-integration-testing-plan)
 7. [System Testing Plan](#7-system-testing-plan)
 8. [Prioritized Remediation Order](#8-prioritized-remediation-order)
+9. [Cross-Cutting Recommendations](#9-cross-cutting-recommendations)
 
 ---
 
@@ -28,10 +43,20 @@
 
 **Current Mitigation:** None. The CLAUDE.md notes: `process_status uses .in(['pending', 'failed']) as concurrency lock — do not simplify.`
 
-**Recommended Fix (do not implement without approval):**
-- Add a `processing_started_at` timestamp column
-- Watchdog detects posts stuck in `processing` for > 10 minutes and resets them to `pending`
-- Alert admin via `system_events` when this happens
+**Recommended Fix (Priority 1 — do not implement without approval):**
+
+Use a write-ahead intent pattern (the same principle as database WAL) to eliminate the window where a platform API call succeeds but the status update never lands:
+
+1. Add a `publish_attempts` table (or columns): `attempt_id`, `post_id`, `status` (`attempting` / `sent` / `failed`), `started_at`, `platform_response`.
+2. Flow becomes:
+   - INSERT attempt record with `status = 'attempting'` (before any API call).
+   - Set `post.process_status = 'processing'` + `processing_started_at = NOW()`.
+   - Call platform API.
+   - Update both records on success or failure (in the same transaction where possible).
+3. Watchdog only resets posts where `processing_started_at` is stale **and** no recent `attempting` or `sent` attempt record exists.
+4. Use a deterministic BullMQ `jobId` (e.g., `publish:${post_id}:${attempt_number}`) so the queue itself also deduplicates.
+
+This closes the failure window entirely — a crash between API call and DB update is detected and recoverable.
 
 ---
 
@@ -59,6 +84,18 @@
 - Temp files are cleaned in the `finally` block of publishingAgent, but if the process crashes mid-job, orphaned files accumulate in `/tmp`
 - No disk space monitoring on `/tmp` — a high-volume day could fill it
 
+**Current approach is a tactical workaround. Preferred long-term architecture:**
+1. Perform FFmpeg processing in `/tmp` (as now).
+2. Upload the final cropped/resized file to Supabase Storage (or S3-compatible) with a **short-lived signed URL** (e.g., 5-minute expiry).
+3. Pass the signed URL directly to Instagram — Meta fetches it immediately, after which it can expire.
+
+This eliminates the `/tmp` accumulation problem and removes the direct dependency on our server being reachable by Meta at exactly the right moment.
+
+**Immediate hardening (while keeping current approach):**
+- Add disk usage monitoring on `/tmp` — alert when > 60% full.
+- Add a cleanup cron that sweeps files older than 1 hour from `/tmp/social-buster/instagram-media/`.
+- Cap file size per job to prevent a single 500MB video from filling the disk.
+
 ---
 
 ### 1.4 Email Campaign Fails With No Retry
@@ -84,7 +121,22 @@
 **Severity:** HIGH
 **RCA:** In `dmWorker.js`, the DM is sent to the platform API first, then the database is updated to mark the conversation as replied. If the DB update fails (network blip, Supabase timeout), the BullMQ job is marked failed and retried. The retry sends the DM again. There is no idempotency check before sending.
 
-**Impact:** A user receives the same DM twice. For automated comment-to-lead flows, this looks unprofessional and may violate Meta's spam policies.
+**Impact:** A user receives the same DM twice. **This is not just a UX issue — duplicate DMs are a direct Meta platform abuse signal.** Repeated messages and retry storms can trigger automated restrictions or permanent loss of API access for the Page. Recovery from a platform ban is difficult and time-consuming.
+
+**Recommended Idempotency Pattern (do not implement without approval):**
+
+Use a "check-via-insert" pattern that is safe across BullMQ retries, worker restarts, and webhook replays:
+
+```sql
+INSERT INTO dm_log (dm_key, status, created_at)
+VALUES (hash(user_id || message_template_id || trigger_comment_id), 'attempting', NOW())
+ON CONFLICT (dm_key) DO NOTHING;
+-- Only proceed to the platform API call if the INSERT succeeded (1 row affected)
+-- On success → UPDATE dm_log SET status = 'sent'
+-- On failure → UPDATE dm_log SET status = 'failed', error = '...'
+```
+
+Also use deterministic BullMQ `jobId` (e.g., `dm:${comment_id}:${trigger_id}`) so the queue deduplicates at the job level before the worker even runs.
 
 ---
 
@@ -270,6 +322,22 @@
 - Error message clearly says "decryption failed" not "invalid token"
 - No plaintext tokens logged anywhere
 - Watchdog detects failed publishes and alerts
+
+---
+
+### 3.7 Thundering Herd Recovery (Critical Recovery Test)
+**Scenario:** Simulate a 15-minute outage (Redis down or Supabase unreachable). 300–500 posts are left stuck in `processing`. Outage ends. Watchdog resets all stale posts simultaneously.
+**Expected Behavior:**
+- Resets are staggered or jittered (add small random delay per post) to avoid flooding the Meta API simultaneously.
+- No post is published twice (idempotency keys + attempt records prevent double-send).
+- Meta API rate limits are not breached.
+
+**Verify:**
+- Queue depth ramps up gradually after reset, not all at once.
+- Duplicate detection fires if a post was partially published before the outage.
+- Platform rate limit errors do not cascade into a second stuck-processing wave.
+
+**Why this matters:** This scenario directly tests the interaction between the watchdog fix (1.1) and the publishing idempotency fix (1.6). Getting either one wrong here means the recovery is worse than the outage.
 
 ---
 
@@ -581,6 +649,32 @@ All items below are recommendations only. Implement in order to minimize breakin
 | 13 | Timeout on watchdog check functions | Hung DB query blocks health cycle |
 | 14 | Explicit logging on all silent catches | Failures invisible in production |
 | 15 | Multiple Instagram accounts — improve connection selection | Wrong account used on fallback |
+
+---
+
+## 9. Cross-Cutting Recommendations
+
+These apply across every section above and should be built into the platform as foundational improvements, not feature work.
+
+### 9.1 Correlation IDs on Every Log Line
+Every log line and `system_events` entry should include `post_id`, `user_id`, and `publish_job_id`. Without this, debugging a stuck post or a duplicate DM incident is guesswork — you cannot trace a single job through worker → agent → platform API call without correlating by timestamp alone.
+
+### 9.2 BullMQ-Specific Hardening
+- Use `removeOnComplete` / `removeOnFail` thoughtfully per queue — high-volume queues (comment, dm) should keep fewer completed jobs to avoid Redis bloat.
+- Enable BullMQ's stalled job detection (`stalledInterval`) on the publish and dm workers. Stalled jobs (worker grabbed the job but never finished) are different from failed jobs and won't auto-retry without this setting.
+- Use deterministic `jobId` wherever possible so BullMQ deduplicates at queue-add time.
+
+### 9.3 Key Metrics to Track in Production
+Add these to the admin dashboard or a monitoring tool (e.g., Grafana, Coolify metrics):
+
+| Metric | Alert Threshold | Why |
+|--------|----------------|-----|
+| Queue depth (publish) | > 500 jobs | Indicates publishing falling behind |
+| Stuck posts (`processing` > 10 min) | Any | Core product reliability |
+| Duplicate attempt rate | > 0 | DM spam risk, Meta enforcement |
+| `/tmp` disk usage | > 60% | Instagram media accumulation |
+| Watchdog confidence score history | < 50 for 2 cycles | Early warning before auto-pause |
+| DM send rate (per page, per hour) | > 80/hr | Meta abuse signal |
 
 ---
 
