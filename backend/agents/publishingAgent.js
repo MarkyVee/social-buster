@@ -25,6 +25,7 @@
  */
 
 const fs                 = require('fs');
+const path               = require('path');
 const { v4: uuidv4 }    = require('uuid');
 const axios              = require('axios');
 const { supabaseAdmin }  = require('../services/supabaseService');
@@ -72,14 +73,14 @@ async function processQueue() {
     //   Drive download (5 min) + H.264 re-encode at ultrafast (2-3 min) +
     //   3 attempts × 30s timeout + backoffs ≈ 12-13 minutes total.
     // 15 minutes gives headroom without leaving truly stuck posts waiting too long.
-    const twoMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     const { data: stale } = await supabaseAdmin
       .from('posts')
-      .select('id')
+      .select('id, platform')
       .eq('status', 'publishing')
-      .lte('updated_at', twoMinutesAgo);
+      .lte('updated_at', fifteenMinutesAgo);
 
-    // Also check for posts stuck in 'publishing' that haven't timed out yet (debug)
+    // Also log any in-progress posts (not yet timed out) for debugging
     const { data: inProgress } = await supabaseAdmin
       .from('posts')
       .select('id, updated_at, platform')
@@ -89,12 +90,45 @@ async function processQueue() {
     }
 
     if (stale?.length > 0) {
-      const staleIds = stale.map(p => p.id);
-      await supabaseAdmin
-        .from('posts')
-        .update({ status: 'failed', error_message: 'Publish timed out (15 min) — video may be too large or format unsupported. Please retry.' })
-        .in('id', staleIds);
-      console.warn(`[PublishingAgent] Reset ${staleIds.length} stale publishing post(s) to failed.`);
+      for (const stalePost of stale) {
+        // Check if a publish_attempts record shows the API call actually succeeded.
+        // This handles the case where the platform API succeeded but the DB update
+        // crashed before we could mark the post as 'published'.
+        const { data: sentAttempt } = await supabaseAdmin
+          .from('publish_attempts')
+          .select('id, platform_post_id')
+          .eq('post_id', stalePost.id)
+          .eq('status', 'sent')
+          .limit(1)
+          .single();
+
+        if (sentAttempt) {
+          // The API call succeeded — the post was published. Mark it as such.
+          console.warn(`[PublishingAgent] Stale post ${stalePost.id} has a 'sent' attempt — marking published (platform_post_id=${sentAttempt.platform_post_id})`);
+          await supabaseAdmin
+            .from('posts')
+            .update({
+              status:           'published',
+              platform_post_id: sentAttempt.platform_post_id,
+              published_at:     new Date().toISOString(),
+              error_message:    null
+            })
+            .eq('id', stalePost.id);
+        } else {
+          // No successful attempt on record — safe to reset for auto-retry.
+          // Reset to 'scheduled' (not 'failed') so the next processQueue cycle
+          // picks it up automatically without requiring manual user action.
+          console.warn(`[PublishingAgent] Stale post ${stalePost.id} — no sent attempt found, resetting to scheduled for auto-retry`);
+          await supabaseAdmin
+            .from('posts')
+            .update({
+              status:        'scheduled',
+              error_message: 'Publish timed out (15 min) — automatically retrying.'
+            })
+            .eq('id', stalePost.id);
+        }
+      }
+      console.warn(`[PublishingAgent] Recovered ${stale.length} stale publishing post(s).`);
     }
 
     // Fetch all posts that are scheduled and overdue
@@ -405,11 +439,42 @@ async function publishPost(post) {
 
   // ── Publish with retries ──────────────────────────────────────
   let lastError;
+  let attemptRecordId = null;  // Tracks the current publish_attempts row
   try {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         console.log(`[PublishingAgent]    Attempt ${attempt}/${MAX_RETRIES}: calling publish()...`);
+
+        // Write-ahead intent: record the attempt BEFORE calling the platform API.
+        // If the server crashes between API call and DB update, the stale recovery
+        // can check this table to see if the post was actually published.
+        const { data: attemptRow } = await supabaseAdmin
+          .from('publish_attempts')
+          .insert({
+            post_id:        post.id,
+            user_id:        post.user_id,
+            platform:       post.platform,
+            status:         'attempting',
+            attempt_number: attempt
+          })
+          .select('id')
+          .single();
+        attemptRecordId = attemptRow?.id || null;
+
         const result = await publish(post, connection);
+
+        // Platform API succeeded — record it immediately before any other DB work.
+        // This is the single source of truth for "did this post go out?".
+        if (attemptRecordId) {
+          await supabaseAdmin
+            .from('publish_attempts')
+            .update({
+              status:            'sent',
+              completed_at:      new Date().toISOString(),
+              platform_post_id:  result.platformPostId
+            })
+            .eq('id', attemptRecordId);
+        }
 
         // Success — store the page ID so DM/comment agents use the correct token
         await supabaseAdmin
@@ -447,6 +512,19 @@ async function publishPost(post) {
         lastError = err;
         console.warn(`[PublishingAgent]    Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
 
+        // Mark this attempt as failed in the log
+        if (attemptRecordId) {
+          await supabaseAdmin
+            .from('publish_attempts')
+            .update({
+              status:        'failed',
+              completed_at:  new Date().toISOString(),
+              error_message: String(err.message).slice(0, 500)
+            })
+            .eq('id', attemptRecordId);
+          attemptRecordId = null;  // Reset so next iteration creates a new row
+        }
+
         if (attempt < MAX_RETRIES) {
           // Backoff: 5s after attempt 1, 15s after attempt 2
           await sleep(5000 * attempt);
@@ -455,9 +533,9 @@ async function publishPost(post) {
     }
 
     // All retries exhausted — mark failed inside its own try/catch.
-    // If this update throws (transient Supabase error), the post would
-    // stay in 'publishing' forever. The catch logs it and the 2-minute
-    // stale recovery acts as the fallback safety net.
+    // If this update throws (transient Supabase error), the post stays
+    // in 'publishing' and the stale recovery will reset it to 'scheduled'
+    // for another automatic retry on the next cycle.
     try {
       await markFailed(post.id, lastError.message);
     } catch (markErr) {
