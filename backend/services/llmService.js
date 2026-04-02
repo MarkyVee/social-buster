@@ -298,9 +298,10 @@ async function callLLM(systemPrompt, userPrompt, attempt = 1) {
         ],
         // 0.8 gives creative variety while staying coherent
         temperature: 0.8,
-        // Budget per batch: 3 platforms × 3 options × ~500 tokens/post = ~4,500 tokens.
-        // 5,120 gives comfortable headroom for longer captions (LinkedIn, YouTube).
-        max_tokens: 5120,
+        // Budget per batch: 3 platforms × 3 options × ~300 tokens/post = ~2,700 tokens.
+        // Capped at 2,048 to stay under Groq's 6,000 TPM limit for llama-3.1-8b-instant
+        // (input ~1,100 tokens + output 2,048 = ~3,148 — safely under the limit).
+        max_tokens: 2048,
         stream: false
       },
       {
