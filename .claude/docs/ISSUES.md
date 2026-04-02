@@ -14,6 +14,39 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-035
+- **Date:** 2026-04-02
+- **Status:** resolved (2026-04-02)
+- **Category:** HIGH / Instagram Publishing
+- **Description:** Instagram image publishing failing with error 9004 / subcode 2207052 — "The media could not be fetched from this URI." When publishing an image that requires an aspect ratio crop (e.g. a wide landscape image at ratio 2.37 cropped to 1.91), the cropped image was re-uploaded to Supabase Storage and the public Supabase URL was sent to Instagram. Instagram's CDN crawler could not fetch from Supabase Storage URLs — confirmed by the fact that the URL was publicly accessible in a browser (including incognito) but Instagram still returned the fetch error. Adding a 5-second CDN delay did not fix it. Root cause: Meta's content delivery infrastructure is blocked at the network level from accessing Supabase Storage, likely by Supabase's CDN provider. This is not a code bug or permissions issue — it is a network-level incompatibility between Meta's crawlers and Supabase's CDN.
+- **Found in:** `backend/agents/publishingAgent.js` — cropped image re-upload block for Instagram/Threads
+- **Resolution:** ✅ Resolved (commit `33512d6`, 2026-04-02). Instead of re-uploading the cropped image to Supabase, the file is now copied to a local temp directory (`/tmp/social-buster/instagram-media/`) and served directly from our own server at `https://social-buster.com/temp-media/:uuid.jpg`. Instagram can always reach social-buster.com since it hits our API constantly. The temp file has a UUID filename (unguessable), is small (compressed JPG), and is deleted from tempFilePaths immediately after the publish job completes. A public `express.static` route was added to `server.js` for `/temp-media`. **Note:** This same approach should be applied to video re-uploads for Instagram/Threads if video publishing fails with the same error.
+
+---
+
+- **ID:** ISSUE-034
+- **Date:** 2026-04-02
+- **Status:** open
+- **Category:** HIGH / Instagram + Facebook Publishing
+- **Description:** All Instagram API calls (publish, metrics, comments) fail with `API calls from the server require an appsecret_proof argument` (GraphMethodException code 100). This is a Meta App security setting — when "Require App Secret" is enabled in the app's Advanced settings, every server-side Graph API call must include an `appsecret_proof` parameter (HMAC-SHA256 of the access token signed with the app secret). Facebook comments and metrics are also affected. Facebook DM automation appears unaffected likely because it fires through a different timing window, but may fail once the setting is enforced on those endpoints too.
+- **Found in:** `backend/services/platformAPIs.js` — all Instagram and Facebook Graph API calls
+- **Suspected cause:** "Require App Secret" toggle was enabled in Meta App Dashboard (Settings → Advanced → Security), either accidentally by the user or silently enforced by Meta.
+- **Proposed fix (Option A — no code, 30 seconds):** Go to [developers.facebook.com](https://developers.facebook.com) → App → Settings → Advanced → Security → toggle **"Require App Secret" OFF** → Save. All API calls will work again immediately.
+- **Proposed fix (Option B — code, if Option A is not viable):** Add `appsecret_proof` to every Graph API call in `platformAPIs.js`. Formula: `crypto.createHmac('sha256', process.env.FACEBOOK_APP_SECRET).update(accessToken).digest('hex')`. Must be added as a param to every `axios` call that uses an `access_token`. Adding it to calls that don't require it is harmless. Affects: Instagram publish (container + publish endpoints), Instagram metrics, Instagram comments, Facebook photos/videos/feed, Facebook comments.
+- **Resolution:** Pending — awaiting user to check Meta App Dashboard setting.
+
+---
+
+- **ID:** ISSUE-033
+- **Date:** 2026-04-02
+- **Status:** resolved (2026-04-02)
+- **Category:** HIGH / Instagram Publishing
+- **Description:** Instagram (and Threads) posts failing with `No instagram account connected for this user` despite the account showing connected in the dashboard. Publishing agent looked up `platform_connections` filtering by `platform_user_id = post.platform_page_id`. The `platform_page_id` on posts is always the **Facebook Page ID**, but Instagram connections store the **Instagram Business Account ID** as `platform_user_id` — a completely different number. Query returned zero rows → false "not connected" error.
+- **Found in:** `backend/agents/publishingAgent.js` — connection lookup block
+- **Resolution:** ✅ Resolved (commit `8adfbe3`, 2026-04-02). Added a fallback query for `instagram` and `threads` platforms: if the `platform_user_id`-filtered lookup returns nothing, retry without the page ID filter to find the user's actual Instagram/Threads connection. Facebook is unaffected — its page ID does match correctly.
+
+---
+
 - **ID:** ISSUE-032
 - **Date:** 2026-04-02
 - **Status:** resolved (2026-04-02)
@@ -170,3 +203,6 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 | ISSUE-030 | 2026-04-01 | wont-fix | Facebook webhook omits `val.from.id` for privacy-restricted commenters → cannot DM, Meta limitation |
 | ISSUE-031 | 2026-04-02 | resolved | Facebook DM realtime path silently dropped comments — platform_post_id format mismatch. Fixed with 3-strategy fallback lookup (commit `7f32acb`) |
 | ISSUE-032 | 2026-04-02 | resolved | AI generation 413 error — Groq TPM limit hit by `max_tokens:5120` + input. Fixed by dropping to `max_tokens:2048` (commit `dcd9537`) |
+| ISSUE-033 | 2026-04-02 | resolved | Instagram/Threads "No account connected" — platform_page_id (FB Page ID) used to filter IG connection lookup, which stores IG Business Account ID. Added fallback query without page ID filter (commit `8adfbe3`) |
+| ISSUE-034 | 2026-04-02 | open | Instagram + Facebook API calls blocked by `appsecret_proof` requirement — Meta App "Require App Secret" setting likely ON. Fix: toggle OFF in Meta App Settings → Advanced, or add HMAC proof to all API calls in platformAPIs.js |
+| ISSUE-035 | 2026-04-02 | resolved | Instagram 9004 "media could not be fetched" — Meta's CDN blocked from Supabase Storage at network level. Fixed by serving cropped images from social-buster.com/temp-media/:uuid instead of Supabase (commit `33512d6`) |

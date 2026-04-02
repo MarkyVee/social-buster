@@ -401,7 +401,7 @@ async function cropImageToAspectRange(inputPath, platform) {
   const spec = PLATFORM_SPECS[platform];
   if (!spec?.image?.minAspect || !spec?.image?.maxAspect) return inputPath;
 
-  const { minAspect, maxAspect } = spec.image;
+  const { minAspect, maxAspect, maxWidth } = spec.image;
 
   // Probe image dimensions using ffprobe
   const { width, height } = await new Promise((resolve, reject) => {
@@ -415,48 +415,71 @@ async function cropImageToAspectRange(inputPath, platform) {
 
   const ratio = width / height;
 
-  // Already within the allowed range — no crop needed
-  if (ratio >= minAspect && ratio <= maxAspect) {
+  // Check if we need to crop (aspect ratio) or scale (maxWidth) or both
+  const ratioOk  = ratio >= minAspect && ratio <= maxAspect;
+  const widthOk  = !maxWidth || width <= maxWidth;
+
+  if (ratioOk && widthOk) {
     console.log(`[FFmpeg] Image ${width}x${height} (ratio ${ratio.toFixed(2)}) is within ${platform} range [${minAspect}–${maxAspect}] — no crop needed`);
     return inputPath;
   }
 
   ensureTempDir();
 
-  let cropW, cropH;
-  if (ratio < minAspect) {
-    // Too tall — crop height to fit minAspect (keep full width)
-    cropW = width;
-    cropH = Math.floor(width / minAspect);
-  } else {
-    // Too wide — crop width to fit maxAspect (keep full height)
-    cropW = Math.floor(height * maxAspect);
-    cropH = height;
+  // Step 1: Calculate crop dimensions to fix aspect ratio
+  let cropW = width;
+  let cropH = height;
+  if (!ratioOk) {
+    if (ratio < minAspect) {
+      // Too tall — crop height to fit minAspect (keep full width)
+      cropW = width;
+      cropH = Math.floor(width / minAspect);
+    } else {
+      // Too wide — crop width to fit maxAspect (keep full height)
+      cropW = Math.floor(height * maxAspect);
+      cropH = height;
+    }
+  }
+
+  // Step 2: If crop result (or original) exceeds maxWidth, scale down proportionally.
+  // H.264 requires even pixel dimensions — use trunc(x/2)*2 to guarantee that.
+  let scaleW = cropW;
+  let scaleH = cropH;
+  if (maxWidth && cropW > maxWidth) {
+    scaleW = maxWidth;
+    scaleH = Math.floor(cropH * (maxWidth / cropW));
   }
 
   const ext = path.extname(inputPath).replace('.', '') || 'jpg';
   const outputPath = path.join(TEMP_DIR, `cropped_${uuidv4()}.${ext}`);
 
+  // Build the FFmpeg filter chain:
+  //   crop=cropW:cropH   — center-crop to fix aspect ratio (skipped if ratio was fine)
+  //   scale=scaleW:scaleH — scale down to maxWidth (skipped if width was fine)
+  const filters = [];
+  if (!ratioOk) filters.push(`crop=${cropW}:${cropH}`);
+  if (maxWidth && scaleW < cropW) filters.push(`scale=trunc(${scaleW}/2)*2:trunc(${scaleH}/2)*2`);
+
   console.log(
-    `[FFmpeg] Image ${width}x${height} (ratio ${ratio.toFixed(2)}) outside ${platform} ` +
-    `range [${minAspect}–${maxAspect}] — center-cropping to ${cropW}x${cropH}...`
+    `[FFmpeg] Image ${width}x${height} (ratio ${ratio.toFixed(2)}) → ` +
+    `${!ratioOk ? `crop to ${cropW}x${cropH}` : 'no crop'}, ` +
+    `${maxWidth && scaleW < cropW ? `scale to ${scaleW}x${scaleH}` : 'no scale'} for ${platform}...`
   );
 
   await new Promise((resolve, reject) => {
     ffmpeg(inputPath)
-      // Center-crop: crop=w:h:x:y — x/y center the crop area
-      .videoFilters(`crop=${cropW}:${cropH}`)
+      .videoFilters(filters.join(','))
       .outputOptions([
         '-q:v', '2',
         '-frames:v', '1'
       ])
       .output(outputPath)
       .on('end', resolve)
-      .on('error', (err) => reject(new Error(`Image crop failed: ${err.message}`)))
+      .on('error', (err) => reject(new Error(`Image crop/scale failed: ${err.message}`)))
       .run();
   });
 
-  console.log(`[FFmpeg] Image cropped: ${width}x${height} → ${cropW}x${cropH}`);
+  console.log(`[FFmpeg] Image processed: ${width}x${height} → ${scaleW}x${scaleH}`);
   return outputPath;
 }
 

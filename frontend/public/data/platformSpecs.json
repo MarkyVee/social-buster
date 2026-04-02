@@ -73,6 +73,8 @@
     "image": {
       "minAspect": 0.8,
       "maxAspect": 1.91,
+      "minWidth": 320,
+      "maxWidth": 1440,
       "maxBytes": 8388608
     },
     "video": { "maxDuration": 300 }
