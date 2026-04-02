@@ -195,8 +195,28 @@ async function publishPost(post) {
     connQuery = connQuery.order('connected_at', { ascending: false }).limit(1);
   }
 
-  const { data: connRows, error: connError } = await connQuery;
-  const connection = connRows?.[0] || null;
+  let { data: connRows, error: connError } = await connQuery;
+  let connection = connRows?.[0] || null;
+
+  // Fallback for Instagram (and Threads): platform_page_id on the post is the Facebook
+  // Page ID, but Instagram connections store the Instagram Business Account ID as
+  // platform_user_id — a different number. If the filtered lookup returned nothing,
+  // retry without the page ID filter to get the user's Instagram connection.
+  if (!connection && !connError && effectivePageId &&
+      (post.platform === 'instagram' || post.platform === 'threads')) {
+    console.log(`[PublishingAgent]    platform_user_id filter returned nothing for ${post.platform} — retrying without page ID filter`);
+    const { data: fallbackRows, error: fallbackError } = await supabaseAdmin
+      .from('platform_connections')
+      .select('*')
+      .eq('user_id', post.user_id)
+      .eq('platform', post.platform)
+      .order('connected_at', { ascending: false })
+      .limit(1);
+    if (!fallbackError && fallbackRows?.[0]) {
+      connection = fallbackRows[0];
+      console.log(`[PublishingAgent]    Fallback connection found: platform_user_id=${connection.platform_user_id}`);
+    }
+  }
 
   if (connError || !connection) {
     console.error(`[PublishingAgent] No ${post.platform} connection for user ${post.user_id}`);
