@@ -759,7 +759,7 @@ async function deleteAllMedia() {
 // Reads the sb_oauth cookie that the backend sets after an OAuth redirect.
 // Shows a success or error message, then clears the cookie.
 // ----------------------------------------------------------------
-function checkOAuthResult() {
+async function checkOAuthResult() {
   const match = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('sb_oauth='));
   if (!match) return;
 
