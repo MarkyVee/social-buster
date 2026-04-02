@@ -126,7 +126,13 @@ function buildUserPrompt(brief, userContext) {
   // Shared context from all agents (research, performance, cohort, comments, content patterns, video tags).
   // This is the cross-agent intelligence layer — each section comes from a different agent
   // and is formatted as plain text ready for LLM injection.
-  const sharedContext = userContext.shared_context || '(No intelligence data available yet — use best practices.)';
+  // Cap at 4,000 chars to stay well within Groq's request body limit when combined
+  // with the system prompt, platform guides, and brief fields (~3,000 more chars).
+  const MAX_CONTEXT_CHARS = 4000;
+  const rawContext = userContext.shared_context || '(No intelligence data available yet — use best practices.)';
+  const sharedContext = rawContext.length > MAX_CONTEXT_CHARS
+    ? rawContext.slice(0, MAX_CONTEXT_CHARS) + '\n...(truncated for length)'
+    : rawContext;
 
   // Sanitize all user-submitted fields to prevent prompt injection.
   // Enum fields (post_type, objective, tone) are validated in routes/briefs.js
