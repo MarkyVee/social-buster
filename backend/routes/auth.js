@@ -368,16 +368,14 @@ router.get('/me', requireAuth, async (req, res) => {
         .eq('user_id', req.user.id);
 
       for (const conn of (cloudConns || [])) {
+        // Google Drive access tokens expire every hour — that is normal and fine.
+        // The background agent uses the refresh_token to silently get a new one.
+        // Only warn if the refresh_token is missing — that means we can NEVER
+        // re-auth automatically and the user must manually reconnect.
         if (!conn.refresh_token) {
-          tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'error', message: `Google Drive needs to be reconnected — refresh token missing.` });
-        } else if (conn.token_expires_at) {
-          const expiresAt = new Date(conn.token_expires_at).getTime();
-          if (expiresAt < now) {
-            tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'error', message: `Google Drive token expired. Please reconnect.` });
-          } else if (expiresAt < now + WARN_WINDOW_MS) {
-            tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'warning', message: `Google Drive connection expires soon. Reconnect to avoid interruptions.` });
-          }
+          tokenWarnings.push({ type: 'cloud', provider: conn.provider, severity: 'error', message: `Google Drive needs to be reconnected — authorization expired.` });
         }
+        // No warning for access token expiry — refresh_token handles that silently.
       }
 
       // Meta platform token check (Facebook, Instagram)

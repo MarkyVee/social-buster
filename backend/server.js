@@ -177,6 +177,19 @@ app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.static(path.join(__dirname, '../frontend/public')));
 
 // ----------------------------------------------------------------
+// Public temp media — used by publishingAgent to serve cropped images
+// to Instagram. Instagram's CDN cannot reach Supabase Storage URLs,
+// but it can reach our server. Files are UUID-named (unguessable),
+// small (compressed JPGs), and deleted immediately after publishing.
+// Must be mounted BEFORE auth middleware so Instagram can fetch without a token.
+// ----------------------------------------------------------------
+const INSTAGRAM_TEMP_DIR = '/tmp/social-buster/instagram-media';
+if (!require('fs').existsSync(INSTAGRAM_TEMP_DIR)) {
+  require('fs').mkdirSync(INSTAGRAM_TEMP_DIR, { recursive: true });
+}
+app.use('/temp-media', express.static(INSTAGRAM_TEMP_DIR));
+
+// ----------------------------------------------------------------
 // API Routes
 // ----------------------------------------------------------------
 app.use('/auth', authRoutes);

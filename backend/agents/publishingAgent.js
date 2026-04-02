@@ -298,41 +298,26 @@ async function publishPost(post) {
           tempFilePaths.push(croppedPath);
           console.log(`[PublishingAgent]    Image cropped for ${post.platform} → ${croppedPath}`);
 
-          // Instagram only accepts public URLs (no multipart upload).
-          // Re-upload the cropped image to Supabase so the API can fetch it.
+          // Instagram cannot fetch images from Supabase Storage URLs —
+          // Meta's CDN is blocked at the network level from reaching Supabase.
+          // Instead, serve the cropped image directly from our own server via
+          // /temp-media/:filename (public, no auth, UUID filename = unguessable).
+          // Instagram CAN reach social-buster.com since it hits our API constantly.
+          // The temp file is added to tempFilePaths and deleted in the finally block
+          // after Instagram has finished downloading it during container polling.
           if (post.platform === 'instagram' || post.platform === 'threads') {
             const croppedExt = (croppedPath.split('.').pop() || 'jpg').toLowerCase();
-            const croppedSize = fs.statSync(croppedPath).size;
-            const storagePath = `${post.user_id}/${uuidv4()}.${croppedExt}`;
-            const storageUrl = `${process.env.SUPABASE_URL}/storage/v1/object/processed-media/${storagePath}`;
+            const tempFileName = `${uuidv4()}.${croppedExt}`;
+            const tempServeDir = '/tmp/social-buster/instagram-media';
+            const tempServePath = path.join(tempServeDir, tempFileName);
 
-            console.log(`[PublishingAgent]    Re-uploading cropped image (${Math.round(croppedSize / 1024)}KB) to Supabase...`);
-            const uploadRes = await axios.post(storageUrl, fs.createReadStream(croppedPath), {
-              headers: {
-                'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-                'Content-Type': `image/${croppedExt === 'jpg' ? 'jpeg' : croppedExt}`,
-                'Content-Length': croppedSize,
-                'x-upsert': 'false'
-              },
-              maxBodyLength: Infinity,
-              maxContentLength: Infinity,
-              timeout: 60_000,
-              validateStatus: () => true
-            });
+            if (!fs.existsSync(tempServeDir)) fs.mkdirSync(tempServeDir, { recursive: true });
+            fs.copyFileSync(croppedPath, tempServePath);
+            tempFilePaths.push(tempServePath);
 
-            if (uploadRes.status === 200) {
-              const publicUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/processed-media/${storagePath}`;
-              post.media_url = publicUrl;
-              console.log(`[PublishingAgent]    Cropped image uploaded → ${publicUrl}`);
-              // Wait 5 seconds for Supabase CDN to propagate the new file.
-              // Instagram's crawler fetches the URL almost immediately — if we send
-              // it before the CDN has the file, Instagram gets a 404 and returns
-              // error 9004 "media could not be fetched". 5s is enough for CDN sync.
-              console.log(`[PublishingAgent]    Waiting 5s for CDN propagation before calling Instagram...`);
-              await new Promise(resolve => setTimeout(resolve, 5000));
-            } else {
-              console.warn(`[PublishingAgent]    Cropped image upload failed (${uploadRes.status}), using original URL`);
-            }
+            const publicUrl = `${process.env.FRONTEND_URL}/temp-media/${tempFileName}`;
+            post.media_url = publicUrl;
+            console.log(`[PublishingAgent]    Cropped image served via our server → ${publicUrl}`);
           }
         }
 
