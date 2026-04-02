@@ -97,6 +97,48 @@ async function processSendDM(job) {
   // Both platforms use the same API pattern — the only difference is the
   // ID in the URL: Facebook Page ID vs Instagram Business Account ID.
   // Both are stored in platform_connections.platform_user_id.
+  // ── Idempotency guard ────────────────────────────────────────────
+  // Before calling the platform API, attempt to insert a dm_log row.
+  // The dm_log table has a UNIQUE constraint on (conversation_id, step_order).
+  // If the INSERT succeeds (1 row affected), we are the first attempt — safe to send.
+  // If it conflicts (0 rows affected), a previous attempt already sent this step —
+  // skip the API call entirely and treat this job as already completed.
+  //
+  // This protects against the failure window where:
+  //   1. API call succeeds
+  //   2. Server crashes / DB times out before conversation update
+  //   3. BullMQ retries the job — without this guard, the DM is sent twice
+  //
+  // Why this is important: duplicate DMs are a Meta spam signal that can trigger
+  // automated Page restrictions or permanent API access loss.
+  const dmKey = `${conversationId}:${stepOrder}`;
+  const { error: logInsertError, count: logInsertCount } = await supabaseAdmin
+    .from('dm_log')
+    .insert({ conversation_id: conversationId, step_order: stepOrder, user_id: userId, dm_key: dmKey, status: 'attempting' })
+    .select('id');
+
+  if (logInsertError) {
+    if (logInsertError.message?.includes('duplicate') || logInsertError.code === '23505') {
+      // A previous attempt already sent (or is currently sending) this step.
+      // Check if it was marked 'sent' — if so, this is a safe no-op.
+      const { data: existingLog } = await supabaseAdmin
+        .from('dm_log')
+        .select('status')
+        .eq('dm_key', dmKey)
+        .single();
+
+      if (existingLog?.status === 'sent') {
+        console.warn(`[DMWorker] Idempotency: step ${stepOrder} of conversation ${conversationId} already sent — skipping duplicate`);
+        return { skipped: true, reason: 'already_sent' };
+      }
+      // Status is 'attempting' — another worker is mid-send right now.
+      // Throw so BullMQ retries after backoff (the other attempt will win).
+      throw new Error(`Idempotency conflict: step ${stepOrder} of conversation ${conversationId} is already in progress`);
+    }
+    // Any other DB error — throw so BullMQ retries. Never skip the guard.
+    throw new Error(`dm_log insert failed: ${logInsertError.message}`);
+  }
+
   let result;
   try {
     if (stepOrder === 1 && commentId) {
@@ -105,6 +147,12 @@ async function processSendDM(job) {
       result = await sendDM(platform, accessToken, recipientId, messageText, userId);
     }
   } catch (sendErr) {
+    // Mark the dm_log row as failed so the idempotency guard doesn't block a legitimate retry
+    await supabaseAdmin
+      .from('dm_log')
+      .update({ status: 'failed', error_message: String(sendErr.message).slice(0, 500) })
+      .eq('dm_key', dmKey);
+
     // If the error is non-retryable (e.g. duplicate private reply on same comment),
     // throw UnrecoverableError so BullMQ skips retries immediately.
     if (sendErr.nonRetryable) {
@@ -113,6 +161,13 @@ async function processSendDM(job) {
     }
     throw sendErr;
   }
+
+  // API call succeeded — mark sent immediately, before any other DB work.
+  // This is the record that prevents duplicate sends on retry.
+  await supabaseAdmin
+    .from('dm_log')
+    .update({ status: 'sent', sent_at: new Date().toISOString() })
+    .eq('dm_key', dmKey);
 
   // Update the conversation
   const now = new Date().toISOString();
