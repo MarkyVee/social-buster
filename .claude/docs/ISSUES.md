@@ -14,6 +14,31 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-031
+- **Date:** 2026-04-01
+- **Status:** in-progress
+- **Category:** HIGH / DM Automation
+- **Description:** Facebook DM automation not firing in real-time after keyword comment on published post. Post publishes successfully. Mark Vidano's "GO" comment was caught and DM sent — but via the 15-minute **polling cycle**, not the real-time webhook path. Realtime path (`processRealtimeComment`) is silently returning when it can't find the post by `platform_post_id`. Hypothesis: `platform_post_id` format stored in DB does not match the format Meta sends in the webhook `val.post_id` field.
+
+  **Steps taken so far:**
+  1. Confirmed Facebook DM automation was previously working (single + multi-step, 2026-03-24).
+  2. Observed DM not firing on "GO" comment — checked logs, DM DID fire but 9 minutes later via polling cycle.
+  3. Identified Sharon Vidano's comment failed due to missing `authorPlatformId` — Meta privacy restriction (separate issue, ISSUE-030, wont-fix).
+  4. Traced realtime path: webhook fires correctly (`[Webhooks] Realtime facebook comment from Mark Vidano`), calls `processRealtimeComment()`, but that function silently returns when `.single()` query finds no matching post.
+  5. The silent return had zero logging — no way to know why it was failing.
+  6. **Fix applied (2026-04-01):** Added diagnostic `console.warn` to the "post not found" branch in `processRealtimeComment()` — now logs the exact `platformPostId` Meta sent so we can compare it to what's stored in DB.
+  7. Pushed (commit `8dec077`). Waiting on next test to see the logged mismatch.
+
+  **What we still need to do:**
+  - Reproduce: comment "GO" on a Facebook post after Coolify redeploys, check logs for `[CommentAgent] Realtime: post not found for platformPostId="..."` line.
+  - Compare logged ID format vs what's in the `posts.platform_post_id` column in Supabase.
+  - Fix the lookup: either normalize the webhook ID before querying, or add a fallback query using `platform_page_id` + parsed post ID.
+
+- **Found in:** `backend/agents/commentAgent.js` — `processRealtimeComment()` lines 383–386
+- **Resolution:** Pending. Diagnostic logging added. Next step: run test and compare IDs.
+
+---
+
 - **ID:** ISSUE-030
 - **Date:** 2026-04-01
 - **Status:** wont-fix (Meta platform limitation)
@@ -122,3 +147,4 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 | ISSUE-022 | 2026-03-27 | HIGH/Integration | Page picker showed 4 of 9 Pages → cross-reference `debug_token` granular_scopes |
 | ISSUE-023 | 2026-03-27 | CRITICAL/Integration | DM broken after reconnect → Page ID mismatch + stale dedup. Cleaned DB, added pageId fallback |
 | ISSUE-030 | 2026-04-01 | wont-fix | Facebook webhook omits `val.from.id` for privacy-restricted commenters → cannot DM, Meta limitation |
+| ISSUE-031 | 2026-04-01 | in-progress | Facebook DM fires via polling (9min delay) not realtime webhook — `processRealtimeComment` can't find post, likely platform_post_id format mismatch |
