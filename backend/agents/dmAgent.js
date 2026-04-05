@@ -324,21 +324,26 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
 
   let nextMessage = replacePlaceholders(nextStep.message_template, placeholders);
 
-  // Safety net: if the next step has no message text and collects nothing (it's a
-  // closing message step that was left blank), skip sending and complete the conversation.
-  // Fall back to resource_url if one exists on the automation.
-  if (!nextMessage.trim() && !nextStep.collects_field) {
-    const { data: autoForFallback } = await supabaseAdmin
+  // A step with collects_field=null is a closing message — it sends text and ends the conversation.
+  // For these steps: append the resource URL (if any) to the message, and mark as final so the
+  // conversation completes after sending without waiting for a reply that will never come.
+  const isNextFinal = !nextStep.collects_field;
+
+  if (isNextFinal) {
+    const { data: autoForResource } = await supabaseAdmin
       .from('dm_automations')
       .select('resource_url')
       .eq('id', conversation.automation_id)
       .single();
 
-    if (autoForFallback?.resource_url) {
-      nextMessage = `Thanks! Here's what you requested:\n\n${autoForFallback.resource_url}`;
-      console.log(`[DMAgent] Empty final step — falling back to resource URL for conversation ${conversation.id}`);
-    } else {
-      // No message and no resource URL — just complete without sending
+    if (autoForResource?.resource_url) {
+      // Append the resource URL to whatever message the user typed (or auto-generate one)
+      nextMessage = nextMessage.trim()
+        ? `${nextMessage}\n\n${autoForResource.resource_url}`
+        : `Thanks! Here's what you requested:\n\n${autoForResource.resource_url}`;
+      console.log(`[DMAgent] Appended resource URL to final step for conversation ${conversation.id}`);
+    } else if (!nextMessage.trim()) {
+      // No message and no resource URL — complete silently without sending
       await supabaseAdmin
         .from('dm_conversations')
         .update({ status: 'completed', current_step: nextStepOrder, last_reply_at: new Date().toISOString() })
@@ -347,9 +352,6 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
       return;
     }
   }
-
-  // Resource URL is delivered as a separate message AFTER all data is collected
-  // (handled in the isFinalStep block above when the last reply comes in)
 
   // Update conversation state
   const now = new Date().toISOString();
@@ -362,7 +364,9 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     })
     .eq('id', conversation.id);
 
-  // Queue the next DM — pageId from the conversation ensures the right Page token is used
+  // Queue the next DM — pageId from the conversation ensures the right Page token is used.
+  // If the next step is a final message (collects nothing), mark isFinalStep=true so the
+  // conversation is completed after the message sends — no reply needed.
   await dmQueue.add('send-dm', {
     conversationId: conversation.id,
     userId:         conversation.user_id,
@@ -371,13 +375,13 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
     recipientId:    senderPlatformId,
     messageText:    nextMessage,
     stepOrder:      nextStepOrder,
-    isFinalStep:    false  // Never mark as final when SENDING a question — completion happens when the reply is RECEIVED
+    isFinalStep:    isNextFinal
   }, {
     jobId: `dm-${conversation.id}-step-${nextStepOrder}`,
     removeOnComplete: true
   });
 
-  console.log(`[DMAgent] Queued step ${nextStepOrder} for conversation ${conversation.id}`);
+  console.log(`[DMAgent] Queued step ${nextStepOrder} for conversation ${conversation.id} (isFinalStep=${isNextFinal})`);
 }
 
 // ----------------------------------------------------------------
