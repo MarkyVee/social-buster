@@ -324,6 +324,30 @@ async function processIncomingReply(senderPlatformId, messageText, platform) {
 
   let nextMessage = replacePlaceholders(nextStep.message_template, placeholders);
 
+  // Safety net: if the next step has no message text and collects nothing (it's a
+  // closing message step that was left blank), skip sending and complete the conversation.
+  // Fall back to resource_url if one exists on the automation.
+  if (!nextMessage.trim() && !nextStep.collects_field) {
+    const { data: autoForFallback } = await supabaseAdmin
+      .from('dm_automations')
+      .select('resource_url')
+      .eq('id', conversation.automation_id)
+      .single();
+
+    if (autoForFallback?.resource_url) {
+      nextMessage = `Thanks! Here's what you requested:\n\n${autoForFallback.resource_url}`;
+      console.log(`[DMAgent] Empty final step — falling back to resource URL for conversation ${conversation.id}`);
+    } else {
+      // No message and no resource URL — just complete without sending
+      await supabaseAdmin
+        .from('dm_conversations')
+        .update({ status: 'completed', current_step: nextStepOrder, last_reply_at: new Date().toISOString() })
+        .eq('id', conversation.id);
+      console.log(`[DMAgent] Conversation ${conversation.id} completed — blank final step, no resource URL`);
+      return;
+    }
+  }
+
   // Resource URL is delivered as a separate message AFTER all data is collected
   // (handled in the isFinalStep block above when the last reply comes in)
 

@@ -2044,28 +2044,37 @@ function renderAutomationSteps(postId, flowType, steps) {
 
   steps.forEach((step, i) => {
     const isLast = i === steps.length - 1;
+    // The last step in a multi-step flow is a closing message — no collection needed.
+    // Hide the Collect dropdown for it to avoid confusion.
+    const isFinalMessageStep = isLast && steps.length > 1;
     html += `
       <div class="automation-step" style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px;" data-step-index="${i}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-          <strong>Step ${i + 1}</strong>
+          <strong>${isFinalMessageStep ? 'Final Message' : 'Step ' + (i + 1)}</strong>
           ${steps.length > 1 ? `<button class="btn btn-xs btn-danger" onclick="removeAutomationStep('${postId}', ${i})">Remove</button>` : ''}
         </div>
+        ${isFinalMessageStep
+          ? `<div class="text-muted text-sm" style="margin-bottom:4px;">Optional closing message sent after all replies are collected. Leave blank to skip.</div>`
+          : ''}
         <textarea class="form-control form-control-sm" rows="2" id="auto-step-msg-${postId}-${i}"
-                  placeholder="${isLast && steps.length > 1 ? 'Thanks! Here\'s your resource: ...' : 'Hey {{commenter_name}}! What\'s your email?'}"
+                  placeholder="${isFinalMessageStep ? 'e.g. Thanks so much! We\'ll be in touch soon.' : 'Hey {{commenter_name}}! What\'s your email?'}"
         >${escapeHtml(step.message_template || '')}</textarea>
-        <div style="margin-top:4px;">
-          <label class="text-sm">Collect:</label>
-          <select class="form-control form-control-sm" id="auto-step-field-${postId}-${i}" style="display:inline-block;width:auto;margin-left:4px;"
-                  onchange="toggleCustomFieldLabel('${postId}', ${i})">
-            <option value="" ${!step.collects_field ? 'selected' : ''}>Nothing (final message)</option>
-            <option value="email" ${step.collects_field === 'email' ? 'selected' : ''}>Email</option>
-            <option value="phone" ${step.collects_field === 'phone' ? 'selected' : ''}>Phone</option>
-            <option value="name" ${step.collects_field === 'name' ? 'selected' : ''}>Name</option>
-            <option value="custom" ${step.collects_field === 'custom' ? 'selected' : ''}>Custom</option>
-          </select>
-          <input type="text" class="form-control form-control-sm" style="display:${step.collects_field === 'custom' ? 'inline-block' : 'none'};width:120px;margin-left:4px;"
-                 id="auto-step-custom-${postId}-${i}" value="${escapeHtml(step.custom_field_label || '')}" placeholder="Field label" />
-        </div>
+        ${isFinalMessageStep
+          ? `<input type="hidden" id="auto-step-field-${postId}-${i}" value="" />`
+          : `<div style="margin-top:4px;">
+              <label class="text-sm">Collect:</label>
+              <select class="form-control form-control-sm" id="auto-step-field-${postId}-${i}" style="display:inline-block;width:auto;margin-left:4px;"
+                      onchange="toggleCustomFieldLabel('${postId}', ${i})">
+                <option value="" ${!step.collects_field ? 'selected' : ''}>Nothing (final message)</option>
+                <option value="email" ${step.collects_field === 'email' ? 'selected' : ''}>Email</option>
+                <option value="phone" ${step.collects_field === 'phone' ? 'selected' : ''}>Phone</option>
+                <option value="name" ${step.collects_field === 'name' ? 'selected' : ''}>Name</option>
+                <option value="custom" ${step.collects_field === 'custom' ? 'selected' : ''}>Custom</option>
+              </select>
+              <input type="text" class="form-control form-control-sm" style="display:${step.collects_field === 'custom' ? 'inline-block' : 'none'};width:120px;margin-left:4px;"
+                     id="auto-step-custom-${postId}-${i}" value="${escapeHtml(step.custom_field_label || '')}" placeholder="Field label" />
+            </div>`
+        }
       </div>
     `;
   });
