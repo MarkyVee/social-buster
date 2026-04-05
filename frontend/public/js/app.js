@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -2431,8 +2431,10 @@ function checkPlatformOAuthResult() {
       showAlert('settings-alerts', `✅ ${names} connected successfully!`, 'success');
 
     } else if (result.status === 'page_select') {
-      // Multiple Facebook Pages — show a picker so the user can choose which one to connect
-      showMetaPagePicker(result.session);
+      // Show the correct picker based on which button the user clicked.
+      // The backend stores the platform in the Redis session — we fetch it via /oauth/meta/pages.
+      // If platform is missing (old Redis session during deploy window), fall back to page picker.
+      showMetaPickerForPlatform(result.session);
 
     } else if (result.status === 'cancelled') {
       showAlert('settings-alerts', 'Platform connection was cancelled.', 'error');
@@ -2448,24 +2450,45 @@ function checkPlatformOAuthResult() {
 }
 
 // ----------------------------------------------------------------
-// showMetaPagePicker
+// showMetaPickerForPlatform
 //
-// Called when the backend returns status:'page_select' — meaning the
-// user has more than one Facebook Page and we need them to choose.
-//
-// Fetches the page list from the backend (no tokens, names + IDs only),
-// shows a modal, and on selection calls /oauth/meta/select-page to
-// complete the connection.
+// Dispatcher called after Meta OAuth completes. Fetches the session
+// to find out which platform the user was connecting, then routes to
+// the correct picker (Facebook Page picker or Instagram account picker).
 // ----------------------------------------------------------------
-async function showMetaPagePicker(sessionId) {
-  // Fetch the list of pages for this session
-  let pages;
+async function showMetaPickerForPlatform(sessionId) {
+  let platform = 'facebook';
   try {
     const data = await apiFetch(`/publish/oauth/meta/pages?session=${encodeURIComponent(sessionId)}`);
-    pages = data.pages;
+    platform = data.platform || 'facebook';
+    if (platform === 'instagram') {
+      return showMetaInstagramPicker(sessionId);
+    }
+    return showMetaPagePicker(sessionId, data.pages);
   } catch (err) {
-    showAlert('settings-alerts', `Could not load your Facebook Pages: ${err.message}`, 'error');
-    return;
+    showAlert('settings-alerts', `Could not load connection options: ${err.message}`, 'error');
+  }
+}
+
+// ----------------------------------------------------------------
+// showMetaPagePicker
+//
+// Shows the Facebook Page picker modal. Called when the user clicked
+// "Connect Facebook" and has one or more Pages to choose from.
+//
+// Accepts pre-fetched pages (from showMetaPickerForPlatform) to avoid
+// a second API round-trip.
+// ----------------------------------------------------------------
+async function showMetaPagePicker(sessionId, pages) {
+  // If pages weren't pre-fetched, load them now (direct call path)
+  if (!pages) {
+    try {
+      const data = await apiFetch(`/publish/oauth/meta/pages?session=${encodeURIComponent(sessionId)}`);
+      pages = data.pages;
+    } catch (err) {
+      showAlert('settings-alerts', `Could not load your Facebook Pages: ${err.message}`, 'error');
+      return;
+    }
   }
 
   // Build the modal overlay
@@ -2487,9 +2510,6 @@ async function showMetaPagePicker(sessionId) {
       type="button"
     >
       <span class="meta-page-name">${p.name}</span>
-      ${p.has_instagram
-        ? '<span class="meta-page-badge">+ Instagram linked</span>'
-        : ''}
     </button>
   `).join('');
 
@@ -2497,7 +2517,7 @@ async function showMetaPagePicker(sessionId) {
     <div class="publish-modal" role="dialog" aria-modal="true" aria-label="Select Facebook Page">
       <div class="publish-modal-title">Select a Facebook Page</div>
       <div class="publish-modal-sub">
-        Choose which Page to connect. If Instagram is linked to that Page, it will connect automatically.
+        Choose which Facebook Page to connect.
       </div>
       <div class="meta-page-list" id="meta-page-list">
         ${pageCards}
@@ -2543,6 +2563,93 @@ async function showMetaPagePicker(sessionId) {
       } catch (err) {
         overlay.remove();
         showAlert('settings-alerts', `Could not connect ${pageName}: ${err.message}`, 'error');
+      }
+    });
+  });
+}
+
+// ----------------------------------------------------------------
+// showMetaInstagramPicker
+//
+// Shows the Instagram account picker modal. Called when the user clicked
+// "Connect Instagram" and Meta OAuth has completed.
+//
+// Fetches IG accounts from all Pages in the session (backend does the
+// Meta API calls — no tokens in the frontend), shows a modal with each
+// account and its linked Page name so the user knows what they're picking.
+// ----------------------------------------------------------------
+async function showMetaInstagramPicker(sessionId) {
+  let accounts;
+  try {
+    const data = await apiFetch(`/publish/oauth/meta/instagram-accounts?session=${encodeURIComponent(sessionId)}`);
+    accounts = data.accounts;
+  } catch (err) {
+    showAlert('settings-alerts', `Could not load your Instagram accounts: ${err.message}`, 'error');
+    return;
+  }
+
+  // Build the modal overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'publish-modal-overlay';
+  overlay.id = 'meta-ig-picker-overlay';
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  const accountCards = accounts.map(a => `
+    <button
+      class="meta-page-option"
+      data-ig-id="${a.id}"
+      data-ig-username="${a.username.replace(/"/g, '&quot;')}"
+      type="button"
+    >
+      <span class="meta-page-name">@${escapeHtml(a.username)}</span>
+      <span class="text-muted text-xs" style="margin-top:2px;display:block;">via ${escapeHtml(a.page_name)}</span>
+    </button>
+  `).join('');
+
+  overlay.innerHTML = `
+    <div class="publish-modal" role="dialog" aria-modal="true" aria-label="Select Instagram Account">
+      <div class="publish-modal-title">Select an Instagram Account</div>
+      <div class="publish-modal-sub">
+        Choose which Instagram account to connect.
+      </div>
+      <div class="meta-page-list" id="meta-ig-list">
+        ${accountCards}
+      </div>
+      <div style="margin-top:16px;">
+        <button class="btn btn-secondary btn-full" onclick="document.getElementById('meta-ig-picker-overlay').remove()">
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // Wire up click handlers
+  overlay.querySelectorAll('.meta-page-option').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const igId       = btn.dataset.igId;
+      const igUsername = btn.dataset.igUsername;
+
+      overlay.querySelectorAll('.meta-page-option').forEach(b => b.disabled = true);
+      btn.textContent = 'Connecting...';
+
+      try {
+        const result = await apiFetch('/publish/oauth/meta/select-instagram', {
+          method: 'POST',
+          body:   JSON.stringify({ session_id: sessionId, ig_account_id: igId })
+        });
+
+        overlay.remove();
+        showAlert('settings-alerts', `✅ Instagram @${igUsername} connected successfully!`, 'success');
+        await loadConnectedPlatforms();
+
+      } catch (err) {
+        overlay.remove();
+        showAlert('settings-alerts', `Could not connect @${igUsername}: ${err.message}`, 'error');
       }
     });
   });
@@ -2634,10 +2741,15 @@ async function loadConnectedPlatforms() {
 // ----------------------------------------------------------------
 async function connectPlatform(platformId) {
 
-  // Meta OAuth: covers Facebook + Instagram in a single login
+  // Meta OAuth: covers Facebook + Instagram in a single login.
+  // We pass the platform so the backend stores it in the nonce and
+  // the callback knows which picker to show after OAuth completes.
   if (platformId === 'instagram' || platformId === 'facebook') {
     try {
-      const data = await apiFetch('/publish/oauth/meta/start', { method: 'POST' });
+      const data = await apiFetch('/publish/oauth/meta/start', {
+        method: 'POST',
+        body:   JSON.stringify({ platform: platformId })
+      });
       window.location.href = data.authUrl;
     } catch (err) {
       if (err.limitReached) showUpgradePrompt(err.feature, err.message);
@@ -3768,7 +3880,7 @@ function renderHelpView(container) {
         { q: 'I got a "token expired" error', a: 'Your platform connection has expired. Go to <strong>Settings & Billing</strong> → Platform Connections and click "Reconnect" for the affected platform. You\'ll re-authorize and get a fresh token.' },
         { q: 'The AI generated content doesn\'t match my brand', a: 'Update your <strong>My Profile</strong> with more specific details: brand voice, industry, target audience, and any style preferences in the custom instructions field. The AI uses all of this to tailor content.' },
         { q: 'Publishing is stuck on "Publishing" status', a: 'If a post stays in "Publishing" for more than 3 minutes, the system will automatically reset it to "Failed" so you can retry. Check the error message for details.' },
-        { q: 'I can\'t connect my Instagram account', a: 'Instagram publishing requires a <strong>Business or Creator account</strong> connected to a Facebook Page. Make sure your Instagram is linked to a Facebook Page in Instagram\'s settings, then connect Facebook in Social Buster — Instagram will be available automatically.' },
+        { q: 'I can\'t connect my Instagram account', a: 'Instagram publishing requires a <strong>Business or Creator account</strong> connected to a Facebook Page. Make sure your Instagram is linked to a Facebook Page in Instagram\'s settings, then in Social Buster Settings click <strong>Connect</strong> next to Instagram and select your account.' },
         { q: 'Google Drive files aren\'t showing up', a: 'After connecting Google Drive, click "Scan Drive" in the Media Library. Only image and video files in supported formats will appear. The scan runs automatically every 30 minutes after the first scan.' }
       ]
     }

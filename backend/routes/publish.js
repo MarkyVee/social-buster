@@ -85,7 +85,12 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
     // Verify the OAuth state nonce — prevents state injection attacks.
     // The nonce was stored in Redis during /oauth/meta/start. If it doesn't exist,
     // the flow was forged or expired (10 min TTL). Each nonce is single-use.
-    const userId = await cacheGet(`oauth_nonce:${state}`);
+    //
+    // Backwards-compat: old nonces stored just a userId string. New nonces store
+    // { userId, platform }. Handle both during the 10-minute TTL overlap window.
+    const nonceVal  = await cacheGet(`oauth_nonce:${state}`);
+    const userId    = typeof nonceVal === 'object' ? nonceVal.userId : nonceVal;
+    const oauthPlatform = nonceVal?.platform || 'facebook';
     if (!userId) throw new Error('Invalid or expired OAuth state. Please try connecting again.');
     await cacheDel(`oauth_nonce:${state}`);
 
@@ -191,8 +196,8 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
     // This lets the user confirm they're connecting the right Page
     // and cancel if Meta returned the wrong account.
     const sessionId = require('crypto').randomUUID();
-    await cacheSet(`meta_page_select:${sessionId}`, { userId, pages }, 300);
-    console.log(`[Publish] Meta OAuth: ${pages.length} page(s) found for user ${userId}, awaiting page selection`);
+    await cacheSet(`meta_page_select:${sessionId}`, { userId, pages, platform: oauthPlatform }, 300);
+    console.log(`[Publish] Meta OAuth: ${pages.length} page(s) found for user ${userId}, platform=${oauthPlatform}, awaiting selection`);
     return finish({ status: 'page_select', session: sessionId });
 
   } catch (err) {
@@ -202,19 +207,17 @@ router.get('/oauth/meta/callback', authLimiter, async (req, res) => {
 });
 
 // ----------------------------------------------------------------
-// saveMetaPageConnection (internal helper)
+// saveFacebookConnection (internal helper)
 //
-// Saves a Facebook Page and its linked Instagram account to the DB.
-// Called both from the OAuth callback (single page) and from the
-// select-page endpoint (user-chosen page).
+// Saves a Facebook Page connection to the DB.
+// Does NOT auto-save Instagram — users connect Instagram separately
+// via the /oauth/meta/select-instagram endpoint.
 //
 // finish — a function(result) that sends the response. The callback
 //          passes its redirect-cookie finish(). The select-page route
 //          passes a simple res.json() wrapper.
 // ----------------------------------------------------------------
-async function saveMetaPageConnection(userId, page, finish) {
-  const connectedPlatforms = [];
-
+async function saveFacebookConnection(userId, page, finish) {
   // Store the Facebook Page connection using the page's own access token.
   // Uses user+platform+page_id constraint so connecting a new Page doesn't
   // overwrite existing Pages — each Page gets its own row.
@@ -231,12 +234,13 @@ async function saveMetaPageConnection(userId, page, finish) {
       connected_at:      new Date().toISOString()
     }, { onConflict: 'user_id,platform,platform_user_id' });
 
-  connectedPlatforms.push('facebook');
   console.log(`[Publish] Facebook Page "${page.name}" (${page.id}) connected for user ${userId}`);
 
   // Subscribe the Page to our app's webhooks so Meta sends us
   // real-time events (comments, messages, etc.) for this Page.
   // Without this call, the webhook URL we registered won't receive events.
+  // NOTE: This also covers Instagram webhooks — Instagram does NOT have its own
+  // subscribed_apps endpoint. The Page subscription handles both platforms.
   try {
     await axios.post(
       `https://graph.facebook.com/v21.0/${page.id}/subscribed_apps`,
@@ -254,48 +258,7 @@ async function saveMetaPageConnection(userId, page, finish) {
     console.warn(`[Publish] Could not subscribe Page to webhooks:`, subErr.response?.data?.error?.message || subErr.message);
   }
 
-  // Check for a linked Instagram Business Account on this Page
-  if (page.instagram_business_account?.id) {
-    try {
-      const igRes = await axios.get(
-        `https://graph.facebook.com/v21.0/${page.instagram_business_account.id}`,
-        { params: { access_token: page.access_token, fields: 'id,username' } }
-      );
-      const igAccount = igRes.data;
-
-      // Instagram posts are made using the Page's access token, targeting the IG account ID
-      await supabaseAdmin
-        .from('platform_connections')
-        .upsert({
-          user_id:           userId,
-          platform:          'instagram',
-          access_token:      encryptToken(page.access_token),
-          refresh_token:     null,
-          token_expires_at:  null,
-          platform_user_id:  igAccount.id,
-          platform_username: igAccount.username || page.name,
-          connected_at:      new Date().toISOString()
-        }, { onConflict: 'user_id,platform,platform_user_id' });
-
-      connectedPlatforms.push('instagram');
-      console.log(`[Publish] Instagram "@${igAccount.username}" connected for user ${userId}`);
-
-      // NOTE: Instagram does NOT have its own subscribed_apps endpoint.
-      // The /{ig_account_id}/subscribed_apps call returns error #3
-      // ("Application does not have the capability"). Instagram webhooks
-      // are enabled by TWO things, both already in place:
-      //   1. App-level webhook subscription in Meta Developer Portal
-      //      (comments, messages fields — configured in the portal UI)
-      //   2. The Facebook PAGE subscription above (POST /{page_id}/subscribed_apps)
-      //      which covers both Facebook AND Instagram webhooks for the linked account.
-      // No per-Instagram-account subscription is needed.
-    } catch (igErr) {
-      // Non-fatal — Facebook still connects even if Instagram lookup fails
-      console.warn('[Publish] Could not fetch Instagram account:', igErr.message);
-    }
-  }
-
-  return finish({ status: 'connected', platforms: connectedPlatforms });
+  return finish({ status: 'connected', platforms: ['facebook'] });
 }
 
 // ----------------------------------------------------------------
@@ -690,6 +653,7 @@ router.get('/oauth/meta/pages', standardLimiter, async (req, res) => {
   }
 
   // Return page names + whether they have a linked Instagram account.
+  // Also return the platform so the frontend knows which picker to show.
   // Access tokens are NEVER sent to the frontend.
   const pageOptions = data.pages.map(p => ({
     id:            p.id,
@@ -697,7 +661,7 @@ router.get('/oauth/meta/pages', standardLimiter, async (req, res) => {
     has_instagram: !!(p.instagram_business_account?.id)
   }));
 
-  return res.json({ pages: pageOptions });
+  return res.json({ pages: pageOptions, platform: data.platform || 'facebook' });
 });
 
 // ----------------------------------------------------------------
@@ -736,10 +700,145 @@ router.post('/oauth/meta/select-page', standardLimiter, async (req, res) => {
   // Consume the session immediately — prevents reuse
   await cacheDel(`meta_page_select:${session_id}`);
 
-  // Reuse the same helper that the OAuth callback uses
-  return saveMetaPageConnection(req.user.id, page, (result) => {
+  // Save only the Facebook connection — Instagram is connected separately
+  return saveFacebookConnection(req.user.id, page, (result) => {
     return res.json(result);
   });
+});
+
+// ----------------------------------------------------------------
+// GET /publish/oauth/meta/instagram-accounts?session=<sessionId>
+//
+// Returns all Instagram Business accounts linked to the Pages in the
+// OAuth session, without exposing access tokens to the frontend.
+// The frontend calls this to populate the Instagram account picker modal.
+//
+// Each IG account comes with its linked Page name so the user knows
+// which Page token will be used (required by Meta's API architecture).
+// ----------------------------------------------------------------
+router.get('/oauth/meta/instagram-accounts', standardLimiter, async (req, res) => {
+  const { session } = req.query;
+
+  if (!session) {
+    return res.status(400).json({ error: 'session is required' });
+  }
+
+  const data = await cacheGet(`meta_page_select:${session}`);
+
+  if (!data) {
+    return res.status(404).json({ error: 'Session expired or not found. Please connect again.' });
+  }
+
+  if (data.userId !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  // Collect IG accounts from all Pages in the session.
+  // Each Page stores the linked IG account ID in instagram_business_account.
+  // We fetch the username for display — same call we make during connection.
+  const accounts = [];
+  for (const page of (data.pages || [])) {
+    if (!page.instagram_business_account?.id) continue;
+
+    try {
+      const igRes = await axios.get(
+        `https://graph.facebook.com/v21.0/${page.instagram_business_account.id}`,
+        {
+          params: { access_token: page.access_token, fields: 'id,username' },
+          timeout: 10000
+        }
+      );
+      accounts.push({
+        id:        igRes.data.id,
+        username:  igRes.data.username || page.name,
+        page_name: page.name,
+        page_id:   page.id
+      });
+    } catch (err) {
+      // Non-fatal — skip this IG account if we can't fetch it
+      console.warn(`[Publish] Could not fetch IG account for Page ${page.name}: ${err.message}`);
+    }
+  }
+
+  if (accounts.length === 0) {
+    return res.status(404).json({
+      error: 'No Instagram accounts found. Make sure your Instagram Business or Creator account is linked to a Facebook Page in Instagram settings, then try connecting again.'
+    });
+  }
+
+  return res.json({ accounts });
+});
+
+// ----------------------------------------------------------------
+// POST /publish/oauth/meta/select-instagram
+//
+// Called by the frontend Instagram picker modal after the user
+// chooses which Instagram account to connect.
+//
+// Body: { session_id, ig_account_id }
+//
+// Finds the Page in the session that owns this IG account,
+// saves ONLY the Instagram connection, then clears the session.
+// ----------------------------------------------------------------
+router.post('/oauth/meta/select-instagram', standardLimiter, async (req, res) => {
+  const { session_id, ig_account_id } = req.body;
+
+  if (!session_id || !ig_account_id) {
+    return res.status(400).json({ error: 'session_id and ig_account_id are required' });
+  }
+
+  const data = await cacheGet(`meta_page_select:${session_id}`);
+
+  if (!data) {
+    return res.status(404).json({ error: 'Session expired. Please start the connection again.' });
+  }
+
+  if (data.userId !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  // Find the Page that owns this IG account
+  const page = (data.pages || []).find(p => p.instagram_business_account?.id === ig_account_id);
+  if (!page) {
+    return res.status(404).json({ error: 'Instagram account not found in session.' });
+  }
+
+  // Consume the session — prevents reuse
+  await cacheDel(`meta_page_select:${session_id}`);
+
+  try {
+    // Fetch IG username for display
+    const igRes = await axios.get(
+      `https://graph.facebook.com/v21.0/${ig_account_id}`,
+      {
+        params: { access_token: page.access_token, fields: 'id,username' },
+        timeout: 10000
+      }
+    );
+    const igUsername = igRes.data.username || page.name;
+
+    // Save ONLY the Instagram connection using the Page's access token.
+    // (Meta requires the linked Page's token to publish to Instagram — this is by design.)
+    await supabaseAdmin
+      .from('platform_connections')
+      .upsert({
+        user_id:           req.user.id,
+        platform:          'instagram',
+        access_token:      encryptToken(page.access_token),
+        refresh_token:     null,
+        token_expires_at:  null,
+        platform_user_id:  ig_account_id,
+        platform_username: igUsername,
+        connected_at:      new Date().toISOString()
+      }, { onConflict: 'user_id,platform,platform_user_id' });
+
+    console.log(`[Publish] Instagram "@${igUsername}" (${ig_account_id}) connected for user ${req.user.id} via Page "${page.name}"`);
+    return res.json({ status: 'connected', platforms: ['instagram'] });
+
+  } catch (err) {
+    console.error('[Publish] select-instagram error:', err.message);
+    return res.status(500).json({ error: 'Failed to connect Instagram. Please try again.' });
+  }
 });
 
 // ----------------------------------------------------------------
@@ -1033,10 +1132,12 @@ router.post('/oauth/meta/start', standardLimiter, checkLimit('platforms_connecte
   }
 
   // Generate a cryptographic nonce for the state parameter.
-  // The callback looks up the nonce in Redis to get the userId — this prevents
-  // state injection attacks where an attacker forges a state with another user's ID.
+  // The callback looks up the nonce in Redis to get the userId and platform —
+  // this prevents state injection attacks where an attacker forges a state.
+  // platform: 'facebook' (default) or 'instagram' — controls which picker is shown after OAuth.
+  const platform = req.body?.platform === 'instagram' ? 'instagram' : 'facebook';
   const state = crypto.randomBytes(32).toString('hex');
-  cacheSet(`oauth_nonce:${state}`, req.user.id, 600); // 10-minute TTL
+  cacheSet(`oauth_nonce:${state}`, { userId: req.user.id, platform }, 600); // 10-minute TTL
 
   // Request scopes directly — no config_id needed.
   // pages_show_list       — list the user's Facebook Pages

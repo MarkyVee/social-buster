@@ -734,3 +734,167 @@ When user count approaches 8-9K, implement spoke-and-wheel block scaling. Each b
 | `backend/services/tokenEncryption.js` | Changing encryption logic breaks all stored OAuth tokens. |
 | `backend/queues/index.js` | Queue definitions referenced by 8 workers. |
 | `backend/server.js` (lines 50-90) | Webhook handlers must stay BEFORE `express.json()`. |
+
+---
+
+## IN-PROGRESS: Separate Facebook & Instagram Connection Pickers
+
+**Last updated:** 2026-04-05
+**Status:** Plan approved and reviewed by two independent AIs. Implementation NOT started yet. Code is unchanged. Safe to resume.
+
+### What the Problem Is
+
+Both "Connect Facebook" and "Connect Instagram" buttons currently trigger the identical Meta OAuth flow. After OAuth, the user sees a Facebook Page picker. Whichever Page they pick auto-saves a Facebook row AND an Instagram row (if the Page has a linked IG account). The user has no say in which Instagram account to use, and the flow is confusing.
+
+Screenshot evidence: when clicking "Connect Instagram," the user is shown a list of Facebook Pages and has no way to explicitly pick their Instagram account.
+
+### What We Are Building (Phase 1 Only)
+
+Add an Instagram-specific picker without removing any existing Facebook behavior. Full two-AI consensus on this approach.
+
+**Connect Facebook (unchanged behavior):**
+1. Click "Connect Facebook" → Meta OAuth
+2. Facebook Page picker → user picks a Page
+3. Saves Facebook connection + auto-saves Instagram if linked (unchanged)
+
+**Connect Instagram (new flow):**
+1. Click "Connect Instagram" → same Meta OAuth (same scopes)
+2. NEW Instagram account picker → shows all IG accounts from all Pages
+3. User picks IG account → saves ONLY Instagram connection
+
+**Phase 2 (deferred):** Remove the Facebook auto-Instagram save once the Instagram picker is confirmed working in production.
+
+### Files to Change
+
+| File | Change |
+|------|--------|
+| `backend/routes/publish.js` | 4 edits + 2 new endpoints |
+| `frontend/public/js/app.js` | 4 edits + 1 new function |
+
+### Backend Changes (publish.js)
+
+**A — `POST /publish/oauth/meta/start` (line 1028)**
+- Accept optional `platform` body param (`'facebook'` | `'instagram'`)
+- Change: `cacheSet(`oauth_nonce:${state}`, req.user.id, 600)` → `cacheSet(`oauth_nonce:${state}`, { userId: req.user.id, platform: platform || 'facebook' }, 600)`
+
+**B — `GET /publish/oauth/meta/callback` (line 66) — CRITICAL: backwards-compat nonce handling**
+- Current: `const userId = await cacheGet(`oauth_nonce:${state}`)`
+- New (must handle old string nonces already in Redis TTL window):
+  ```js
+  const nonceVal = await cacheGet(`oauth_nonce:${state}`);
+  const userId   = typeof nonceVal === 'object' ? nonceVal.userId : nonceVal;
+  const platform = nonceVal?.platform || 'facebook';
+  ```
+- Store `platform` in the page_select session: `await cacheSet(`meta_page_select:${sessionId}`, { userId, pages, platform }, 300)`
+
+**C — `GET /publish/oauth/meta/pages` (line 674)**
+- Add `platform: data.platform || 'facebook'` to the JSON response alongside `pages`
+- Frontend uses this to decide which picker to render
+
+**D — `POST /publish/oauth/meta/select-page` (line 714)**
+- NO CHANGE in Phase 1. Still calls `saveMetaPageConnection()` which saves Facebook + auto-Instagram. This is intentional.
+
+**E — NEW: `GET /publish/oauth/meta/instagram-accounts?session={id}`**
+- Auth protected (after `router.use(requireAuth, enforceTenancy)` at line 665)
+- Reads session from Redis, verifies `data.userId === req.user.id`
+- Returns all IG accounts across all pages in session:
+  ```json
+  { "accounts": [{ "id": "123", "username": "markvidano", "page_name": "Social-Buster", "page_id": "456" }] }
+  ```
+- Does NOT consume the session (user might cancel and retry)
+- Error case: if a user's IG account has no linked Facebook Page (rare Creator account edge case), show "No Instagram accounts found. Make sure your Instagram is linked to a Facebook Page."
+
+**F — NEW: `POST /publish/oauth/meta/select-instagram`**
+- Body: `{ session_id, ig_account_id }`
+- Verifies session belongs to req.user.id
+- Finds the page in session that has this IG account
+- Saves ONLY Instagram connection:
+  ```js
+  await supabaseAdmin.from('platform_connections').upsert({
+    user_id: userId, platform: 'instagram',
+    access_token: encryptToken(page.access_token),
+    platform_user_id: igAccount.id,
+    platform_username: igAccount.username || page.name,
+    connected_at: new Date().toISOString()
+  }, { onConflict: 'user_id,platform,platform_user_id' });
+  ```
+- Consumes the session with `cacheDel`
+- Returns `{ status: 'connected', platforms: ['instagram'] }`
+
+### Frontend Changes (app.js)
+
+**G — `connectPlatform()` (line 2638)**
+- Pass `platform` to the start endpoint:
+  ```js
+  const data = await apiFetch('/publish/oauth/meta/start', {
+    method: 'POST',
+    body: JSON.stringify({ platform: platformId })
+  });
+  ```
+
+**H — `checkPlatformOAuthResult()` (line 2433)**
+- After fetching session, read `platform` from response
+- If `platform === 'instagram'`: call `showMetaInstagramPicker(sessionId)` instead of `showMetaPagePicker()`
+- If `platform` is missing/malformed: fall back to `showMetaPagePicker()` (safe — existing behavior)
+
+**I — `showMetaPagePicker()` (line 2460) — minor text edit**
+- Change subtitle text from: `"Choose which Page to connect. If Instagram is linked to that Page, it will connect automatically."`
+- To: `"Choose which Facebook Page to connect."`
+- Remove `+ Instagram linked` badge from page cards
+
+**J — NEW: `showMetaInstagramPicker(sessionId)`**
+- Calls `GET /publish/oauth/meta/instagram-accounts?session={sessionId}`
+- Renders modal showing IG accounts with linked Page name:
+  ```
+  @markvidano  (via Social-Buster Page)
+  @patriot_filming  (via Patriot Films Page)
+  ```
+- On selection: POSTs to `/publish/oauth/meta/select-instagram`
+- On success: calls `loadConnectedPlatforms()` to refresh the platform cards
+
+**K — FAQ text fix (line 3771)**
+- Change: `"connect Facebook in Social Buster — Instagram will be available automatically."`
+- To: `"In Social Buster Settings, click Connect Instagram and select your account."`
+
+**L — APP_VERSION bump**
+- Bump `APP_VERSION` in BOTH `frontend/public/js/app.js` AND `backend/server.js`
+- Update `?v=` query string on `app.js` script tag in `index.html`
+
+### Key Technical Constraints
+
+1. **Meta API: Instagram accounts are only discoverable via Facebook Pages.** `GET /me/accounts` returns Pages; each Page optionally has `instagram_business_account`. Cannot list IG accounts independently. The user picks from the IG accounts surfaced by their authorized Pages.
+
+2. **`cacheGet()` always returns parsed objects** (`JSON.parse` in `redisService.js:86`). Old nonces stored as a string UUID return as a JavaScript string; new nonces stored as `{ userId, platform }` return as an object. The backwards-compat check (`typeof nonceVal === 'object'`) handles both during the 10-minute Redis TTL overlap window.
+
+3. **No DB schema changes needed.** `platform_connections` already supports independent Facebook and Instagram rows with `UNIQUE(user_id, platform, platform_user_id)`.
+
+4. **No staging environment.** The deployment is Coolify → production only. Any first-run bugs in the Instagram picker will surface in production. Phase 1 approach (keep FB auto-connect) means Facebook users are completely unaffected even if the Instagram picker has a bug.
+
+### Risk Assessment (consensus from two AIs)
+
+| Risk | Mitigation |
+|------|-----------|
+| Nonce format collision (10-min TTL overlap) | 3-line backwards-compat check in callback |
+| Instagram picker first-run bug | Phase 1 keeps FB auto-connect — only new IG picker is at risk |
+| Facebook publishing regression | Zero: `saveMetaPageConnection()` code path untouched |
+| Existing Instagram connections break | Zero: existing DB rows untouched |
+| FAQ text misleads users | Fixed in Change K |
+
+**Projected success rate: ~95%** with the backwards-compat nonce check and Phase 1 approach.
+
+### Validation Checklist (run after deploy)
+
+1. Click "Connect Facebook" → Page picker appears → pick Page → Settings shows Facebook connected, Instagram also connected (auto-connect still works in Phase 1)
+2. Click "Connect Instagram" → Instagram account picker appears (not Page picker) → pick account → Settings shows Instagram connected
+3. Disconnect Instagram → reconnect via "Connect Instagram" → picker shows accounts → confirm correct account saved
+4. Check that "Connect Facebook" with an old cookie (no `platform` field) falls back to Page picker without crashing
+5. SQL verify: `SELECT platform, platform_username FROM platform_connections WHERE user_id = '{your_id}';` — should show separate facebook and instagram rows
+6. Publish a Facebook post and an Instagram post — confirm both still work
+
+### Implementation Order
+
+1. Backend changes (A, B, C, E, F) first — frontend still works during deploy window
+2. Frontend changes (G, H, I, J, K, L) — activates new pickers
+3. Commit with full message, push to GitHub, Coolify auto-deploys
+4. Run validation checklist
+5. Phase 2 (deferred): remove auto-Instagram from `select-page` path once picker is confirmed
