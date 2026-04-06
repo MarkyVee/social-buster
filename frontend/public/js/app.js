@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -2677,8 +2677,8 @@ async function loadConnectedPlatforms() {
   // threads → Threads (same Meta App, separate threads.net OAuth)
   // others  → show setup info (coming soon)
   const platforms = [
-    { id: 'instagram', label: 'Instagram',   icon: '📸', group: 'meta',    note: 'Requires an Instagram Professional account linked to a Facebook Page' },
-    { id: 'facebook',  label: 'Facebook',    icon: '👥', group: 'meta',    note: 'Requires a Facebook Page (not a personal profile)' },
+    { id: 'instagram', label: 'Instagram',   icon: '📸', group: 'meta',    note: 'You must be connected to your Facebook account to log into your Instagram account' },
+    { id: 'facebook',  label: 'Facebook',    icon: '👥', group: 'meta',    note: 'You cannot be connected to someone else\'s Facebook page when trying to log in here' },
     { id: 'threads',   label: 'Threads',     icon: '🧵', group: 'coming_soon', note: 'Coming soon — Threads integration (blocked by Meta OAuth issue)' },
     { id: 'tiktok',    label: 'TikTok',      icon: '🎵', group: 'coming_soon', note: 'Coming soon — TikTok for Business integration' },
     { id: 'linkedin',  label: 'LinkedIn',    icon: '💼', group: 'coming_soon', note: 'Coming soon — LinkedIn integration' },
