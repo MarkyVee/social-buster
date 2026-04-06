@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -3869,6 +3869,15 @@ function renderHelpView(container) {
         { q: 'What plans are available?', a: '<strong>Free Trial</strong> — limited features to try the platform. <strong>Starter ($29/mo)</strong> — core features for individual creators. <strong>Professional ($79/mo)</strong> — full feature set with higher limits. <strong>Buster ($199/mo)</strong> — enterprise-grade with priority support and maximum limits.' },
         { q: 'How do I disconnect a platform?', a: 'Go to <strong>Settings & Billing</strong> → Platform Connections. Click "Disconnect" next to the platform. Your existing published posts won\'t be affected, but you won\'t be able to publish new ones until you reconnect.' },
         { q: 'How do I change my password?', a: 'Currently, password changes are handled through the Supabase auth system. Go to the login screen and use "Forgot Password" to reset it via email.' }
+      ]
+    },
+    {
+      id: 'legal',
+      title: 'Legal',
+      icon: '📄',
+      items: [
+        { q: 'Privacy Policy', a: 'Our Privacy Policy explains what data we collect, how we use it, and your rights as a user. <a href="/privacy.html" target="_blank" style="color:var(--primary);text-decoration:underline;">View Privacy Policy ↗</a>' },
+        { q: 'Terms of Service', a: 'Our Terms of Service cover your rights and responsibilities when using Social Buster. <a href="/terms.html" target="_blank" style="color:var(--primary);text-decoration:underline;">View Terms of Service ↗</a>' }
       ]
     },
     {

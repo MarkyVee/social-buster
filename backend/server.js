@@ -221,7 +221,7 @@ app.get('/health', (req, res) => {
 // When bumping any frontend JS or CSS file, increment APP_VERSION
 // here AND in frontend/public/js/app.js.
 // ----------------------------------------------------------------
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 app.get('/app-version', (req, res) => {
   res.json({ version: APP_VERSION });
 });
