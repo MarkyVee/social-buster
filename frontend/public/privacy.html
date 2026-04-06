@@ -24,7 +24,7 @@
   <a href="/" class="back-link">&larr; Back to Social Buster</a>
 
   <h1>Privacy Policy</h1>
-  <p class="date">Last updated: April 2, 2026</p>
+  <p class="date">Last updated: April 6, 2026</p>
 
   <p>Social Buster ("we," "us," or "our") operates the Social Buster platform at <strong>socialbuster.com</strong>, an AI-powered social media marketing tool. This Privacy Policy explains how we collect, use, store, and protect your information when you use our service.</p>
 
@@ -52,7 +52,7 @@
   <h3>1c. Content You Create</h3>
   <ul>
     <li>Briefs, generated posts, captions, hashtags, and calls-to-action</li>
-    <li>Media files you select from connected cloud storage (Google Drive, Dropbox, or Box) — <strong>media is not permanently stored on our servers.</strong> When you attach media to a post, a temporary copy is held in cloud-hosted storage (Supabase Storage) only for the duration of the publishing process. Once the post is published or deleted, the temporary copy is removed. We do not retain your images or videos on our infrastructure beyond what is needed to complete the publish.</li>
+    <li>Media files you select from your connected Google Drive — we read your files directly from Google Drive and do not permanently store them on our servers. When you attach a Drive file to a post, a temporary copy is held in cloud-hosted storage (Supabase Storage) only for the duration of the publishing process. Once the post is published or deleted, the temporary copy is removed. We do not retain your Drive media beyond what is needed to complete the publish.</li>
     <li>AI-generated images created through the platform — stored in cloud-hosted storage (Supabase Storage), not on our application servers. You can delete these at any time from your media library.</li>
     <li>Video clips you select from your media library — temporary processed copies are held in cloud-hosted storage during publishing, then removed.</li>
     <li>DM automation rules you configure (trigger keywords, message templates, follow-up sequences)</li>
@@ -173,7 +173,6 @@
 
   <h3>What is NEVER included in aggregated data:</h3>
   <ul>
-    <li>Your post content, captions, hooks, or hashtags</li>
     <li>Your brand name, business name, or account name</li>
     <li>Your email address or any personal contact information</li>
     <li>Your media files (images, videos)</li>
@@ -188,7 +187,7 @@
   <h2>6. Data Storage and Security</h2>
   <ul>
     <li><strong>Database:</strong> Your data is stored in a PostgreSQL database hosted by Supabase (a cloud-hosted service), with Row-Level Security (RLS) policies ensuring each user can only access their own data. Your data is isolated from all other users at the database level.</li>
-    <li><strong>Media files:</strong> Media (images, videos) is <strong>not stored on our application servers.</strong> Temporary copies are held in cloud-hosted storage (Supabase Storage) only during the publishing process. Once published or deleted, temporary media files are removed. We do not maintain a permanent copy of your media on our infrastructure.</li>
+    <li><strong>Media files:</strong> Media (images, videos) is <strong>not stored on our application servers.</strong> We read media directly from your connected Google Drive — we do not copy or retain your Drive files beyond what is temporarily needed during publishing. Temporary copies are held in cloud-hosted storage (Supabase Storage) only for the duration of the publishing process and are removed immediately after. AI-generated images are stored in Supabase cloud storage until you delete them. We do not maintain a permanent copy of your uploaded or Drive media on our infrastructure.</li>
     <li><strong>OAuth tokens:</strong> All platform access tokens are encrypted using AES-256-GCM before storage. Encryption keys are stored separately from the database.</li>
     <li><strong>Passwords:</strong> Handled entirely by Supabase Auth using bcrypt hashing. We never store or have access to plaintext passwords.</li>
     <li><strong>Payments:</strong> All credit card numbers, CVV codes, expiration dates, and billing details are processed and stored exclusively by Stripe. <strong>No payment card information ever touches our servers.</strong> We only store your subscription plan name and payment status.</li>
@@ -198,11 +197,12 @@
 
   <!-- ============================================================ -->
   <h2>7. Data Retention</h2>
+  <p><strong>All personally identifiable data is deleted on a rolling 90-day basis</strong> once it is no longer needed for the purpose it was collected. This means that data associated with deleted posts, closed DM conversations, removed automations, and disconnected platform connections is permanently purged within 90 days of deletion or disconnection — not held indefinitely.</p>
   <ul>
-    <li><strong>Account data:</strong> Retained for as long as your account is active.</li>
-    <li><strong>Post content and media:</strong> Retained until you delete it or delete your account.</li>
-    <li><strong>DM conversations and leads:</strong> Retained until you delete them or delete your account.</li>
-    <li><strong>Comments:</strong> Comments on your posts are retained while your account is active to power sentiment analysis and intelligence features. When you delete your account or revoke Meta access, comments are <strong>anonymized</strong> — the commenter's name, handle, platform comment ID, and link to the original post are permanently removed. The comment text, sentiment classification, and platform remain as anonymous, de-identified data points indefinitely to improve recommendations for all users. No individual user or commenter can be identified from this anonymized data. See Section 9 for full details on account deletion.</li>
+    <li><strong>Account data:</strong> Retained for as long as your account is active. Upon account deletion, all personal data is removed within 90 days.</li>
+    <li><strong>Post content and briefs:</strong> The text content of your posts and briefs (captions, hooks, hashtags, etc.) is retained until you delete it or close your account. <strong>We do not retain your media files.</strong> We read media directly from your connected Google Drive — files are only temporarily copied to our storage during the publishing process and are removed immediately after publishing completes. AI-generated images are stored in Supabase cloud storage (not on our application servers) and are retained until you delete them from your media library or close your account.</li>
+    <li><strong>DM conversations and leads:</strong> Retained until you delete them or delete your account, then purged within 90 days.</li>
+    <li><strong>Comments:</strong> Comments on your posts are retained while your account is active to power sentiment analysis and intelligence features. When you delete your account or revoke Meta access, comments are <strong>anonymized</strong> — the commenter's name, handle, platform comment ID, and link to the original post are permanently removed. The comment text, sentiment classification, and platform remain as anonymous, de-identified data points indefinitely to improve recommendations for all users. No individual user or commenter can be identified from this anonymized data. See Section 8 for full details on account deletion.</li>
     <li><strong>Log data:</strong> Retained for up to 30 days, then automatically purged.</li>
     <li><strong>Aggregated metrics:</strong> Retained indefinitely as they contain no personally identifiable information.</li>
   </ul>
@@ -211,12 +211,12 @@
   <h2>8. User Data Deletion</h2>
   <p>You can request deletion of all your data at any time through either of these methods:</p>
   <ul>
-    <li><strong>Email:</strong> Send an email to <a href="mailto:mark@markseminko.com">mark@markseminko.com</a> with the subject line "Data Deletion Request." We will process your request within 30 days.</li>
+    <li><strong>In-app message:</strong> Send a message through the <strong>Messages</strong> section inside your Social Buster account with the subject line <strong>"Data Deletion Request."</strong> Please be aware that because much of the data we collect is anonymized and aggregated, a deletion request may result in full account deletion. We may or may not send a confirmation — processing will be completed within 90 days of your request.</li>
     <li><strong>Platform revocation:</strong> You can revoke Social Buster's access to your Facebook/Instagram data at any time via <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Facebook Settings &rarr; Apps and Websites</a>. This immediately revokes our access tokens — we can no longer access your platform data.</li>
   </ul>
   <p><strong>Automatic deauthorization handling:</strong> When you revoke Social Buster's access via Facebook or Instagram settings, Meta sends us a deauthorization callback. We automatically process this by deleting: DM conversations, collected lead data, DM automation configurations, connected platform tokens, and any direct messaging history. Your posts, briefs, media library, user profile, and billing data are preserved — these were created by you on our platform, not obtained via Meta's APIs.</p>
   <p><strong>Comment data:</strong> Comments on your posts are authored by third-party users (the people who commented), not by you. When you revoke access, we anonymize these comments by removing the commenter's handle, the platform comment ID, and the link to the original post. The comment text, sentiment classification, and platform remain as anonymous, de-identified data points used to improve our collective intelligence engine for all users. No individual commenter can be identified from this anonymized data.</p>
-  <p><strong>Full account deletion:</strong> If you request full account deletion via email, we remove all data including your account, posts, briefs, media, and anonymized comment data.</p>
+  <p><strong>Full account deletion:</strong> If you request full account deletion, we will remove all data tied to your account — including your account, posts, briefs, media, leads, DM conversations, and anonymized comment data — within 90 days of the request.</p>
   <p>Anonymized aggregated metrics (performance benchmarks, cohort averages) that have already been computed are not reversed, as they contain no identifying information.</p>
 
   <!-- ============================================================ -->
@@ -324,7 +324,7 @@
     <li><strong>Right to opt out of sale</strong> — We do <strong>not</strong> sell your personal information to third parties. There is nothing to opt out of.</li>
     <li><strong>Non-discrimination</strong> — We will not discriminate against you for exercising any of these rights.</li>
   </ul>
-  <p>To exercise any of these rights, contact us at <a href="mailto:mark@markseminko.com">mark@markseminko.com</a>.</p>
+  <p>To exercise any of these rights, contact us at <a href="mailto:mark@mktminc.com">mark@mktminc.com</a>.</p>
 
   <!-- ============================================================ -->
   <h2>12. Children's Privacy</h2>
@@ -343,7 +343,7 @@
   <h2>15. Contact Us</h2>
   <p>If you have questions about this Privacy Policy or how we handle your data, contact us at:</p>
   <p>
-    <strong>Email:</strong> <a href="mailto:mark@markseminko.com">mark@markseminko.com</a><br>
+    <strong>Email:</strong> <a href="mailto:mark@mktminc.com">mark@mktminc.com</a><br>
     <strong>Platform:</strong> <a href="https://socialbuster.com">socialbuster.com</a>
   </p>
 
