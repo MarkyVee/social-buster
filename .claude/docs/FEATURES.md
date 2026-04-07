@@ -461,6 +461,28 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-039
+- **Date:** 2026-04-07
+- **Status:** idea
+- **Priority:** MEDIUM
+- **Description:** AI-Ranked WYSIWYG Post Variants — instead of generating 3 identical-format post cards per platform, generate 3 meaningfully different versions ranked by the intelligence engine. Each card is labeled and explained:
+  - **Recommended #1** — highest predicted engagement based on the user's own performance history, cohort benchmarks, and current trends. Best hook style, best tone, best format for this user right now.
+  - **Recommended #2** — second-ranked approach. Different hook style or content angle than #1. Good alternative if the user wants variety or wants to A/B test.
+  - **Recommended #3** — third-ranked approach. Most different from #1 — different tone, format, or objective. Useful when the user wants to try something outside their usual pattern.
+- **How it works:**
+  - The LLM prompt is updated to explicitly generate 3 variants with intentional differences (hook style, tone, structure) rather than 3 similar options
+  - The intelligence engine scores each variant against the user's signal_weights (hook performance, tone/objective fit, cohort benchmarks, posting time, trend alignment)
+  - Each card shows its predicted engagement score and a one-line explanation of why it was ranked that way (e.g. "Question hooks perform 2x better for your audience")
+  - User picks the one they want, edits it, and approves — same flow as today
+- **Why this matters:**
+  - Right now users get 3 nearly identical cards and have to guess which is best
+  - This makes the AI recommendation visible and trustworthy instead of a black box
+  - Turns the WYSIWYG step into an active learning tool — users understand WHY certain content works for them
+- **Dependencies:** Intelligence engine signal_weights must be populated (FEAT-024). Cold-start users (no history) get 3 variants without scores until enough data is collected.
+- **Related:** [[FEAT-024]], [[project_intelligence_engine.md]], [[project_enriched_brief_metadata.md]]
+
+---
+
 - **ID:** FEAT-038
 - **Date:** 2026-04-07
 - **Status:** idea
