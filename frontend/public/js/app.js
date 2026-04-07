@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 
 // ============================================================
 // Global state — the single source of truth for the frontend

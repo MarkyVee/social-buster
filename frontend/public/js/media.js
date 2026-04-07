@@ -200,10 +200,12 @@ async function loadProviders() {
       ? new Date(conn.last_scanned_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
       : null;
 
-    // Check if the token is expired or expiring within 24 hours
-    const tokenExpiry   = conn?.token_expires_at ? new Date(conn.token_expires_at) : null;
-    const tokenExpired  = tokenExpiry && tokenExpiry < new Date();
-    const tokenExpiring = tokenExpiry && !tokenExpired && tokenExpiry < new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // Google Drive access tokens expire every hour by design — the backend silently
+    // refreshes them using the stored refresh_token. We only show a warning if the
+    // token is actually expired AND the auto-refresh has failed (true disconnection).
+    const tokenExpiry  = conn?.token_expires_at ? new Date(conn.token_expires_at) : null;
+    const tokenExpired = tokenExpiry && tokenExpiry < new Date();
+    const tokenExpiring = false; // Never show "expiring soon" — Google tokens always expire in <1 hour
 
     if (!def.supported) {
       return `
