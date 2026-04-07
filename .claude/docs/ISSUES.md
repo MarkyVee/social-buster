@@ -14,6 +14,36 @@ Track bugs, problems, and blockers discovered during development. It is okay to 
 
 ## Open Issues
 
+- **ID:** ISSUE-037
+- **Date:** 2026-04-07
+- **Status:** open
+- **Category:** MEDIUM / Vision Tagging
+- **Description:** VisionTagging failing with "Invalid API Key" when analyzing video segment thumbnails. The service falls back to `LLM_API_KEY` and `LLM_BASE_URL` (Groq) when no dedicated `VISION_API_KEY` / `VISION_BASE_URL` are set. The default model is `meta-llama/llama-4-scout-17b-16e-instruct` — this model may not be available on the current Groq plan, or the API key in Coolify is expired/incorrect.
+- **Impact:** Non-blocking — video segments and thumbnails still save correctly via FFmpeg. Vision tags (description, mood, tags, hook_potential, audience_fit) are just not applied. Clip picker still works but without AI label enrichment.
+- **Found in:** `backend/services/visionTaggingService.js` — `tagSegmentWithVision()`
+- **To fix:**
+  1. Log into Coolify — verify `LLM_API_KEY` is current and correct
+  2. Go to console.groq.com — confirm `meta-llama/llama-4-scout-17b-16e-instruct` is available on your plan
+  3. If model is unavailable, set `VISION_MODEL` env var in Coolify to a supported Groq vision model
+  4. Alternatively set a dedicated `VISION_API_KEY` and `VISION_BASE_URL` if using a separate vision provider
+- **Resolution:** Pending
+
+---
+
+- **ID:** ISSUE-036
+- **Date:** 2026-04-07
+- **Status:** open
+- **Category:** MEDIUM / Media Library
+- **Description:** When a user disconnects Google Drive, their catalogued `media_items` rows are NOT deleted — this is intentional by original design but incorrect behavior. If a user reconnects a different Drive folder, stale media from the old folder remains in their library. The library should start clean on disconnect so it accurately reflects only what's in the currently connected folder.
+- **Found in:** `backend/routes/media.js` — `DELETE /media/connect/:provider` (line ~693). Comment even says "Does NOT delete any catalogued media items (they stay in the library)."
+- **Risks before fixing:**
+  - Posts with Drive media already attached will orphan if media_items rows are deleted — must check for active post attachments before deleting
+  - `video_segments` table references `media_items.id` — must delete segments first to avoid FK violation
+  - AI-generated images live in the same `media_items` table — must filter by `source = 'google_drive'` only
+  - Frontend confirm dialog text tells users media will be kept — must update that text too
+- **Workaround (manual):** Delete `media_items` rows directly in Supabase SQL Editor filtered by `user_id` and `source = 'google_drive'`, then reconnect Drive for a clean scan.
+- **Resolution:** Pending — do not fix until post attachments and video_segments cascade are handled safely. Full risk analysis in [[UPGRADES]].
+
 - **ID:** ISSUE-035
 - **Date:** 2026-04-02
 - **Status:** resolved (2026-04-02)
