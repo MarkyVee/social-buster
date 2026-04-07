@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -3810,10 +3810,10 @@ function renderHelpView(container) {
       title: 'Getting Started',
       icon: '🚀',
       items: [
-        { q: 'What is Social Buster?', a: 'Social Buster is an AI-powered social media marketing platform. It helps you create high-performing posts, schedule them across multiple platforms, and automate comment-to-DM lead capture — all from one dashboard.' },
-        { q: 'How do I set up my profile?', a: 'Click <strong>My Profile</strong> in the sidebar. Fill in your brand name, industry, target audience, and geographic region. This information powers the AI — the more detail you provide, the better your generated content will be.' },
-        { q: 'Which platforms are supported?', a: 'Currently <strong>Facebook</strong> and <strong>Instagram</strong> are fully connected for publishing. Threads is connected for OAuth. TikTok, LinkedIn, X (Twitter), and YouTube are coming soon.' },
-        { q: 'How do I connect a social platform?', a: 'Go to <strong>Settings & Billing</strong> → scroll to <strong>Platform Connections</strong>. Click "Connect" next to the platform you want. You\'ll be redirected to that platform to authorize Social Buster. Once approved, you\'ll see a green "Connected" badge.' }
+        { q: 'What is Social Buster?', a: 'Social Buster is an AI-powered social media marketing platform. It helps you create high-performing posts, schedule them across multiple platforms, and automate comment-to-DM lead capture, all from one dashboard.' },
+        { q: 'How do I set up my profile?', a: 'Click <strong>My Profile</strong> in the sidebar. Fill in your brand name, industry, target audience, and geographic region. This information powers the AI, the more detail you provide, the better your generated content will be.' },
+        { q: 'Which platforms are supported?', a: 'Currently <strong>Facebook</strong> and <strong>Instagram</strong> are fully connected for publishing. Threads, TikTok, LinkedIn, X (Twitter), and YouTube are coming soon.' },
+        { q: 'How do I connect a social platform?', a: 'Go to <strong>Settings & Billing</strong>, scroll to <strong>Platform Connections</strong>. Click "Connect" next to the platform you want. You\'ll be redirected to that platform to authorize Social Buster. Once approved, you\'ll see a red "Connected" badge. <strong>Important:</strong> Make sure you are not logged into a different Facebook account on your computer when trying to connect Facebook, as this will connect the wrong account.' }
       ]
     },
     {
@@ -3821,11 +3821,11 @@ function renderHelpView(container) {
       title: 'Briefs & AI Generation',
       icon: '✏️',
       items: [
-        { q: 'What is a brief?', a: 'A brief is your creative input — it tells the AI what kind of post to generate. You pick the platforms, post type (educational, promotional, storytelling, etc.), tone, objective, and provide any specific instructions.' },
-        { q: 'How do I create a brief?', a: 'Click <strong>New Brief</strong> in the sidebar. Select your target platforms, pick a post type and tone, add any custom instructions, then click <strong>Generate Posts</strong>. The AI will create tailored content for each platform.' },
+        { q: 'What is a brief?', a: 'A brief is your creative input, it tells the AI what kind of post to generate suggestions from. You pick the platforms, post type (educational, promotional, storytelling, etc.), tone, objective, and provide any specific instructions.' },
+        { q: 'How do I create a brief?', a: 'Click <strong>New Brief</strong> in the sidebar. Select your target platforms, pick a post type and tone, add any custom instructions, then click <strong>Generate Suggested Posts</strong>. The AI will create tailored content for each platform.' },
         { q: 'Can I edit generated posts?', a: 'Yes! After generation, each post appears in the <strong>Generated Posts</strong> view. Click any post to open the full editor where you can modify the hook, caption, hashtags, CTA, and attached media.' },
         { q: 'What is the Intelligence pre-flight?', a: 'Before generating, the AI checks your performance history, trending topics, and audience data to inform the content. This "pre-flight" step is what makes Social Buster posts more effective than generic AI output.' },
-        { q: 'How do I attach media to a post?', a: 'In the post editor, click <strong>Attach Media</strong>. You can pick from your Media Library (uploaded files, Google Drive, or AI-generated images). Media is processed and optimized for each platform automatically.' }
+        { q: 'How do I attach media to a post?', a: 'In the post editor, click <strong>Attach Media</strong>. You can pick from your Media Library (Google Drive files or AI-generated images). Media is referenced directly from Google Drive, it is not stored on our platform. AI-generated images are saved to your library and can be attached to any post.' }
       ]
     },
     {
@@ -3833,8 +3833,8 @@ function renderHelpView(container) {
       title: 'Media Library',
       icon: '🎬',
       items: [
-        { q: 'How do I add media?', a: 'Go to <strong>Media Library</strong> in the sidebar. You can connect Google Drive to scan for media files, or generate AI images directly in the app. All your media is stored and organized in one place.' },
-        { q: 'How does Google Drive integration work?', a: 'In Settings, connect your Google Drive account. Social Buster will scan your Drive for images and videos. When you attach a Drive file to a post, it\'s automatically copied to our storage so publishing works reliably.' },
+        { q: 'How do I add media?', a: 'Go to <strong>Media Library</strong> in the sidebar. You can connect Google Drive to scan for media files, or generate AI images directly in the app. Your media is catalogued and organized here, but files are not stored on our platform, they stay in your Google Drive.' },
+        { q: 'How does Google Drive integration work?', a: 'In Settings, connect your Google Drive account. Social Buster will scan your Drive for images and videos and display them in your Media Library. We read your files directly from Google Drive, we do not copy or store them on our platform. Your files stay exactly where they are in your Drive.' },
         { q: 'What is AI image generation?', a: 'In the Media Library, click <strong>Generate AI Image</strong>. Describe what you want and the AI will create a custom image. These images are saved to your library and can be attached to any post.' },
         { q: 'How does video clip selection work?', a: 'When you upload a video, Social Buster analyzes it in the background and identifies the best segments. When attaching video to a post, you\'ll see suggested clips with thumbnails — pick the one that fits your content.' }
       ]
@@ -3844,9 +3844,9 @@ function renderHelpView(container) {
       title: 'Publishing & Scheduling',
       icon: '🗓️',
       items: [
-        { q: 'How do I publish a post?', a: 'From <strong>Generated Posts</strong>, approve the posts you want to publish. They\'ll appear in your <strong>Publishing Queue</strong>. You can publish immediately or schedule them for a specific date and time.' },
+        { q: 'How do I publish a post?', a: 'From <strong>Generated Posts</strong>, approve the posts you want to publish. They\'ll appear in your <strong>Publishing Queue</strong>. You can publish immediately from the Brief area, or schedule them for a specific date and time.' },
         { q: 'What does each post status mean?', a: '<strong>Draft</strong> = still editing. <strong>Approved</strong> = ready to publish. <strong>Scheduled</strong> = will publish at the set time. <strong>Publishing</strong> = currently being sent. <strong>Published</strong> = live on the platform. <strong>Failed</strong> = something went wrong (check the error message).' },
-        { q: 'What if a post fails to publish?', a: 'Failed posts show an error message explaining what went wrong. Common issues: expired platform token (reconnect in Settings), duplicate content (Facebook rejects identical posts), or missing media. Fix the issue and retry from the queue.' },
+        { q: 'What if a post fails to publish?', a: 'Failed posts show an error message explaining what went wrong. Here are the most common issues and how to fix them: <strong>Expired platform token</strong>, your connection to Facebook or Instagram timed out. Go to Settings &amp; Billing, find the platform under Platform Connections, and click Reconnect. <strong>Duplicate content</strong>, Facebook will reject a post if it is identical to one you already published. Make a small edit to the caption and try again. <strong>Missing media</strong>, the image or video attached to the post could not be found. Go back to the post editor, re-attach your media, and approve it again. Once fixed, go to the Publishing Queue and click Retry.' },
         { q: 'Can I publish to multiple platforms at once?', a: 'Yes! When you create a brief, select multiple platforms. The AI generates platform-specific content for each one. When you approve them, each platform version publishes independently.' }
       ]
     },
@@ -3878,8 +3878,7 @@ function renderHelpView(container) {
       icon: '⚙️',
       items: [
         { q: 'How do I manage my subscription?', a: 'Go to <strong>Settings & Billing</strong>. You\'ll see your current plan and usage. Click "Manage Subscription" to upgrade, downgrade, or update your payment method through our secure Stripe portal.' },
-        { q: 'What plans are available?', a: '<strong>Free Trial</strong> — limited features to try the platform. <strong>Starter ($29/mo)</strong> — core features for individual creators. <strong>Professional ($79/mo)</strong> — full feature set with higher limits. <strong>Buster ($199/mo)</strong> — enterprise-grade with priority support and maximum limits.' },
-        { q: 'How do I disconnect a platform?', a: 'Go to <strong>Settings & Billing</strong> → Platform Connections. Click "Disconnect" next to the platform. Your existing published posts won\'t be affected, but you won\'t be able to publish new ones until you reconnect.' },
+        { q: 'How do I disconnect a platform?', a: 'Go to <strong>Settings & Billing</strong>, Platform Connections. Click "Disconnect" next to the platform. Your existing published posts won\'t be affected, but you won\'t be able to publish new ones until you reconnect.' },
         { q: 'How do I change my password?', a: 'Currently, password changes are handled through the Supabase auth system. Go to the login screen and use "Forgot Password" to reset it via email.' }
       ]
     },
