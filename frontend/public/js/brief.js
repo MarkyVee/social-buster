@@ -290,7 +290,7 @@ function renderBriefForm(el) {
       <!-- SUBMIT -->
       <div class="brief-submit">
         <button type="submit" class="btn btn-primary btn-lg" id="brief-submit-btn">
-          ✨ Generate Posts with AI
+          ✨ Generate Suggested Posts
         </button>
         <div class="text-sm text-muted mt-4" id="brief-generate-hint">
           The AI will generate 3 options per selected platform.
