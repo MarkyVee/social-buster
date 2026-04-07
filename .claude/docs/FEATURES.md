@@ -461,6 +461,63 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-038
+- **Date:** 2026-04-07
+- **Status:** idea
+- **Priority:** MEDIUM
+- **Description:** Platform Data Aggregation Dashboard — pull key metrics from all connected platforms (Cloudflare, Supabase, Stripe, Meta Graph API, Groq) into the admin dashboard so we have one unified health + business view instead of logging into 5 separate dashboards.
+- **Reason:** Currently have to check Cloudflare for traffic, Supabase for DB health, Stripe for revenue, Meta for API usage, and Groq for LLM usage separately. A unified view saves time and surfaces problems faster.
+- **What to pull per platform:**
+
+  **Cloudflare (via Cloudflare Analytics API):**
+  - Unique visitors (24h, 7d, 30d)
+  - Total requests
+  - Bandwidth served
+  - Threat/attack count
+  - Top countries by request volume
+  - Cache hit rate
+  - Error rate (4xx, 5xx)
+
+  **Supabase (via Supabase Management API):**
+  - DB size used vs limit
+  - Active connections
+  - Row counts per key table (users, posts, dm_conversations, media_items)
+  - Storage bucket sizes
+
+  **Stripe (already partially integrated):**
+  - MRR (monthly recurring revenue)
+  - Active subscribers by plan
+  - Churn this month
+  - Failed payments
+  - New signups this month
+
+  **Meta Graph API (per connected page across all users):**
+  - Total API calls made today vs daily limit
+  - Error rate on publish attempts
+  - Webhook delivery success rate
+
+  **Groq (LLM usage):**
+  - Tokens used today / this month
+  - Cost estimate
+  - Error rate (413s, timeouts)
+  - Average response time
+
+  **Redis (already have some via watchdog):**
+  - Memory used
+  - Queue depths per worker
+  - Jobs processed today
+
+- **Implementation notes:**
+  - Cloudflare has a free GraphQL Analytics API — no paid plan needed
+  - Supabase Management API requires service role key (already have it)
+  - Stripe already integrated — revenue metrics just need a new endpoint
+  - Meta and Groq metrics are already partially logged — aggregate from our own DB/logs
+  - Build as a new "Platform Health" tab in the Admin dashboard
+  - Tier gate: admin-only, not user-facing
+- **Related:** [[FEAT-015]] (Watchdog already covers Redis/queue health)
+
+---
+
 - **ID:** FEAT-037
 - **Date:** 2026-04-07
 - **Status:** deferred
