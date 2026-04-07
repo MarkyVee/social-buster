@@ -461,6 +461,17 @@ Track feature ideas, requests, and enhancements as they come up during work.
 
 ---
 
+- **ID:** FEAT-037
+- **Date:** 2026-04-07
+- **Status:** deferred
+- **Priority:** LOW
+- **Description:** Geo-restriction — block or redirect non-U.S. traffic at the Cloudflare level using a firewall rule. Currently the app is accessible globally but Terms of Service restrict use to U.S. only. Technical enforcement via Cloudflare would make this airtight without any code changes.
+- **Reason:** Social Buster is a U.S.-only platform. GDPR and other international data regulations are out of scope. Cloudflare firewall rules can enforce this at the network level with a single rule — no backend changes needed.
+- **How to implement:** Cloudflare Dashboard → Security → WAF → Create Rule → "Country does not equal United States" → Block.
+- **Related:** [[DECISIONS]], Terms of Service Section 1
+
+---
+
 ## Done
 
 - **FEAT-013** (2026-03-28) — DM Automation Dashboard Data for Users
