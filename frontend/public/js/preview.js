@@ -2031,9 +2031,6 @@ function renderAutomationSteps(postId, flowType, steps) {
         <textarea class="form-control" rows="3" id="auto-step-msg-${postId}-0"
                   placeholder="Hey {{commenter_name}}! Here's the link you asked for: https://..."
         >${escapeHtml(step.message_template || '')}</textarea>
-        <div class="text-muted text-sm" style="margin-top:2px;">
-          Use {{commenter_name}} to insert their name.
-        </div>
       </div>
     `;
   }
