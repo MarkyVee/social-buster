@@ -158,6 +158,12 @@ router.get('/dashboard', async (req, res) => {
       const autoConvs = allConvs.filter(c => c.automation_id === a.id);
       const completed = autoConvs.filter(c => c.status === 'completed').length;
       const total = autoConvs.length;
+      // Find the earliest and most recent conversation start times for this automation
+      const timestamps = autoConvs
+        .map(c => c.created_at)
+        .filter(Boolean)
+        .sort();
+
       return {
         id:              a.id,
         name:            a.name || 'Unnamed',
@@ -169,7 +175,9 @@ router.get('/dashboard', async (req, res) => {
         completed:       completed,
         expired:         autoConvs.filter(c => c.status === 'expired').length,
         opted_out:       autoConvs.filter(c => c.status === 'opted_out').length,
-        conversion_rate: total > 0 ? Math.round((completed / total) * 100) : 0
+        conversion_rate: total > 0 ? Math.round((completed / total) * 100) : 0,
+        first_triggered: timestamps.length > 0 ? timestamps[0] : null,
+        last_triggered:  timestamps.length > 0 ? timestamps[timestamps.length - 1] : null
       };
     });
 

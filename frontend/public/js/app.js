@@ -13,7 +13,7 @@
 // file changes. Must match APP_VERSION in backend/server.js.
 // When stale, all authenticated users see a "new version" banner.
 // ============================================================
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 
 // ============================================================
 // Global state — the single source of truth for the frontend
@@ -3616,6 +3616,8 @@ function renderAutomationPerfTable(automations) {
             <th style="padding:8px;">Expired</th>
             <th style="padding:8px;">Opt-outs</th>
             <th style="padding:8px;">Conv. Rate</th>
+            <th style="padding:8px;">First Triggered</th>
+            <th style="padding:8px;">Last Triggered</th>
             <th style="padding:8px;">Status</th>
           </tr>
         </thead>
@@ -3647,6 +3649,16 @@ function renderAutomationPerfTable(automations) {
                       </div>
                     </div>
                   ` : '—'}
+                </td>
+                <td style="padding:8px;font-size:12px;color:var(--text-muted);">
+                  ${a.first_triggered
+                    ? new Date(a.first_triggered).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+                    : '<span style="color:var(--text-muted);">Never</span>'}
+                </td>
+                <td style="padding:8px;font-size:12px;color:var(--text-muted);">
+                  ${a.last_triggered
+                    ? new Date(a.last_triggered).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+                    : '<span style="color:var(--text-muted);">Never</span>'}
                 </td>
                 <td style="padding:8px;">
                   <span class="badge badge-${a.active ? 'published' : 'draft'}">
